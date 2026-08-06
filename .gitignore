@@ -14,6 +14,8 @@ dist/
 coverage/
 .vite/
 *.tsbuildinfo
+playwright-report/
+test-results/
 
 # Python
 __pycache__/
