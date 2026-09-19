@@ -373,7 +373,7 @@ test("provider settings discover and cache models, then choose a model for conne
   await modelInput.click();
   await page.getByRole("option", { name: "mock-reasoning" }).click();
   await modelInput.click();
-  await expect(page.getByText(/缓存.*5 个模型|已读取缓存 5 个模型/)).toBeVisible();
+  await expect(page.getByText(/缓存.*6 个模型|已读取缓存 6 个模型/)).toBeVisible();
   await page.getByRole("heading", { name: "AI 提供方设置" }).click();
   await expect(page.getByRole("option", { name: "mock-reasoning" })).toBeHidden();
 
@@ -491,6 +491,10 @@ test("refresh and repeated submission reuse the same run without appending messa
   expect(repeatedBody.run.id).toBe(runId);
 
   await expect(page.getByText("刷新块 12。", { exact: false })).toBeVisible({ timeout: 10_000 });
+  await expect.poll(async () => {
+    const current = await getConversation(page.context().request, conversationId);
+    return current.active_run;
+  }).toBeNull();
   const detail = await getConversation(page.context().request, conversationId);
   expect(detail.active_run).toBeNull();
   expect(detail.messages).toHaveLength(2);

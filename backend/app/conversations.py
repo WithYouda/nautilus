@@ -769,6 +769,35 @@ class ConversationService:
                 provider_kind=profile["provider_kind"],
             )
 
+    def provider_runtime_for(
+        self,
+        identity_id: str,
+        provider_profile_id: str,
+        provider_model_id: str,
+    ) -> tuple[dict[str, Any], ProviderConfig]:
+        """Return an explicitly selected provider/model runtime without exposing secrets."""
+        with self._provider_lock:
+            profile = self._provider_by_id(identity_id, provider_profile_id)
+            if not profile["enabled"]:
+                raise ConversationError("当前证据分析提供方已停用")
+            model = self.database.fetchone(
+                """SELECT * FROM provider_model
+                   WHERE id=? AND provider_profile_id=? AND enabled=1""",
+                (provider_model_id, provider_profile_id),
+            )
+            if model is None:
+                raise ConversationError("证据分析模型不存在或已停用")
+            api_key = self._read_key(profile["credential_key"])
+            if not api_key:
+                raise ConversationError("尚未保存证据分析提供方密钥")
+            return profile, ProviderConfig(
+                base_url=profile["base_url"],
+                model=model["model_id"],
+                api_key=api_key,
+                timeout_seconds=int(profile["request_timeout_seconds"]),
+                provider_kind=profile["provider_kind"],
+            )
+
     def runtime_for_conversation(
         self,
         identity_id: str,
@@ -2026,6 +2055,8 @@ class ConversationService:
             "你是学海无涯（Nautilus）的学习伙伴，用中文回答。"
             "请结合本次对话冻结的学习上下文范围，给出可执行、有步骤的讲解或规划，"
             "必要时反问以确认理解程度。不要编造学习者没有提供的资料内容。"
+            "教学与验证是两个阶段：在用户明确进入验证前，不主动生成考试题、练习题或标准答案；"
+            "如无法联网核验资料，必须明确说明，不要编造来源链接。"
         )
         if context:
             system = f"{system}\n\n当前学习上下文：{context['summary']}"

@@ -26,6 +26,7 @@ class Settings:
     session_cookie_max_age_seconds: int
     cookie_secure: bool
     cookie_name: str = "nautilus_session"
+    learning_database_path: Path | None = None
 
     @property
     def credentials_dir(self) -> Path:
@@ -55,4 +56,9 @@ class Settings:
                 os.getenv("NAUTILUS_SESSION_COOKIE_MAX_AGE_SECONDS", "315360000")
             ),
             cookie_secure=_as_bool(os.getenv("NAUTILUS_COOKIE_SECURE"), default=False),
+            learning_database_path=(
+                Path(os.getenv("NAUTILUS_LEARNING_DATABASE", str(data_dir / "learning.sqlite3")))
+                .expanduser()
+                .resolve()
+            ),
         )

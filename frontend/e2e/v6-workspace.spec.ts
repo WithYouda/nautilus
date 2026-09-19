@@ -11,8 +11,9 @@ test("V6 desktop shell supports collapse, bounded resize, and real navigation", 
   await expect(page.getByRole("navigation", { name: "工作区视图" })).toBeVisible();
   await expect(page.getByRole("complementary", { name: "AI 学习伙伴" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "当前视角" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "工作区视图" }).getByRole("button")).toHaveCount(2);
+  await expect(page.getByRole("navigation", { name: "工作区视图" }).getByRole("button")).toHaveCount(3);
   await expect(page.getByRole("button", { name: "知识库（开发中）" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /新建计划/ })).toHaveCount(0);
   const hierarchy = await page.evaluate(() => {
     const header = document.querySelector(".app-header")!.getBoundingClientRect();
     const perspective = document.querySelector(".workspace-perspective-bar")!.getBoundingClientRect();
@@ -44,39 +45,6 @@ test("V6 desktop shell supports collapse, bounded resize, and real navigation", 
   await expect(page.getByRole("heading", { name: "独立任务列表" })).toBeVisible();
   await page.getByRole("button", { name: "日历", exact: true }).click();
   await expect(page.getByRole("heading", { name: "月历视图" })).toBeVisible();
-});
-
-test("new plan dialog is mounted to the viewport on desktop and mobile", async ({ page }) => {
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
-    await page.setViewportSize(viewport);
-    await page.reload();
-    await page.getByRole("button", { name: /新建计划/ }).click();
-
-    const dialog = page.getByRole("dialog", { name: "建立一条可执行学习路线" });
-    await expect(dialog).toBeVisible();
-    const metrics = await page.evaluate(() => {
-      const backdrop = document.querySelector(".dialog-backdrop")!;
-      const dialogElement = document.querySelector(".plan-dialog")!;
-      const backdropRect = backdrop.getBoundingClientRect();
-      const dialogRect = dialogElement.getBoundingClientRect();
-      return {
-        backdropPosition: getComputedStyle(backdrop).position,
-        backdropParent: backdrop.parentElement?.tagName,
-        backdropRect: { top: backdropRect.top, left: backdropRect.left, right: backdropRect.right, bottom: backdropRect.bottom },
-        dialogRect: { top: dialogRect.top, left: dialogRect.left, right: dialogRect.right, bottom: dialogRect.bottom },
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-      };
-    });
-    expect(metrics.backdropPosition).toBe("fixed");
-    expect(metrics.backdropParent).toBe("BODY");
-    expect(metrics.backdropRect).toEqual({ top: 0, left: 0, right: viewport.width, bottom: viewport.height });
-    expect(metrics.dialogRect.top).toBeGreaterThanOrEqual(0);
-    expect(metrics.dialogRect.top).toBeLessThan(viewport.height);
-    expect(metrics.dialogRect.left).toBeGreaterThanOrEqual(0);
-    expect(metrics.dialogRect.right).toBeLessThanOrEqual(viewport.width);
-
-    await page.getByRole("button", { name: "关闭" }).click();
-  }
 });
 
 test("V6 active timer stays inside the main column", async ({ page }) => {

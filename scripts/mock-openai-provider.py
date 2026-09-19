@@ -88,6 +88,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                         {"id": "mock-reasoning"},
                         {"id": "mock-refresh"},
                         {"id": "mock-slow"},
+                        {"id": "mock-evidence"},
                         {"id": "mock-error"},
                     ]
                 },
@@ -113,7 +114,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
-        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-error"} else "mock-success"
+        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error"} else "mock-success"
         is_title_request = payload.get("stream") is not True and int(payload.get("max_tokens") or 0) >= 256
         STATE.requested(f"title:{scenario}" if is_title_request else scenario)
 
@@ -121,11 +122,27 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             self._json(401, {"error": {"message": "Mock provider rejected the API key"}})
             return
         if payload.get("stream") is not True:
+            if scenario == "mock-evidence":
+                content = json.dumps(
+                    {
+                        "dimension_id": "syntax_semantics",
+                        "stance": "supports",
+                        "source": "ai_analysis",
+                        "statement": "语义分析确认产出说明了正则表达式的匹配语义。",
+                        "verification_method": "semantic_analysis",
+                        "evidence_condition": "independent",
+                        "scope": "artifact",
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            else:
+                content = "学习步骤与目标拆解" if is_title_request else "pong"
             self._json(
                 200,
                 {
                     "model": model,
-                    "choices": [{"message": {"role": "assistant", "content": "学习步骤与目标拆解" if is_title_request else "pong"}}],
+                    "choices": [{"message": {"role": "assistant", "content": content}}],
                 },
             )
             return

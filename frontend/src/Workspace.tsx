@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { BookOpen, Bot, ChevronLeft, ChevronRight, Compass, LogOut, Menu, MessageSquareText, Plus, Settings2, X } from "lucide-react";
+import { BookOpen, Bot, ChevronLeft, ChevronRight, Compass, LogOut, Menu, MessageSquareText, Settings2, X } from "lucide-react";
 import {
   getAiProvider,
   getLayout,
@@ -15,6 +15,7 @@ import {
   type AiProvider,
   type AiContextScope,
   type Identity,
+  type LearningRoomBrief,
   type LayoutConfig,
   type LayoutTemplate,
   type ManualPlanInput,
@@ -29,16 +30,21 @@ import AiCompanionPanel from "./AiCompanionPanel";
 import AiProviderDialog from "./AiProviderDialog";
 import FloatingTimer from "./FloatingTimer";
 import LayoutDialog from "./LayoutDialog";
-import PlanDialog from "./PlanDialog";
 import PlanWorkspace from "./PlanWorkspace";
 import TodayView from "./TodayView";
 import TaskListView from "./TaskListView";
 import CalendarView from "./CalendarView";
 import DialogPortal from "./DialogPortal";
+import FactWorkspace from "./FactWorkspace";
 
-type WorkspaceView = "today" | "tasks" | "calendar" | "plans";
+type WorkspaceView = "today" | "tasks" | "calendar" | "plans" | "facts";
 type WorkspaceMode = "manage" | "ai";
-type AiRoomEntry = { scope: AiContextScope; targetId: string | null };
+type AiRoomEntry = {
+  scope: AiContextScope;
+  targetId: string | null;
+  initialDraft?: string;
+  learningBrief?: LearningRoomBrief;
+};
 
 const AI_ROOM_SESSION_KEY = "nautilus.ai.learning-room";
 const V6_LAYOUT_KEY = "nautilus.v6.workspace-layout";
@@ -63,7 +69,14 @@ function restoredAiEntry(): AiRoomEntry | null {
   try {
     const raw = window.sessionStorage.getItem(AI_ROOM_SESSION_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { taskId?: unknown; contextScope?: unknown; targetId?: unknown; open?: unknown };
+    const parsed = JSON.parse(raw) as {
+      taskId?: unknown;
+      contextScope?: unknown;
+      targetId?: unknown;
+      open?: unknown;
+      initialDraft?: unknown;
+      learningBrief?: unknown;
+    };
     if (parsed.open !== true) return null;
     const legacyTask = typeof parsed.taskId === "string" ? parsed.taskId : null;
     const scope = parsed.contextScope === "global" || parsed.contextScope === "plan" || parsed.contextScope === "task" || parsed.contextScope === "independent"
@@ -71,7 +84,11 @@ function restoredAiEntry(): AiRoomEntry | null {
       : legacyTask ? "task" : "independent";
     const targetId = typeof parsed.targetId === "string" ? parsed.targetId : legacyTask;
     if ((scope === "plan" || scope === "task") && !targetId) return null;
-    return { scope, targetId };
+    const learningBrief = parsed.learningBrief && typeof parsed.learningBrief === "object"
+      ? parsed.learningBrief as LearningRoomBrief
+      : undefined;
+    const initialDraft = typeof parsed.initialDraft === "string" ? parsed.initialDraft : undefined;
+    return { scope, targetId, initialDraft, learningBrief };
   } catch {
     return null;
   }
@@ -112,7 +129,6 @@ export default function Workspace({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [planDialogOpen, setPlanDialogOpen] = useState(false);
   const [layoutDialogOpen, setLayoutDialogOpen] = useState(false);
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [companionDrawerOpen, setCompanionDrawerOpen] = useState(false);
@@ -287,6 +303,29 @@ export default function Workspace({
     }
   }
 
+  async function handleTaskTimerStart(taskId: string): Promise<boolean> {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task) return false;
+    setSelectedTaskId(taskId);
+    setBusy(true);
+    setError("");
+    try {
+      const next = await updateTimer(taskId, "start", {
+        timer_mode: task.timer_mode,
+        work_minutes: task.work_minutes,
+        break_minutes: task.break_minutes,
+      });
+      setTimer(next);
+      await loadWorkspace();
+      return Boolean(next);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "计时操作失败");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleFloatingTimer(taskId: string, action: "pause" | "resume" | "finish") {
     setBusy(true);
     setError("");
@@ -337,13 +376,16 @@ export default function Workspace({
     try {
       const raw = window.sessionStorage.getItem(AI_ROOM_SESSION_KEY);
       const previous = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      const sameEntry = previous.contextScope === entry.scope && previous.targetId === entry.targetId;
       window.sessionStorage.setItem(AI_ROOM_SESSION_KEY, JSON.stringify({
         ...previous,
         taskId: entry.scope === "task" ? entry.targetId : null,
         contextScope: entry.scope,
         targetId: entry.targetId,
-        conversationId: null,
-        runId: null,
+        initialDraft: entry.initialDraft,
+        learningBrief: entry.learningBrief,
+        conversationId: sameEntry && typeof previous.conversationId === "string" ? previous.conversationId : null,
+        runId: sameEntry && typeof previous.runId === "string" ? previous.runId : null,
         pending: undefined,
         draftConfig: null,
         open: true,
@@ -392,9 +434,10 @@ export default function Workspace({
         <nav className="v6-rail-nav" aria-label="工作区视图">
           <button className={view === "today" ? "is-active" : ""} onClick={() => chooseView("today")}><Compass size={16} /><span>今日</span><small>01</small></button>
           <button onClick={() => openAiEntry({ scope: "global", targetId: null })}><MessageSquareText size={16} /><span>学习室</span><small>02</small></button>
+          <button className={view === "facts" ? "is-active" : ""} onClick={() => chooseView("facts")}><BookOpen size={16} /><span>开始学习</span><small>03</small></button>
         </nav>
         <span className="v6-rail-section">KNOWLEDGE</span>
-        <button className="v6-rail-disabled" disabled title="知识库尚未实现"><BookOpen size={16} /><span>知识库（开发中）</span><small>03</small></button>
+        <button className="v6-rail-disabled" disabled title="知识库尚未实现"><BookOpen size={16} /><span>知识库（开发中）</span><small>04</small></button>
         <div className="v6-rail-local">
           <span className="status-dot" />
           <div className="v6-rail-copy"><strong>{identity?.display_name ?? "本地学习者"}</strong><small>{health?.status === "ok" ? "本地服务在线" : "正在检查服务"}</small></div>
@@ -418,7 +461,6 @@ export default function Workspace({
         <div className="workspace-actions">
           {mode === "manage" && <span className="service-badge"><span className="status-dot" />{health?.status === "ok" ? "服务在线" : "检查中"}</span>}
           {mode === "manage" && <button className="icon-button v6-compact-companion-trigger" type="button" onClick={() => setCompanionDrawerOpen(true)} aria-label="打开 AI 学习伙伴" title="AI 学习伙伴"><Bot size={17} /></button>}
-          {mode === "manage" && <button className="button button--dark button--compact button--with-icon new-plan-button" onClick={() => setPlanDialogOpen(true)}><Plus size={16} />新建计划</button>}
           {mode === "manage" && <button className="icon-button" onClick={() => setLayoutDialogOpen(true)} title="首页布局" aria-label="首页布局"><Settings2 size={18} /></button>}
           <button className="icon-button" onClick={onLogout} title="退出会话" aria-label="退出会话"><LogOut size={18} /></button>
         </div>
@@ -432,10 +474,22 @@ export default function Workspace({
           task={aiEntry.scope === "task" ? allTasks.find((task) => task.id === aiEntry.targetId) ?? selectedTask : null}
           contextScope={aiEntry.scope}
           targetId={aiEntry.targetId}
+          initialDraft={aiEntry.initialDraft}
+          learningBrief={aiEntry.learningBrief}
           provider={aiProvider}
           onBack={closeAiLearning}
           onProviderOpen={() => setProviderDialogOpen(true)}
         />
+      ) : view === "facts" ? (
+        <>
+          <PerspectiveBar view={view} onChange={chooseView} />
+          <FactWorkspace
+            existingTasks={allTasks}
+            onOpenTaskLearning={openAiLearning}
+            onStartTaskTimer={handleTaskTimerStart}
+            onOpenLearningRoom={(initialDraft, learningBrief) => openAiEntry({ scope: "independent", targetId: null, initialDraft, learningBrief })}
+          />
+        </>
       ) : view === "today" ? (
         <>
           <PerspectiveBar view={view} onChange={chooseView} />
@@ -449,8 +503,8 @@ export default function Workspace({
             onSelectTask={setSelectedTaskId}
             onComplete={handleComplete}
             onTimer={handleTimer}
-            onCreatePlan={() => setPlanDialogOpen(true)}
             onOpenAi={openAiLearning}
+            onOpenFacts={() => chooseView("facts")}
             layoutModules={layout.modules}
           />
         </>
@@ -480,7 +534,6 @@ export default function Workspace({
           <PerspectiveBar view={view} onChange={chooseView} />
           <PlanWorkspace
             summaries={planSummaries}
-            onCreatePlan={() => setPlanDialogOpen(true)}
             onRefreshSummaries={loadWorkspace}
             onOpenTaskAi={openAiLearning}
             onOpenPlanAi={(planId) => openAiEntry({ scope: "plan", targetId: planId })}
@@ -490,23 +543,6 @@ export default function Workspace({
         </>
       )}
 
-      <PlanDialog
-        open={planDialogOpen}
-        onClose={() => setPlanDialogOpen(false)}
-        onCreated={async (plan) => {
-          setPlanDialogOpen(false);
-          setSelectedTaskId(plan.subjects[0]?.topics[0]?.tasks[0]?.id ?? null);
-          await loadWorkspace();
-          setView("plans");
-          const url = new URL(window.location.href);
-          url.searchParams.set("view", "plans");
-          url.searchParams.set("plan", plan.id);
-          url.searchParams.set("tab", "overview");
-          url.searchParams.delete("node");
-          window.history.pushState({}, "", url);
-          window.dispatchEvent(new PopStateEvent("popstate"));
-        }}
-      />
       <LayoutDialog
         open={layoutDialogOpen}
         layout={layout}
@@ -550,7 +586,7 @@ export default function Workspace({
 
 function restoredWorkspaceView(): WorkspaceView {
   const value = new URLSearchParams(window.location.search).get("view");
-  return value === "tasks" || value === "calendar" || value === "plans" ? value : "today";
+  return value === "tasks" || value === "calendar" || value === "plans" || value === "facts" ? value : "today";
 }
 
 function restoredCalendarPlanFilter(): string | null {
@@ -565,6 +601,7 @@ function PerspectiveBar({ view, onChange }: { view: WorkspaceView; onChange: (vi
       <nav className="v6-perspective-tabs" aria-label="当前视角">
         <button className={view === "today" ? "is-active" : ""} onClick={() => onChange("today")}>今日</button>
         <button className={view === "tasks" ? "is-active" : ""} onClick={() => onChange("tasks")}>任务</button>
+          <button className={view === "facts" ? "is-active" : ""} onClick={() => onChange("facts")}>开始学习</button>
         <button className={view === "plans" ? "is-active" : ""} onClick={() => onChange("plans")}>计划</button>
         <button className={view === "calendar" ? "is-active" : ""} onClick={() => onChange("calendar")}>日历</button>
         <button disabled title="甘特图开发中">甘特图</button>

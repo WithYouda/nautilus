@@ -35,8 +35,8 @@ export default function TodayView({
   onSelectTask,
   onComplete,
   onTimer,
-  onCreatePlan,
   onOpenAi,
+  onOpenFacts,
   layoutModules,
 }: {
   dashboard: TodayDashboard | null;
@@ -51,8 +51,8 @@ export default function TodayView({
     action: "start" | "pause" | "resume" | "finish",
     config?: Pick<ManualPlanInput, "timer_mode" | "work_minutes" | "break_minutes">,
   ) => void;
-  onCreatePlan: () => void;
   onOpenAi: (taskId: string) => void;
+  onOpenFacts: () => void;
   layoutModules: LayoutModule[];
 }) {
   const summary = dashboard?.summary;
@@ -91,6 +91,19 @@ export default function TodayView({
         </section>
       )}
 
+      {!dashboard?.tasks.length && (
+        <section className="first-slice-entry" aria-label="首片体验入口">
+          <div>
+            <p className="eyebrow">FIRST SLICE</p>
+            <h2>从一次可验证学习开始</h2>
+            <p>创建任务、委托和会话，保存原始产出，并查看证据链与派生状态。</p>
+          </div>
+          <button className="button button--accent" type="button" onClick={onOpenFacts}>
+            开始一次学习
+          </button>
+        </section>
+      )}
+
       <DashboardModules
         modules={layoutModules}
         dashboard={dashboard}
@@ -101,7 +114,6 @@ export default function TodayView({
         onSelectTask={onSelectTask}
         onComplete={onComplete}
         onTimer={onTimer}
-        onCreatePlan={onCreatePlan}
         onOpenAi={onOpenAi}
       />
     </div>
@@ -118,7 +130,6 @@ function DashboardModules({
   onSelectTask,
   onComplete,
   onTimer,
-  onCreatePlan,
   onOpenAi,
 }: {
   modules: LayoutModule[];
@@ -133,7 +144,6 @@ function DashboardModules({
     action: "start" | "pause" | "resume" | "finish",
     config?: Pick<ManualPlanInput, "timer_mode" | "work_minutes" | "break_minutes">,
   ) => void;
-  onCreatePlan: () => void;
   onOpenAi: (taskId: string) => void;
 }) {
   const visible = modules.filter((module) => module.visible).map((module) => module.id);
@@ -146,7 +156,6 @@ function DashboardModules({
       busy={busy}
       onSelectTask={onSelectTask}
       onComplete={onComplete}
-      onCreatePlan={onCreatePlan}
       onOpenAi={onOpenAi}
     />
   );
@@ -240,7 +249,6 @@ function TaskPanel({
   busy,
   onSelectTask,
   onComplete,
-  onCreatePlan,
   onOpenAi,
 }: {
   dashboard: TodayDashboard | null;
@@ -248,7 +256,6 @@ function TaskPanel({
   busy: boolean;
   onSelectTask: (taskId: string) => void;
   onComplete: (taskId: string) => void;
-  onCreatePlan: () => void;
   onOpenAi: (taskId: string) => void;
 }) {
   return (
@@ -260,8 +267,7 @@ function TaskPanel({
       {!dashboard?.tasks.length ? (
         <div className="empty-state">
           <h3>今天还没有安排任务</h3>
-          <p>先创建一条学习路线，今天范围内的任务会自动进入这里。</p>
-          <button className="button button--dark" onClick={onCreatePlan}>创建计划</button>
+          <p>从开始学习进入已有计划，或让 AI 帮你整理第一步。</p>
         </div>
       ) : (
         <div className="task-list">

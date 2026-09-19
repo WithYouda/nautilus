@@ -9,18 +9,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from httpx import AsyncBaseTransport
 
 from . import __version__
+from .agent_runtime import AgentRuntime
 from .ai_runtime import AiRunManager
 from .auth import AuthService
 from .config import Settings
 from .conversations import ConversationService
 from .credentials import CredentialStore
+from .evidence import EvidenceService, ProviderSemanticAnalyzer
+from .evidence_provider import EvidenceProviderService
+from .evidence_events import EvidenceEventService
 from .db import Database
 from .layouts import LayoutService
+from .learning_service import LearningService
+from .learning_setup import LearningSetupService
+from .measurements import MeasurementService
+from .review import ReviewService
+from .state_derivation import StateDerivationService
+from .learning_storage import open_learning_database
+from .verification import VerificationService
 from .model_discovery import ModelDiscoveryService
 from .network import wsl_ip
 from .plan_editor import PlanEditorService
 from .plans import PlanService
-from .routers import ai, auth, layouts, plans, system
+from .routers import ai, auth, layouts, learning, plans, system
 
 logger = logging.getLogger("nautilus")
 
@@ -34,13 +45,46 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        database = Database(app_settings.database_path, app_settings.migrations_dir)
+        database = Database(app_settings.database_path, app_settings.migrations_dir, migrate=False)
+        learning_path = app_settings.learning_database_path or app_settings.data_dir / "learning.sqlite3"
+        try:
+            learning_database = open_learning_database(learning_path, migrate=False)
+        except BaseException:
+            database.close()
+            raise
         auth_service = AuthService(database, app_settings.session_ttl_seconds)
         plan_service = PlanService(database)
         plan_editor_service = PlanEditorService(database, plan_service)
         layout_service = LayoutService(database)
+        learning_service = LearningService(learning_database)
+        agent_runtime = AgentRuntime(learning_service)
+        evidence_events = EvidenceEventService(learning_database)
+        state_derivation_service = StateDerivationService(learning_service, evidence_events)
+        review_service = ReviewService(learning_service, state_derivation_service, evidence_events)
+        measurement_service = MeasurementService(learning_service)
         credential_store = CredentialStore(app_settings.credentials_dir)
         conversation_service = ConversationService(database, plan_service, credential_store)
+        learning_setup_service = LearningSetupService(
+            learning_service,
+            conversation_service,
+            transport=provider_transport,
+        )
+        verification_service = VerificationService(
+            learning_service,
+            conversation_service,
+            transport=provider_transport,
+        )
+        evidence_provider_service = EvidenceProviderService(learning_service, conversation_service)
+        evidence_service = EvidenceService(
+            learning_service,
+            evidence_events=evidence_events,
+            semantic_analyzer=ProviderSemanticAnalyzer(
+                conversation_service,
+                transport=provider_transport,
+                provider_service=evidence_provider_service,
+            ),
+        )
+        verification_service.evidence = evidence_service
         interrupted_title_runs = conversation_service.recover_interrupted_title_runs()
         if interrupted_title_runs:
             logger.warning("Recovered %s interrupted conversation title runs.", interrupted_title_runs)
@@ -63,6 +107,16 @@ def create_app(
         app.state.plans = plan_service
         app.state.plan_editor = plan_editor_service
         app.state.layouts = layout_service
+        app.state.learning = learning_service
+        app.state.learning_setup = learning_setup_service
+        app.state.verification = verification_service
+        app.state.agent_runtime = agent_runtime
+        app.state.state_derivation = state_derivation_service
+        app.state.review = review_service
+        app.state.measurements = measurement_service
+        app.state.evidence = evidence_service
+        app.state.evidence_provider = evidence_provider_service
+        app.state.evidence_events = evidence_events
         app.state.credentials = credential_store
         app.state.conversations = conversation_service
         app.state.ai_runs = ai_run_manager
@@ -74,6 +128,7 @@ def create_app(
             yield
         finally:
             await ai_run_manager.shutdown()
+            learning_service.close()
             try:
                 app_settings.runtime_token_path.unlink()
             except FileNotFoundError:
@@ -96,6 +151,7 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(plans.router)
     app.include_router(layouts.router)
+    app.include_router(learning.router)
     app.include_router(ai.router)
     return app
 

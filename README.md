@@ -33,6 +33,8 @@ npm --prefix frontend install
 
 标准启动脚本会先构建前端，再以无 HMR 的生产预览模式提供页面。开发时可以单独使用 `npm run dev`，但开发服务器不能作为用户交付运行方式，否则源码变化会触发浏览器刷新。
 
+普通启动只接受迁移版本与当前程序匹配的主库和学习库，不自动创建数据库或应用迁移。缺库、待升级或版本不匹配时，后端会拒绝启动并报告具体数据库；先按授权范围完成初始化、备份及升级。学习库使用下方的显式升级工具；该工具不升级默认主库，主库变更需另行授权。隔离测试会在启动应用前显式初始化临时数据库。
+
 启动脚本会绑定 `0.0.0.0`，并打印 WSL2 实际访问地址，例如：
 
 ```text
@@ -43,6 +45,51 @@ API: http://<WSL2_IP>:8000
 首次打开 Web 地址时，授权页会显示本次服务启动生成的实时授权码：上方二维码和下方文字码内容相同，可扫码、复制或手动输入。授权成功后，会话默认持续到主动注销；服务重启不会要求重复授权。
 
 当前运行中的授权码只保存在权限为 `0600` 的 `tmp/access-token` 文件中，也可在授权页查看。不要把它写入日志、截图或提交记录。
+
+## 生产学习库升级与恢复
+
+Nautilus 的独立学习库默认位于：
+
+```text
+data/learning.sqlite3
+```
+
+它只使用 `011` 之后的独立学习域迁移；默认主库 `data/nautilus.sqlite3` 不会应用这些迁移。
+
+在明确授权生产操作后，可验证或初始化/升级学习库：
+
+```bash
+env PYTHONPATH=backend .venv/bin/python scripts/upgrade-learning-database.py --verify-only --authorize-production
+env PYTHONPATH=backend .venv/bin/python scripts/upgrade-learning-database.py --authorize-production
+```
+
+脚本会：
+
+- 拒绝操作默认主库和 `diagnostic-backups/`；
+- 已有学习库时先创建升级前备份；
+- 初始化或升级到当前最新学习域迁移；
+- 执行 `integrity_check` 和 `foreign_key_check`；
+- 创建本地备份和不含私人内容的 JSON 清单；
+- 对备份执行隔离恢复演练。
+
+备份默认位于：
+
+```text
+data/backups/learning/
+```
+
+备份包含私人学习内容，仅保存在本机，权限为 `0600`。不要把备份、清单路径中的内容摘要或访问令牌写入日志或提交记录。
+
+恢复备份必须显式指定目标和授权：
+
+```bash
+env PYTHONPATH=backend .venv/bin/python scripts/upgrade-learning-database.py \
+  --restore <backup.sqlite3> \
+  --database data/learning.sqlite3 \
+  --authorize-production
+```
+
+如果当前学习库已存在，恢复前会检查备份是否会让已彻底删除的产出重新出现；存在冲突时拒绝恢复，应先创建彻底删除后的新备份。当前库缺失时，默认拒绝恢复；只有明确接受“无法对照当前删除标记验证”时才使用 `--allow-missing-current`。
 
 ## 单独运行
 

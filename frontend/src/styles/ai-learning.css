@@ -29,6 +29,14 @@
 .ai-room-heading h1 { margin: 2px 0; font-family: Georgia, "Noto Serif CJK SC", serif; font-size: clamp(20px, 1.8vw, 25px); font-weight: 500; line-height: 1.08; }
 .ai-room-heading .eyebrow { display: none; }
 .ai-room-subtitle { margin: 0; max-width: min(60vw, 720px); overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.ai-room-brief { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin-bottom: 5px; padding: 8px 12px; border: 1px solid var(--line); background: var(--paper); }
+.ai-room-brief__heading { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.ai-room-brief__heading span { color: var(--accent-dark); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.ai-room-brief__heading strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.ai-room-brief__route { min-width: 0; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.ai-room-brief__items { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.ai-room-brief__items span { min-width: 0; overflow-wrap: anywhere; }
+.ai-room-brief__items b { margin-right: 4px; color: var(--ink-soft); font-weight: 700; }
 .ai-room-actions { flex-wrap: wrap; justify-content: flex-end; }
 .ai-room-layer-anchor { position: relative; }
 .ai-room-tool-trigger,
@@ -165,6 +173,8 @@
   .ai-room-actions { gap: 4px; justify-content: flex-end; margin-left: auto; }
   .ai-room-heading > .button, .ai-room-actions > .button { flex: 0 0 32px; width: 32px; min-height: 32px; padding: 0; }
   .ai-room-heading > .button span, .ai-room-actions > .button span { display: none; }
+  .ai-room-brief { grid-template-columns: 1fr; gap: 3px; padding: 7px 9px; }
+  .ai-room-brief__items { grid-column: auto; display: grid; gap: 2px; }
   .ai-room-tool-trigger, .ai-config-trigger { width: 32px; min-height: 32px; padding: 0; justify-content: center; }
   .ai-room-tool-trigger span, .ai-config-trigger span { display: none; }
   .ai-room-grid { display: block; }

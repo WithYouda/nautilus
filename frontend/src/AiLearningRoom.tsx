@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
-import { ArrowLeft, Bot, Check, CircleAlert, History, MapPin, Pencil, Plus, RefreshCw, RotateCcw, Send, Sparkles, Square, SlidersHorizontal, Trash2, UserRound, X } from "lucide-react";
+import { ArrowLeft, Bot, Check, CircleAlert, History, MapPin, Pencil, Plus, RefreshCw, RotateCcw, Send, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, UserRound, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -10,6 +10,8 @@ import {
   getAiConversation,
   getAiConversationConfig,
   getAiContextPreview,
+  getLearningRoom,
+  selectLearningRoomConversation,
   regenerateAiConversationTitle,
   listAiProviders,
   listAiConversations,
@@ -27,10 +29,12 @@ import {
   type AiLearningContext,
   type AiRun,
   type AiStreamEvent,
+  type LearningRoomBrief,
   type Task,
 } from "./api";
 import DialogPortal from "./DialogPortal";
 import useDismissibleLayer from "./useDismissibleLayer";
+import LearningVerification from "./LearningVerification";
 
 const SESSION_KEY = "nautilus.ai.learning-room";
 const MAX_RECONNECT_ATTEMPTS = 3;
@@ -56,9 +60,11 @@ type RoomSession = {
   targetId: string | null;
   conversationId: string | null;
   runId: string | null;
+  initialDraft?: string | null;
   open?: boolean;
   pending?: PendingSubmission;
   draftConfig?: DraftConfig | null;
+  learningBrief?: LearningRoomBrief;
 };
 
 function readSession(): RoomSession | null {
@@ -77,6 +83,7 @@ function readSession(): RoomSession | null {
       targetId,
       conversationId: typeof parsed.conversationId === "string" ? parsed.conversationId : null,
       runId: typeof parsed.runId === "string" ? parsed.runId : null,
+      initialDraft: typeof parsed.initialDraft === "string" ? parsed.initialDraft : null,
       open: parsed.open === true,
       pending: parsed.pending && typeof parsed.pending === "object"
         ? {
@@ -183,6 +190,18 @@ function conversationMatchesEntry(item: AiConversation, scope: AiContextScope, t
   return item.link_target_id == null;
 }
 
+function conversationContext(detail: AiConversationDetail): { scope: AiContextScope; targetId: string | null } {
+  const { conversation, context } = detail;
+  return {
+    scope: conversation.context_scope,
+    targetId: conversation.context_scope === "task"
+      ? conversation.link_target_id ?? (context?.scope_kind === "task" ? context.task_id : null)
+      : conversation.context_scope === "plan"
+        ? conversation.link_target_id ?? (context?.scope_kind === "plan" ? context.goal_id : null)
+        : null,
+  };
+}
+
 function scopeLabel(item: AiConversation, entryScope: AiContextScope, entryTargetId: string | null) {
   const current = conversationMatchesEntry(item, entryScope, entryTargetId);
   if (item.context_scope === "task") return current ? "当前任务" : "任务对话";
@@ -195,6 +214,8 @@ export default function AiLearningRoom({
   task,
   contextScope,
   targetId,
+  initialDraft,
+  learningBrief,
   provider,
   onBack,
   onProviderOpen,
@@ -202,6 +223,8 @@ export default function AiLearningRoom({
   task: Task | null;
   contextScope?: AiContextScope;
   targetId?: string | null;
+  initialDraft?: string;
+  learningBrief?: LearningRoomBrief;
   provider: AiProvider | null;
   onBack: () => void;
   onProviderOpen: () => void;
@@ -211,7 +234,7 @@ export default function AiLearningRoom({
   const [detail, setDetail] = useState<AiConversationDetail | null>(null);
   const [context, setContext] = useState<AiLearningContext | null>(null);
   const [status, setStatus] = useState<RoomStatus>("loading");
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft ?? "");
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [conversations, setConversations] = useState<AiConversation[]>([]);
@@ -227,6 +250,8 @@ export default function AiLearningRoom({
   const [draftConfig, setDraftConfig] = useState<DraftConfig | null>(readSession()?.draftConfig ?? null);
   const [configBusy, setConfigBusy] = useState(false);
   const [openLayer, setOpenLayer] = useState<"history" | "config" | "context" | null>(null);
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationCompleted, setVerificationCompleted] = useState(false);
   const [titleBusy, setTitleBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -237,6 +262,7 @@ export default function AiLearningRoom({
   const subscribeRef = useRef<(run: AiRun, attempt?: number) => Promise<void>>(async () => undefined);
   const cancelRequestedRef = useRef(false);
   const mountedRef = useRef(true);
+  const conversationContextRef = useRef<{ scope: AiContextScope; targetId: string | null } | null>(null);
   const configLayerRef = useRef<HTMLDivElement | null>(null);
   const historyLayerRef = useRef<HTMLDivElement | null>(null);
   const contextLayerRef = useRef<HTMLDivElement | null>(null);
@@ -246,6 +272,7 @@ export default function AiLearningRoom({
   // long enough to restore the controlled input after an ambiguous failure.
   const pendingSubmissionRef = useRef<PendingSubmission | null>(readSession()?.pending ?? null);
   const pendingContentRef = useRef<string | null>(null);
+  const initialDraftSentRef = useRef<string | null>(null);
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
   useDismissibleLayer(openLayer === "config", [configLayerRef], dismissLayer);
@@ -257,18 +284,29 @@ export default function AiLearningRoom({
   conversationIdRef.current = conversationId;
   currentRunRef.current = currentRun;
 
-  const saveCurrentSession = useCallback((extra: Partial<RoomSession> = {}) => {
+  function sessionContext() {
+    return conversationContextRef.current ?? { scope: effectiveScope, targetId: effectiveTargetId };
+  }
+
+  function persistSession(extra: Partial<RoomSession> = {}) {
+    const current = sessionContext();
     const previous = readSession();
     writeSession({
-      taskId: effectiveScope === "task" ? effectiveTargetId : null,
-      contextScope: effectiveScope,
-      targetId: effectiveTargetId,
+      taskId: current.scope === "task" ? current.targetId : null,
+      contextScope: current.scope,
+      targetId: current.targetId,
       conversationId: conversationIdRef.current ?? previous?.conversationId ?? null,
       runId: currentRunRef.current?.id ?? runIdRef.current ?? previous?.runId ?? null,
+      initialDraft: previous?.initialDraft ?? null,
       open: true,
       draftConfig: previous?.draftConfig ?? null,
+      learningBrief,
       ...extra,
     });
+  }
+
+  const saveCurrentSession = useCallback((extra: Partial<RoomSession> = {}) => {
+    persistSession(extra);
   }, [effectiveScope, effectiveTargetId]);
 
   const pollTitle = useCallback(async (id: string, attempt = 0) => {
@@ -298,9 +336,9 @@ export default function AiLearningRoom({
     } else {
       runIdRef.current = null;
       const previous = readSession();
-      writeSession(previous?.pending
-        ? { taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: id, runId: null, open: true, pending: previous.pending }
-        : { taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: id, runId: null, open: true });
+      persistSession(previous?.pending
+        ? { conversationId: id, runId: null, pending: previous.pending }
+        : { conversationId: id, runId: null });
     }
     return next;
   }, [effectiveScope, effectiveTargetId, saveCurrentSession]);
@@ -371,7 +409,7 @@ export default function AiLearningRoom({
             event.data.reasoning_content,
           ),
         } : previous);
-        writeSession({ taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: run.conversation_id, runId: null, open: true });
+        persistSession({ conversationId: run.conversation_id, runId: null });
       }, controller.signal);
       if (!terminal && !controller.signal.aborted && !cancelRequestedRef.current) {
         throw new Error("流式连接提前结束");
@@ -401,6 +439,7 @@ export default function AiLearningRoom({
   subscribeRef.current = subscribe;
 
   const activateConversation = useCallback(async (id: string) => {
+    if (learningBrief?.session_id) await selectLearningRoomConversation(learningBrief.session_id, id);
     const [next, currentConfig] = await Promise.all([
       getAiConversation(id),
       getAiConversationConfig(id),
@@ -408,6 +447,7 @@ export default function AiLearningRoom({
     if (!mountedRef.current) return;
     conversationIdRef.current = id;
     setDetail(next);
+    conversationContextRef.current = conversationContext(next);
     setConversationConfig(currentConfig.config);
     setDraftConfig(null);
     setConversations((items) => upsertConversation(items, conversationListItem(next)));
@@ -416,14 +456,14 @@ export default function AiLearningRoom({
     if (titlePending) void pollTitle(id);
     if (next.active_run) {
       runIdRef.current = next.active_run.id;
-      writeSession({ taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: id, runId: next.active_run.id, open: true });
+      persistSession({ conversationId: id, runId: next.active_run.id });
       void subscribeRef.current(next.active_run);
     } else {
       runIdRef.current = null;
-      writeSession({ taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: id, runId: null, open: true });
+      persistSession({ conversationId: id, runId: null });
       setStatus("idle");
     }
-  }, [effectiveScope, effectiveTargetId, pollTitle]);
+  }, [effectiveScope, effectiveTargetId, pollTitle, learningBrief?.session_id]);
 
   const loadRoom = useCallback(async () => {
     setStatus("loading");
@@ -432,26 +472,32 @@ export default function AiLearningRoom({
     setHistoryError("");
     setHistoryActionError("");
     const saved = readSession();
-    const savedForEntry = saved?.contextScope === effectiveScope && saved.targetId === effectiveTargetId ? saved : null;
+    const savedForEntry = saved?.contextScope === effectiveScope && saved.targetId === effectiveTargetId
+      && saved.learningBrief?.session_id === learningBrief?.session_id ? saved : null;
     try {
-      const [entryContext, conversationItems, providerList] = await Promise.all([
+      const [entryContext, conversationItems, providerList, room] = await Promise.all([
         getAiContextPreview(effectiveScope, effectiveTargetId),
         listAiConversations().catch((reason: unknown) => {
           setHistoryError(reason instanceof Error ? reason.message : "对话历史加载失败");
           return [] as AiConversation[];
         }),
         listAiProviders(),
+        learningBrief?.session_id ? getLearningRoom(learningBrief.session_id) : Promise.resolve(null),
       ]);
       if (!mountedRef.current) return;
       setContext(entryContext);
       setProviders(providerList);
-      setConversations(conversationItems);
+      setConversations(room ? conversationItems.filter((item) => room.conversation_ids.includes(item.id)) : conversationItems);
       setHistoryLoading(false);
       setDraftConfig(savedForEntry?.draftConfig ?? null);
-      let candidate = savedForEntry?.conversationId && conversationItems.some((item) => item.id === savedForEntry.conversationId)
-        ? savedForEntry.conversationId
+      const savedConversation = savedForEntry?.conversationId
+        ? conversationItems.find((item) => item.id === savedForEntry.conversationId)
         : null;
-      if (!candidate) {
+      let candidate = !initialDraft && savedConversation && conversationMatchesEntry(savedConversation, effectiveScope, effectiveTargetId)
+        ? savedConversation.id
+        : null;
+      if (room) candidate = room.conversation_id;
+      if (!room && !candidate && !initialDraft) {
         candidate = conversationItems.find((item) => conversationMatchesEntry(item, effectiveScope, effectiveTargetId))?.id ?? null;
       }
       if (candidate) {
@@ -464,12 +510,14 @@ export default function AiLearningRoom({
         } catch {
           pendingSubmissionRef.current = null;
           pendingContentRef.current = null;
-          writeSession({ taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: null, runId: null, open: true });
+          conversationContextRef.current = null;
+          persistSession({ conversationId: null, runId: null });
           setStatus("idle");
         }
       } else {
         setDetail(null);
         setConversationConfig(null);
+        setDraft(initialDraft ?? "");
         setStatus("idle");
       }
     } catch (reason: unknown) {
@@ -478,7 +526,7 @@ export default function AiLearningRoom({
       setStatus("failed");
       setError(reason instanceof Error ? reason.message : "学习室加载失败");
     }
-  }, [activateConversation, effectiveScope, effectiveTargetId]);
+  }, [activateConversation, effectiveScope, effectiveTargetId, initialDraft, learningBrief?.session_id]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -490,6 +538,16 @@ export default function AiLearningRoom({
       if (titlePollTimerRef.current !== null) window.clearTimeout(titlePollTimerRef.current);
     };
   }, [loadRoom]);
+
+  useEffect(() => {
+    const content = initialDraft?.trim();
+    if (!content || status !== "idle" || detail?.messages.some((message) => message.role === "user") || initialDraftSentRef.current === content) return;
+    setDraft(content);
+    const timer = window.setTimeout(() => {
+      if (mountedRef.current) composerRef.current?.form?.requestSubmit();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [detail, initialDraft, provider, providers, status]);
 
   useEffect(() => {
     const textarea = composerRef.current;
@@ -508,6 +566,7 @@ export default function AiLearningRoom({
   async function ensureConversation(): Promise<AiConversationDetail> {
     if (detail) return detail;
     let created = await createAiConversation(effectiveScope, effectiveTargetId);
+    if (learningBrief?.session_id) await selectLearningRoomConversation(learningBrief.session_id, created.conversation.id);
     if (draftConfig) {
       await setAiConversationConfig(created.conversation.id, {
         provider_profile_id: draftConfig.providerProfileId,
@@ -519,6 +578,7 @@ export default function AiLearningRoom({
     }
     if (mountedRef.current) {
       setDetail(created);
+      conversationContextRef.current = conversationContext(created);
       conversationIdRef.current = created.conversation.id;
       setConversations((items) => upsertConversation(items, conversationListItem(created), true));
       const currentConfig = await getAiConversationConfig(created.conversation.id);
@@ -621,10 +681,11 @@ export default function AiLearningRoom({
       const pending: PendingSubmission = { taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
-      writeSession({ taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, runId: null, open: true, pending });
+      persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       setDraft("");
       const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId);
       if (!mountedRef.current) return;
+      if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
       pendingSubmissionRef.current = null;
       pendingContentRef.current = null;
       const localTitle = fallbackConversationTitle(content);
@@ -651,7 +712,7 @@ export default function AiLearningRoom({
         last_message_at: new Date().toISOString(),
       }, true));
       runIdRef.current = result.run.id;
-      writeSession({ taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, runId: result.run.id, open: true });
+      persistSession({ conversationId: conversation.conversation.id, runId: result.run.id, initialDraft: null });
       void subscribe(result.run);
     } catch (reason: unknown) {
       if (!mountedRef.current) return;
@@ -707,6 +768,7 @@ export default function AiLearningRoom({
     pendingSubmissionRef.current = null;
     pendingContentRef.current = null;
     setDetail(null);
+    conversationContextRef.current = null;
     setConversationConfig(null);
     setDraftConfig(null);
     setOpenLayer(null);
@@ -717,7 +779,7 @@ export default function AiLearningRoom({
     setError("");
     setDraft("");
     setStatus("idle");
-    writeSession({ taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: null, runId: null, open: true, draftConfig: null });
+    persistSession({ conversationId: null, runId: null, draftConfig: null });
   }
 
   async function handleConversationSwitch(id: string) {
@@ -831,7 +893,15 @@ export default function AiLearningRoom({
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
 
   return (
-    <div className="ai-room">
+    <>
+      {learningBrief?.action_id && learningBrief.delegation_id && <div hidden={!verificationOpen}>
+      <LearningVerification
+        brief={learningBrief}
+        onBack={() => setVerificationOpen(false)}
+        onCompleted={() => setVerificationCompleted(true)}
+      />
+      </div>}
+    <div className="ai-room" style={verificationOpen ? { display: "none" } : undefined}>
       <header className="ai-room-header">
         <div className="ai-room-heading">
           <button className="button button--quiet button--compact button--with-icon" onClick={onBack} aria-label="返回工作区">
@@ -919,7 +989,7 @@ export default function AiLearningRoom({
             {openLayer === "context" && <div id="ai-conversation-context-panel" className="ai-layer-panel ai-context-panel">
               <div className="ai-layer-heading"><div><small>{displayScope.toUpperCase()} CONTEXT</small><strong>{contextTitle}</strong></div><button className="icon-button" type="button" onClick={() => setOpenLayer(null)} aria-label="关闭当前对话信息"><X size={15} /></button></div>
               <p className="ai-context-panel-route">{learningContextRoute(displayContext, displayScope)}</p>
-              {displayContext ? <ContextFacts context={displayContext} /> : <p>本次对话不自动注入计划数据。</p>}
+              {displayContext ? <ContextFacts context={displayContext} /> : learningBrief ? <LearningRoomBriefDetails brief={learningBrief} /> : <p>本次对话不自动注入计划数据。</p>}
             </div>}
           </div>
           <div className="ai-room-layer-anchor" ref={configLayerRef}>
@@ -964,9 +1034,14 @@ export default function AiLearningRoom({
           <button className="button button--quiet button--compact button--with-icon" onClick={onProviderOpen} aria-label="AI 提供方设置" title="AI 提供方设置">
             <SlidersHorizontal size={15} /><span>AI 提供方设置</span>
           </button>
+              {learningBrief?.action_id && learningBrief.delegation_id && <button className="button button--accent button--compact button--with-icon" type="button" onClick={() => setVerificationOpen(true)}>
+            <ShieldCheck size={15} /><span>{verificationCompleted ? "查看验证结果" : "进入验证"}</span>
+          </button>}
           <button className="icon-button icon-button--bordered" onClick={handleNewConversation} title="新建对话" aria-label="新建对话"><Plus size={16} /></button>
         </div>
       </header>
+
+      {learningBrief && <LearningRoomBriefCard brief={learningBrief} />}
 
       <section className="ai-room-chat tool-panel">
           <div className="ai-chat-titlebar">
@@ -1017,6 +1092,7 @@ export default function AiLearningRoom({
         onConfirm={() => void handleConfirmDelete()}
       />}
     </div>
+    </>
   );
 }
 
@@ -1042,6 +1118,35 @@ function ContextFacts({ context }: { context: AiLearningContext }) {
   if (context.scope_kind === "task") return <dl><div><dt>状态</dt><dd>{context.status}</dd></div><div><dt>截止</dt><dd>{context.due_date}</dd></div><div><dt>进度</dt><dd>{context.progress}%</dd></div></dl>;
   if (context.scope_kind === "plan") return <dl><div><dt>状态</dt><dd>{context.status}</dd></div><div><dt>任务</dt><dd>{context.completed_task_count} / {context.task_count}</dd></div><div><dt>进度</dt><dd>{context.progress}%</dd></div></dl>;
   return <dl><div><dt>计划</dt><dd>{context.plan_counts.total}</dd></div><div><dt>待执行</dt><dd>{context.task_counts.total}</dd></div><div><dt>逾期</dt><dd>{context.task_counts.overdue}</dd></div></dl>;
+}
+
+function LearningRoomBriefCard({ brief }: { brief: LearningRoomBrief }) {
+  return (
+    <section className="ai-room-brief" aria-label="本次学习安排">
+      <div className="ai-room-brief__heading">
+        <span>本次学习</span>
+        <strong>{brief.action_title}</strong>
+      </div>
+      <div className="ai-room-brief__route">{brief.goal_title} / {brief.plan_title}</div>
+      <div className="ai-room-brief__items">
+        <span><b>成果</b>{brief.outcome_object}；{brief.outcome_behavior}</span>
+        {brief.boundaries && <span><b>边界</b>{brief.boundaries}</span>}
+        <span><b>停止</b>{brief.stop_conditions}</span>
+      </div>
+    </section>
+  );
+}
+
+function LearningRoomBriefDetails({ brief }: { brief: LearningRoomBrief }) {
+  return (
+    <dl>
+      <div><dt>目标</dt><dd>{brief.goal_title}</dd></div>
+      <div><dt>任务</dt><dd>{brief.action_title}</dd></div>
+      <div><dt>成果</dt><dd>{brief.outcome_object}；{brief.outcome_behavior}</dd></div>
+      {brief.boundaries && <div><dt>边界</dt><dd>{brief.boundaries}</dd></div>}
+      <div><dt>停止</dt><dd>{brief.stop_conditions}</dd></div>
+    </dl>
+  );
 }
 
 function emptyRoomCopy(scope: AiContextScope) {

@@ -981,3 +981,870 @@ function parseAiStreamFrame(frame: string): AiStreamEvent | null {
   const data = JSON.parse(dataLines.join("\n")) as AiStreamEvent["data"];
   return { type: eventName, data } as AiStreamEvent;
 }
+
+export type LearningCommandResult = {
+  id: string;
+  aggregate_id: string;
+  version: number;
+  event_id: string;
+};
+
+export type LearningAction = {
+  id: string;
+  title: string;
+  context_key: string;
+  status: "open" | "completed" | "cancelled";
+  version: number;
+  created_at: string;
+  aggregate_version: number;
+};
+
+export type LearningOutcome = {
+  id: string;
+  object_description: string;
+  behavior: string;
+  context_key: string;
+  source: string;
+  created_at: string;
+};
+
+export type LearningStandard = {
+  id: string;
+  outcome_id: string;
+  package_id: string;
+  version: number;
+  context_key: string;
+  review_status: "candidate" | "approved";
+  package_title: string;
+  object_description: string;
+  behavior: string;
+};
+
+export type LearningDelegation = {
+  id: string;
+  action_id: string;
+  outcome_id: string;
+  criterion_id: string | null;
+  contract_version: number;
+  status: "ready" | "active" | "paused" | "completed" | "cancelled";
+  version: number;
+  created_at: string;
+  action_title: string;
+  object_description: string;
+  behavior: string;
+  criterion_status: string | null;
+  criterion_package_title: string | null;
+};
+
+export type LearningSession = {
+  id: string;
+  delegation_id: string;
+  contract_version: number;
+  status: "running" | "ended" | "interrupted";
+  started_at: string;
+  ended_at: string | null;
+  version: number;
+  action_id: string;
+  action_title: string;
+};
+
+export type LearningArtifact = {
+  id: string;
+  content_version: number;
+  visibility: "visible" | "soft_deleted" | "purged";
+  evidence_status: "eligible" | "withdrawn" | "invalidated";
+  version: number;
+  session_id: string;
+  content: string | null;
+  content_hash: string | null;
+  privacy: string;
+  purged_at: string | null;
+  created_at: string;
+  delegation_id: string;
+  action_title: string;
+};
+
+export type LearningAnalysisRun = {
+  id: string;
+  artifact_id: string;
+  content_version: number;
+  fact_event_id: string;
+  criterion_id: string | null;
+  request_key: string;
+  attempt: number;
+  status:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "timeout"
+    | "cancelled"
+    | "invalid_output"
+    | "permission_denied"
+    | "blocked_no_criterion";
+  reason: string | null;
+  provider_selection_source: "default" | "explicit" | null;
+  provider_profile_id: string | null;
+  provider_model_id: string | null;
+  provider_model: string | null;
+  provider_kind: string | null;
+  provider_config_version: number | null;
+  provider_timeout_seconds: number | null;
+  analysis_prompt_schema_version: number | null;
+  created_at: string;
+  finished_at: string | null;
+};
+
+export type LearningEvent = {
+  event_id: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  aggregate_version: number;
+  event_type: string;
+  occurred_at: string;
+  payload_json: string;
+};
+
+export type LearningEvidenceClaim = {
+  id: string;
+  artifact_id: string;
+  content_version: number;
+  fact_event_id: string;
+  criterion_id: string;
+  dimension_id: string;
+  stance: "supports" | "refutes" | "insufficient";
+  status: "candidate" | "adopted" | "questioned" | "withdrawn" | "superseded";
+  source: "ai_analysis" | "human_review" | "deterministic_check";
+  statement: string;
+  verification_method: string;
+  evidence_condition: "independent" | "with_materials" | "with_hints";
+  scope: string;
+  analysis_run_id: string;
+  created_at: string;
+};
+
+export type LearningEvidenceFollowUp = {
+  id: string;
+  claim_id: string;
+  kind: "human_review" | "supplemental_verification";
+  status: "pending" | "completed" | "cancelled";
+  request_key: string;
+  note: string | null;
+  due_at: string | null;
+  created_at: string;
+  decided_at: string | null;
+};
+
+export type LearningDerivedState = {
+  id: string;
+  outcome_id: string;
+  criterion_id: string;
+  dimension_id: string;
+  status:
+    | "awaiting_evidence"
+    | "pending_review"
+    | "insufficient_evidence"
+    | "partially_supported"
+    | "supported"
+    | "contradicted";
+  reason_code: string;
+  standard_version: number;
+  calculation_version: number;
+  participating_claim_ids: string[];
+  excluded_claim_ids: string[];
+  excluded_claim_reasons: Array<{ claim_id: string; reason: string }>;
+  calculated_at: string;
+};
+
+export type LearningReviewAction = {
+  id: string;
+  claim_id: string;
+  action: "adopt" | "question" | "withdraw" | "supersede" | "defer";
+  from_status: "candidate" | "adopted" | "questioned" | "withdrawn" | "superseded";
+  to_status: "candidate" | "adopted" | "questioned" | "withdrawn" | "superseded";
+  reason: string | null;
+  request_key: string;
+  created_at: string;
+};
+
+export type LearningEvidenceReplacement = {
+  id: string;
+  superseded_claim_id: string;
+  replacement_claim_id: string;
+  reason: string;
+  created_at: string;
+};
+
+export type LearningRevisitItem = {
+  id: string;
+  source_kind: "questioned_claim" | "insufficient_state" | "supplemental_verification";
+  source_id: string;
+  claim_id: string | null;
+  criterion_id: string;
+  dimension_id: string | null;
+  reason: string;
+  due_at: string;
+  status: "pending" | "completed" | "cancelled";
+  created_at: string;
+  updated_at: string;
+};
+
+export type LearningMetricResult = {
+  numerator: number;
+  denominator: number;
+  value: number | null;
+  status: "pass" | "fail" | "no_sample";
+  unit: "ratio" | "count";
+  notes: string[];
+  excluded: Record<string, number>;
+};
+
+export type LearningMeasurementReport = {
+  metric_version: string;
+  generated_at: string;
+  window: string;
+  product_metrics: Record<string, LearningMetricResult>;
+  hard_guards: Record<string, LearningMetricResult>;
+};
+
+export type LearningState = {
+  goals: LearningGoal[];
+  plans: LearningPlan[];
+  modules: LearningModule[];
+  action_links: LearningActionLink[];
+  setups: LearningSetup[];
+  actions: LearningAction[];
+  outcomes: LearningOutcome[];
+  standards: LearningStandard[];
+  delegations: LearningDelegation[];
+  sessions: LearningSession[];
+  artifacts: LearningArtifact[];
+  analysis_runs: LearningAnalysisRun[];
+  evidence_claims: LearningEvidenceClaim[];
+  evidence_follow_ups: LearningEvidenceFollowUp[];
+  derived_states: LearningDerivedState[];
+  review_actions: LearningReviewAction[];
+  evidence_replacements: LearningEvidenceReplacement[];
+  revisit_queue: LearningRevisitItem[];
+};
+
+export type LearningGoal = {
+  id: string;
+  original_intent: string;
+  title: string;
+  description: string;
+  status: "hypothesis" | "active" | "paused" | "completed" | "archived";
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LearningPlan = {
+  id: string;
+  goal_id: string | null;
+  title: string;
+  description: string;
+  status: "active" | "paused" | "completed" | "archived";
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LearningModule = {
+  id: string;
+  plan_id: string;
+  parent_module_id: string | null;
+  title: string;
+  description: string;
+  position: number;
+  status: "active" | "paused" | "archived";
+  created_at: string;
+  updated_at: string;
+};
+
+export type LearningActionLink = {
+  owner_id: string;
+  action_id: string;
+  plan_id: string;
+  module_id: string | null;
+  created_at: string;
+};
+
+export type LearningSetup = {
+  id: string;
+  goal_id: string;
+  plan_id: string;
+  action_id: string;
+  outcome_id: string;
+  delegation_id: string;
+  original_intent: string;
+  status: "confirmed";
+  version: number;
+  created_at: string;
+};
+
+export type LearningSetupDraft = {
+  goal_title: string;
+  goal_description: string;
+  plan_title: string;
+  plan_description: string;
+  action_title: string;
+  context_key: string;
+  outcome_object: string;
+  outcome_behavior: string;
+  outcome_context_key: string;
+  boundaries: string;
+  stop_conditions: string;
+  time_budget_minutes: number;
+  recommended_criterion_id: string | null;
+  rationale: string;
+};
+
+export type LearningRoomBrief = {
+  action_id?: string;
+  delegation_id?: string;
+  session_id?: string;
+  criterion_id?: string | null;
+  goal_title: string;
+  plan_title: string;
+  action_title: string;
+  outcome_object: string;
+  outcome_behavior: string;
+  boundaries: string;
+  stop_conditions: string;
+};
+
+export type LearningVerificationQuestion = {
+  id: string;
+  type: "scenario" | "project" | "short_response" | "true_false";
+  prompt: string;
+  source_urls: string[];
+};
+
+export type LearningVerification = {
+  id: string;
+  action_id: string;
+  delegation_id: string;
+  session_id: string | null;
+  mode: "ai_challenge" | "user_material";
+  status: "ready" | "submitted" | "passed" | "failed";
+  challenge: {
+    questions?: LearningVerificationQuestion[];
+    instructions?: string;
+    stop_condition?: string;
+  };
+  result: {
+    passed: boolean;
+    stop_condition_met: boolean;
+    feedback: string;
+    next_step: string;
+  } | null;
+  stop_condition_confirmed: boolean;
+  stop_condition_met: boolean | null;
+  created_at: string;
+  submitted_at: string | null;
+  latest_submission_id: string | null;
+  evaluation: { id: string; status: "running" | "succeeded" | "failed"; reason: string | null } | null;
+  action_completed: boolean;
+  stop_conditions: string;
+  artifact_id: string | null;
+  content_purged: boolean;
+  verification_purged: boolean;
+  evidence: { id: string; status: string; reason: string | null } | null;
+};
+
+export type LearningReplayResult = {
+  status: string;
+  event_count: number;
+  aggregate_count: number;
+  projection_digest: string;
+};
+
+export function getLearningMetrics(): Promise<LearningMeasurementReport> {
+  return request<LearningMeasurementReport>("/api/learning/metrics");
+}
+
+export function getLearningState(): Promise<LearningState> {
+  return request<LearningState>("/api/learning/state");
+}
+
+export function createLearningSetupDraft(intent: string): Promise<LearningSetupDraft> {
+  return request<LearningSetupDraft>("/api/learning/setup/draft", {
+    method: "POST",
+    body: JSON.stringify({ intent }),
+  });
+}
+
+export function confirmLearningSetup(payload: {
+  original_intent: string;
+  goal_title: string;
+  goal_description: string;
+  plan_title: string;
+  plan_description: string;
+  action_title: string;
+  context_key: string;
+  outcome_id: string | null;
+  object_description: string;
+  behavior: string;
+  outcome_context_key: string;
+  criterion_id: string | null;
+  boundaries: string;
+  stop_conditions: string;
+  time_budget_minutes: number | null;
+  idempotency_key: string;
+}): Promise<{
+  id: string;
+  setup_id: string;
+  goal_id: string;
+  plan_id: string;
+  action_id: string;
+  outcome_id: string;
+  delegation_id: string;
+  version: number;
+  event_id: string;
+}> {
+  return request("/api/learning/setup/confirm", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createLearningAction(payload: {
+  title: string;
+  context_key: string;
+  idempotency_key: string;
+}): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>("/api/learning/actions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createLearningOutcome(payload: {
+  object_description: string;
+  behavior: string;
+  context_key: string;
+  idempotency_key: string;
+}): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>("/api/learning/outcomes", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createLearningDelegation(payload: {
+  action_id: string;
+  outcome_id: string;
+  criterion_id: string | null;
+  boundaries: string;
+  stop_conditions: string;
+  time_budget_minutes: number | null;
+  expected_version: number;
+  idempotency_key: string;
+}): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>("/api/learning/delegations", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function startLearningSession(payload: {
+  delegation_id: string;
+  expected_version: number;
+  idempotency_key: string;
+}): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>("/api/learning/sessions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveLearningArtifact(payload: {
+  session_id: string;
+  content: string;
+  expected_version: number;
+  idempotency_key: string;
+}): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>("/api/learning/artifacts", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function endLearningSession(
+  sessionId: string,
+  payload: { disposition: "ended" | "interrupted"; expected_version: number; idempotency_key: string },
+): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>(`/api/learning/sessions/${sessionId}/end`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function startLearningVerification(payload: {
+  action_id: string;
+  delegation_id: string;
+  session_id?: string | null;
+  mode: "ai_challenge" | "user_material";
+  request_key: string;
+}): Promise<LearningVerification> {
+  return request<LearningVerification>("/api/learning/verifications", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function submitLearningVerification(
+  verificationId: string,
+  payload: {
+    responses?: Record<string, string>;
+    material?: string;
+    learner_work?: string;
+    evidence_condition?: "independent" | "with_materials" | "with_hints";
+    request_key: string;
+  },
+): Promise<LearningVerification> {
+  return request<LearningVerification>(`/api/learning/verifications/${verificationId}/submit`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listLearningVerifications(): Promise<LearningVerification[]> {
+  return request<LearningVerification[]>("/api/learning/verifications");
+}
+
+export function analyzeVerificationEvidence(id: string): Promise<LearningVerification> {
+  return request<LearningVerification>(`/api/learning/verifications/${id}/evidence`, { method: "POST" });
+}
+
+export function purgeVerification(id: string): Promise<LearningVerification> {
+  return request<LearningVerification>(`/api/learning/verifications/${id}/purge`, {
+    method: "POST", body: JSON.stringify({ confirmation: "PURGE" }),
+  });
+}
+
+export type LearningRoomState = { brief: LearningRoomBrief; conversation_id: string | null; conversation_ids: string[] };
+
+export function getLearningRoom(sessionId: string): Promise<LearningRoomState> {
+  return request<LearningRoomState>(`/api/learning/sessions/${sessionId}/room`);
+}
+
+export function selectLearningRoomConversation(sessionId: string, conversationId: string): Promise<LearningRoomState> {
+  return request<LearningRoomState>(`/api/learning/sessions/${sessionId}/room`, {
+    method: "PUT", body: JSON.stringify({ conversation_id: conversationId }),
+  });
+}
+
+export function evaluateLearningVerification(id: string, submissionId: string, requestKey: string): Promise<LearningVerification> {
+  return request<LearningVerification>(`/api/learning/verifications/${id}/evaluate`, {
+    method: "POST", body: JSON.stringify({ submission_id: submissionId, request_key: requestKey }),
+  });
+}
+
+export function confirmLearningVerification(id: string, submissionId: string, evaluationId: string): Promise<LearningVerification> {
+  return request<LearningVerification>(`/api/learning/verifications/${id}/confirm`, {
+    method: "POST", body: JSON.stringify({ submission_id: submissionId, evaluation_id: evaluationId, stop_condition_confirmed: true }),
+  });
+}
+
+export function getLearningArtifact(artifactId: string, contentVersion?: number): Promise<LearningArtifact> {
+  const params = new URLSearchParams();
+  if (contentVersion) params.set("content_version", String(contentVersion));
+  const query = params.toString();
+  return request<LearningArtifact>(`/api/learning/artifacts/${artifactId}${query ? `?${query}` : ""}`);
+}
+
+export function correctLearningArtifact(
+  artifactId: string,
+  payload: { content: string; expected_version: number; idempotency_key: string },
+): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>(`/api/learning/artifacts/${artifactId}/corrections`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getLearningEvents(actionId: string): Promise<LearningEvent[]> {
+  return request<LearningEvent[]>(`/api/learning/actions/${actionId}/events`);
+}
+
+export function analyzeLearningArtifact(
+  artifactId: string,
+  payload: { content_version?: number | null; request_key: string },
+): Promise<{ run: LearningAnalysisRun; claims: LearningEvidenceClaim[]; created: boolean }> {
+  return request<{ run: LearningAnalysisRun; claims: LearningEvidenceClaim[]; created: boolean }>(
+    `/api/learning/artifacts/${artifactId}/analysis`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function requestEvidenceHumanReview(
+  claimId: string,
+  payload: { request_key: string; note?: string | null },
+): Promise<LearningEvidenceFollowUp> {
+  return request<LearningEvidenceFollowUp>(`/api/learning/evidence-claims/${claimId}/human-review`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function scheduleEvidenceSupplementalVerification(
+  claimId: string,
+  payload: { request_key: string; note?: string | null },
+): Promise<LearningEvidenceFollowUp> {
+  return request<LearningEvidenceFollowUp>(
+    `/api/learning/evidence-claims/${claimId}/supplemental-verification`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function batchReviewEvidenceClaims(
+  claimIds: string[],
+  payload: {
+    action: "adopt" | "question" | "withdraw" | "defer";
+    reason?: string | null;
+    request_key: string;
+  },
+): Promise<{ id: string; action: string; claim_ids: string[]; review_ids: string[] }> {
+  return request<{ id: string; action: string; claim_ids: string[]; review_ids: string[] }>(
+    "/api/learning/evidence-claims/batch-review",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        claim_ids: claimIds,
+        action: payload.action,
+        reason: payload.reason ?? null,
+        request_key: payload.request_key,
+      }),
+    },
+  );
+}
+
+export function reviewEvidenceClaim(
+  claimId: string,
+  payload: {
+    action: "adopt" | "question" | "withdraw" | "supersede" | "defer";
+    reason?: string | null;
+    request_key: string;
+  },
+): Promise<LearningReviewAction> {
+  return request<LearningReviewAction>(`/api/learning/evidence-claims/${claimId}/review`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function recalculateDerivedStates(criterionId?: string | null): Promise<LearningDerivedState[]> {
+  return request<LearningDerivedState[]>("/api/learning/derived-states/recalculate", {
+    method: "POST",
+    body: JSON.stringify({ criterion_id: criterionId ?? null }),
+  });
+}
+
+export function getLearningDerivedStateHistory(): Promise<LearningDerivedState[]> {
+  return request<LearningDerivedState[]>("/api/learning/derived-state-history");
+}
+
+export function getLearningEvidenceFollowUps(): Promise<LearningEvidenceFollowUp[]> {
+  return request<LearningEvidenceFollowUp[]>("/api/learning/evidence-follow-ups");
+}
+
+export function getLearningEvidenceClaims(artifactId?: string): Promise<LearningEvidenceClaim[]> {
+  const params = new URLSearchParams();
+  if (artifactId) params.set("artifact_id", artifactId);
+  const query = params.toString();
+  return request<LearningEvidenceClaim[]>(`/api/learning/evidence-claims${query ? `?${query}` : ""}`);
+}
+
+export function softDeleteLearningArtifact(
+  artifactId: string,
+  payload: { expected_version: number; idempotency_key: string },
+): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>(`/api/learning/artifacts/${artifactId}/soft-delete`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function restoreLearningArtifact(
+  artifactId: string,
+  payload: { expected_version: number; idempotency_key: string },
+): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>(`/api/learning/artifacts/${artifactId}/restore`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function withdrawLearningArtifact(
+  artifactId: string,
+  payload: { expected_version: number; idempotency_key: string },
+): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>(`/api/learning/artifacts/${artifactId}/withdraw`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function purgeLearningArtifact(
+  artifactId: string,
+  payload: { expected_version: number; idempotency_key: string; confirmation: "PURGE" },
+): Promise<LearningCommandResult> {
+  return request<LearningCommandResult>(`/api/learning/artifacts/${artifactId}/purge`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function replayEvidence(): Promise<LearningReplayResult> {
+  return request<LearningReplayResult>("/api/learning/evidence-replay", { method: "POST" });
+}
+
+export function replayLearning(): Promise<LearningReplayResult> {
+  return request<LearningReplayResult>("/api/learning/replay", { method: "POST" });
+}
+
+export type LearningEvidenceProviderSelection = {
+  provider_profile_id: string;
+  provider_model_id: string;
+  updated_at: string;
+};
+
+export function getLearningEvidenceProvider(): Promise<LearningEvidenceProviderSelection | null> {
+  return request<LearningEvidenceProviderSelection | null>("/api/learning/evidence-provider");
+}
+
+export function setLearningEvidenceProvider(payload: {
+  provider_profile_id: string;
+  provider_model_id: string;
+}): Promise<LearningEvidenceProviderSelection> {
+  return request<LearningEvidenceProviderSelection>("/api/learning/evidence-provider", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function clearLearningEvidenceProvider(): Promise<void> {
+  return request<void>("/api/learning/evidence-provider", { method: "DELETE" });
+}
+
+export type AgentPermissionRequest = {
+  id: string;
+  owner_id: string;
+  agent_id: string;
+  request_key: string;
+  purpose: string;
+  scope: "learning_action";
+  target_id: string;
+  content_granularity: "metadata" | "full_text";
+  ttl_seconds: number;
+  expires_at: string;
+  status: "pending" | "approved" | "denied" | "expired" | "revoked";
+  created_at: string;
+  decided_at: string | null;
+  decision_reason: string | null;
+  grant_status?: "active" | "revoked" | "expired";
+  granted_at?: string | null;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+};
+
+export type AgentContext = {
+  agent_id: string;
+  scope: "global" | "learning_action";
+  authorization: {
+    status: "default" | "pending" | "denied" | "expired" | "approved" | "revoked";
+    content_granularity: "metadata" | "full_text";
+    request_id: string | null;
+  };
+  analysis: {
+    status: "available" | "incomplete";
+    reason: string;
+    available: string[];
+    unavailable: string[];
+  };
+  context: {
+    actions?: Array<{
+      id: string;
+      title: string;
+      status: string;
+      created_at: string;
+      delegation_count: number;
+      evidence_reference_count: number;
+    }>;
+    action?: {
+      id: string;
+      title: string;
+      status: string;
+      created_at: string;
+      delegation_count: number;
+      evidence_reference_count: number;
+    };
+    delegations?: Array<{ id: string; status: string }>;
+    sessions?: Array<{ id: string; status: string }>;
+    evidence_references?: Array<{ id: string; status: string; stance: string }>;
+    artifacts?: Array<{
+      id: string;
+      content_version: number;
+      visibility: string;
+      evidence_status: string;
+      content?: string;
+    }>;
+  };
+};
+
+export function listAgentPermissionRequests(): Promise<AgentPermissionRequest[]> {
+  return request<AgentPermissionRequest[]>("/api/learning/agent/permission-requests");
+}
+
+export function createAgentPermissionRequest(payload: {
+  purpose: string;
+  target_id: string;
+  content_granularity: "metadata" | "full_text";
+  ttl_seconds: number;
+  request_key: string;
+}): Promise<AgentPermissionRequest> {
+  return request<AgentPermissionRequest>("/api/learning/agent/permission-requests", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function denyAgentPermissionRequest(
+  requestId: string,
+  reason?: string | null,
+): Promise<AgentPermissionRequest> {
+  return request<AgentPermissionRequest>(`/api/learning/agent/permission-requests/${requestId}/deny`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
+}
+
+
+export function approveAgentPermissionRequest(requestId: string): Promise<AgentPermissionRequest> {
+  return request<AgentPermissionRequest>(`/api/learning/agent/permission-requests/${requestId}/approve`, {
+    method: "POST",
+  });
+}
+
+export function revokeAgentPermissionGrant(
+  requestId: string,
+  reason?: string | null,
+): Promise<AgentPermissionRequest> {
+  return request<AgentPermissionRequest>(`/api/learning/agent/permission-requests/${requestId}/revoke`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
+}
+
+export function getAgentContext(targetId?: string): Promise<AgentContext> {
+  const query = targetId ? `?target_id=${encodeURIComponent(targetId)}` : "";
+  return request<AgentContext>(`/api/learning/agent/context${query}`);
+}

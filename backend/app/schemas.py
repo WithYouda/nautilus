@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 TaskType = Literal["study", "practice", "review", "output"]
@@ -316,3 +316,282 @@ class MessageSendRequest(BaseModel):
         if not content:
             raise ValueError("消息内容不能为空")
         return content
+
+
+class LearningActionCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    context_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class LearningSetupDraftRequest(BaseModel):
+    intent: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("intent")
+    @classmethod
+    def normalize_intent(cls, value: str) -> str:
+        intent = value.strip()
+        if not intent:
+            raise ValueError("学习意图不能为空")
+        return intent
+
+
+class LearningSetupConfirmRequest(BaseModel):
+    original_intent: str = Field(min_length=1, max_length=4000)
+    goal_title: str = Field(min_length=1, max_length=200)
+    goal_description: str = Field(default="", max_length=1000)
+    plan_title: str = Field(min_length=1, max_length=200)
+    plan_description: str = Field(default="", max_length=1000)
+    action_title: str = Field(min_length=1, max_length=300)
+    context_key: str = Field(min_length=1, max_length=200)
+    outcome_id: str | None = Field(default=None, min_length=1, max_length=100)
+    object_description: str = Field(min_length=1, max_length=500)
+    behavior: str = Field(min_length=1, max_length=500)
+    outcome_context_key: str = Field(min_length=1, max_length=200)
+    criterion_id: str | None = Field(default=None, min_length=1, max_length=100)
+    boundaries: str = Field(default="", max_length=2000)
+    stop_conditions: str = Field(min_length=1, max_length=2000)
+    time_budget_minutes: int | None = Field(default=None, ge=1, le=1440)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator(
+        "original_intent",
+        "goal_title",
+        "plan_title",
+        "action_title",
+        "context_key",
+        "object_description",
+        "behavior",
+        "outcome_context_key",
+        "stop_conditions",
+    )
+    @classmethod
+    def strip_nonempty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("字段不能为空")
+        return value
+
+
+class LearningOutcomeCreateRequest(BaseModel):
+    object_description: str = Field(min_length=1, max_length=500)
+    behavior: str = Field(min_length=1, max_length=500)
+    context_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("object_description", "behavior", "context_key")
+    @classmethod
+    def strip_nonempty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("字段不能为空")
+        return value
+
+
+class LearningDelegationCreateRequest(BaseModel):
+    action_id: str = Field(min_length=1, max_length=100)
+    outcome_id: str = Field(min_length=1, max_length=100)
+    criterion_id: str | None = Field(default=None, min_length=1, max_length=100)
+    boundaries: str = Field(default="", max_length=2000)
+    stop_conditions: str = Field(min_length=1, max_length=2000)
+    time_budget_minutes: int | None = Field(default=None, ge=1, le=1440)
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("stop_conditions")
+    @classmethod
+    def strip_stop_conditions(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("停止条件不能为空")
+        return value
+
+
+class LearningSessionStartRequest(BaseModel):
+    delegation_id: str = Field(min_length=1, max_length=100)
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class LearningArtifactSaveRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=100)
+    content: str = Field(min_length=1, max_length=1_000_000)
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class LearningSessionEndRequest(BaseModel):
+    disposition: Literal["ended", "interrupted"]
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class LearningVerificationStartRequest(BaseModel):
+    action_id: str = Field(min_length=1, max_length=100)
+    delegation_id: str = Field(min_length=1, max_length=100)
+    session_id: str | None = Field(default=None, max_length=100)
+    mode: Literal["ai_challenge", "user_material"]
+    request_key: str = Field(min_length=1, max_length=200)
+
+
+class LearningRoomConversationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    conversation_id: str = Field(min_length=1, max_length=100)
+
+
+class LearningVerificationSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    responses: dict[str, str] = Field(default_factory=dict)
+    material: str = Field(default="", max_length=1_000_000)
+    learner_work: str = Field(default="", max_length=1_000_000)
+    evidence_condition: Literal["independent", "with_materials", "with_hints"] = "with_materials"
+    request_key: str = Field(min_length=1, max_length=200)
+
+
+class LearningVerificationEvaluateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    submission_id: str = Field(min_length=1, max_length=100)
+    request_key: str = Field(min_length=1, max_length=200)
+
+
+class LearningVerificationConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    submission_id: str = Field(min_length=1, max_length=100)
+    evaluation_id: str = Field(min_length=1, max_length=100)
+    stop_condition_confirmed: Literal[True]
+
+
+class LearningVerificationPurgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmation: Literal["PURGE"]
+
+
+class LearningArtifactCorrectRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=1_000_000)
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class AgentPermissionRequestCreate(BaseModel):
+    purpose: str = Field(min_length=1, max_length=1000)
+    target_id: str = Field(min_length=1, max_length=100)
+    content_granularity: Literal["metadata", "full_text"] = "metadata"
+    ttl_seconds: int = Field(default=300, ge=60, le=3600)
+    request_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("purpose")
+    @classmethod
+    def strip_purpose(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("权限申请目的不能为空")
+        return value
+
+
+class AgentPermissionDenyRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class AgentPermissionRevokeRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_revoke_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class EvidenceAnalysisRequest(BaseModel):
+    content_version: int | None = Field(default=None, ge=1)
+    request_key: str = Field(min_length=1, max_length=200)
+
+
+class EvidenceHumanReviewRequest(BaseModel):
+    request_key: str = Field(min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("note")
+    @classmethod
+    def strip_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class EvidenceSupplementalVerificationRequest(BaseModel):
+    request_key: str = Field(min_length=1, max_length=200)
+    due_at: datetime | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("note")
+    @classmethod
+    def strip_supplemental_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class EvidenceClaimReviewRequest(BaseModel):
+    action: Literal["adopt", "question", "withdraw", "supersede", "defer"]
+    reason: str | None = Field(default=None, max_length=1000)
+    request_key: str = Field(min_length=1, max_length=200)
+    replacement_claim_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_review_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class DerivedStateRecalculateRequest(BaseModel):
+    criterion_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class EvidenceBatchReviewRequest(BaseModel):
+    claim_ids: list[str] = Field(min_length=1, max_length=100)
+    action: Literal["adopt", "question", "withdraw", "defer"]
+    reason: str | None = Field(default=None, max_length=1000)
+    request_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_batch_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @field_validator("claim_ids")
+    @classmethod
+    def validate_claim_ids(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() for item in value):
+            raise ValueError("批量复核主张不能为空")
+        if len(value) != len(set(value)):
+            raise ValueError("批量复核主张不能重复")
+        return value
+
+
+class ArtifactLifecycleRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class ArtifactPurgeRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    confirmation: Literal["PURGE"]
+
+
+class EvidenceProviderSelectionRequest(BaseModel):
+    provider_profile_id: str = Field(min_length=1, max_length=100)
+    provider_model_id: str = Field(min_length=1, max_length=100)

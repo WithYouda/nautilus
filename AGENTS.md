@@ -2,9 +2,11 @@
 
 Before making changes in this repository:
 
-1. Read `docs/superpowers/specs/2026-07-23-nautilus-design.md`.
-2. Read `docs/progress/nautilus-development-status.md`.
-3. Treat the formal specification as authoritative. The archived concept is historical context only.
+1. Read `docs/superpowers/specs/2026-09-02-nautilus-prd-v2.md` as the current product requirements baseline.
+2. Read `docs/superpowers/specs/2026-07-23-nautilus-design.md` for the original product and technical baseline.
+3. Read `docs/progress/nautilus-development-status.md`.
+4. If working on PRD V2 or the first vertical slice, read `docs/progress/nautilus-prd-v2-review-2026-09-05.md` before proposing changes.
+5. Treat the current PRD V2 and confirmed product decision record as authoritative for product direction; the archived concept and superseded portions of the original baseline are historical context only.
 
 Collaboration and engineering judgment:
 
@@ -15,6 +17,13 @@ Collaboration and engineering judgment:
 - Do not hide uncertainty or pretend agreement. Verify facts from the repository or relevant primary sources when needed, and make assumptions explicit.
 - After the user has seen the trade-offs and made an informed decision within the safe project scope, execute that decision faithfully unless it conflicts with a higher-priority instruction or repository safety rule.
 - Optimize for the smallest coherent product slice: correctness, understandable workflows, usable interface, maintainability, and verification must advance together. Avoid both backend-complete but unusable features and expensive visual polish on an unvalidated workflow.
+
+Product design discussion continuity:
+
+- Treat `docs/progress/nautilus-product-design-decisions.md` as the persistent record of confirmed product direction, architecture principles, and unresolved design questions.
+- Before advancing a product discussion, check that document and do not present an already confirmed conclusion as a new open question.
+- Whenever a product discussion produces a confirmed material decision, update that document in the same turn, append its update history, and distinguish the confirmed decision from recommendations, open questions, and unimplemented future work.
+- Also update `docs/progress/nautilus-development-status.md` so the next Agent can distinguish current code facts from product direction.
 
 Before ending every development turn:
 

@@ -1,0 +1,50 @@
+{
+  "package_id": "python-regex-basics-v1",
+  "title": "Python 正则表达式基础 v1",
+  "version": 1,
+  "context_key": "python-regex-basics",
+  "source": "https://docs.python.org/3/library/re.html",
+  "review_status": "candidate",
+  "outcome": {
+    "object_description": "Python re 模块中的基础正则表达式语法",
+    "behavior": "能在不查阅资料的情况下解释并编写基础 Python 正则表达式，用于匹配文本中的字面量、字符类、边界、量词和分组",
+    "context_key": "python-regex-basics"
+  },
+  "recipe": {
+    "dimensions": [
+      {
+        "id": "syntax_semantics",
+        "label": "正则表达式语法语义",
+        "requirements": [
+          {
+            "method": "semantic_analysis",
+            "condition": "independent",
+            "minimum": 1
+          }
+        ]
+      },
+      {
+        "id": "application",
+        "label": "基础正则表达式应用",
+        "requirements": [
+          {
+            "method": "deterministic_check",
+            "condition": "independent",
+            "minimum": 1
+          }
+        ]
+      },
+      {
+        "id": "independent_explanation",
+        "label": "独立解释匹配行为",
+        "requirements": [
+          {
+            "method": "independent_review",
+            "condition": "independent",
+            "minimum": 1
+          }
+        ]
+      }
+    ]
+  }
+}

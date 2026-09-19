@@ -74,6 +74,21 @@ if [[ ! -f "$ROOT_DIR/frontend/dist/index.html" ]]; then
   exit 1
 fi
 
+# Test setup explicitly initializes only the validated, newly created directory.
+# Application startup itself always requires an up-to-date existing schema.
+PYTHONPATH="$ROOT_DIR/backend" PYTHONDONTWRITEBYTECODE=1 "$PYTHON_BIN" - "$E2E_DATA_DIR" <<'PY'
+import sys
+from pathlib import Path
+
+from app.config import PROJECT_ROOT
+from app.db import Database
+from app.learning_storage import open_learning_database
+
+directory = Path(sys.argv[1])
+Database(directory / "nautilus.sqlite3", PROJECT_ROOT / "backend/app/migrations", migrate=True).close()
+open_learning_database(directory / "learning.sqlite3", migrate=True).close()
+PY
+
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON_BIN" "$ROOT_DIR/scripts/mock-openai-provider.py" \
   --host 0.0.0.0 \
   --port "$MOCK_PROVIDER_PORT" \
@@ -98,6 +113,7 @@ if ! curl -fsS "http://127.0.0.1:$MOCK_PROVIDER_PORT/health" >/dev/null 2>&1; th
 fi
 
 NAUTILUS_DATA_DIR="$E2E_DATA_DIR" \
+NAUTILUS_LEARNING_DATABASE="$E2E_DATA_DIR/learning.sqlite3" \
 NAUTILUS_RUNTIME_TOKEN_FILE="$E2E_DATA_DIR/runtime/access-token" \
 NAUTILUS_BACKEND_PORT="$BACKEND_PORT" \
 "$PYTHON_BIN" -m uvicorn app.main:app \
