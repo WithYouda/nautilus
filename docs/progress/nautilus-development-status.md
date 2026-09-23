@@ -1,5 +1,179 @@
 # 学海无涯（Nautilus）开发进度与 Agent 交接文档
 
+## CURRENT SNAPSHOT — 2026-09-24（流程审计与本地提交收尾）
+
+- 运行保持上一轮：同一trial学习库029、Web http://172.17.253.105:5188/、API8018，均绑定0.0.0.0；PID23768/23771/23810需使用时重验。029是结构版本，不是额外试用库。trial有2个运行数据库、4份迁移备份（约3.16MiB）；本轮只看文件元数据，未查询正文、删除备份或重启。
+- 已落实：AGENTS增加小改动验证后及时本地commit、代码未变复用测试结果、日常短记录和普通重启不备份。产品决定记录流程审计与尚待采纳的备份/迁移授权简化建议，未擅自替换旧的数据操作授权范围。
+- 提交整理：09-19的0973056以来积压的89个Nautilus文件包含连续学习/证据可信性、验证回看/逐题反馈、讨论流式/思考与引用预览；已按明确文件清单提交基线 **116bc9c**（87文件）；本轮AGENTS流程规则及两份当前状态/决定记录独立提交。无关pelican-bike.html和diagnostic-backups/保持原样，不暂存；不push。
+- 验证沿用上一轮377后端/14浏览器、构建与合成升级演练及已完成的实际运行健康检查。本轮应用代码未变，不重复测试；检查提交范围和Git空白。无新迁移，001–029不改。
+- 已知限制：真实模型效果仍待用户试用；已有备份工具仍默认升级前后各备份，保留数量/统一目录/常设迁移授权尚未实现或确认。不能把流程建议写成已生效。
+- 下一项：根据用户对流程审计的反馈落实备份与迁移授权简化；后续功能修复按小步验证、小步commit执行。
+- 更新历史（2026-09-24）：核查数据库/备份/提交事实，纠正长期不commit和重复文档习惯；功能基线116bc9c已提交，流程规则与记录随本次文档提交保存；最终提交记录见git log。
+
+## 2026-09-24 029升级与启用快照（运行事实，详见本轮提交）
+
+- **用户明确回复“授权备份、升级并重启”，本轮已按准备好的方案完成。** 独立试用库从 028 升级至 029，已安装上一轮通过验收的思考内容修复版并重启。题目讨论与普通学习室共用思考组件，支持流式展示、生成时展开、结束后折叠及刷新恢复；旧记录未保存的思考不会补造。真实使用基线和产品阶段验收仍未完成。
+- 数据：仅操作 `tmp/nautilus-trial-20260919/learning.sqlite3`，升级前后所有业务表记录数量一致，integrity_check/FK 均 ok，新 reasoning_content 列及清除触发器核对通过。升级前备份 `backups/learning-pre-upgrade-20260923T163610016556Z.sqlite3`，升级后备份 `backups/learning-post-upgrade-20260923T163610213396Z.sqlite3`（均相对 trial）；备份与清单权限 0600，SHA-256 与清单吻合，版本分别为028/029。文件名使用 UTC，与本地 09-24 日期不同。
+- 运行：核验并停止旧 supervisor 后沿用 run.sh 启动，当前脚本/API/Web PID 为 **23768/23771/23810**（后续需重新核对）。API **8018**、Web **5188** 均监听 **0.0.0.0**。实际 WSL2 入口 **http://172.17.253.105:5188/**；直接 API、代理及实际 IP 的健康检查均 status/database=ok。入口、新 JS `index-D8Y8sq_J.js`、CSS `index-BEDFnmSN.css` 均 HTTP200且哈希匹配已验收构建；未登录学习记录和讨论 SSE 返回401。
+- 安装：直接使用 `/tmp/nautilus-reasoning-dist` 的已验收构建，保留旧 assets、原子替换入口。本轮没有修改应用代码或重复跑已通过的回归；沿用上一轮 **377 后端/14 浏览器通过**及028→029合成升级演练，新增实际部署、备份、完整性和启动健康验证。`git diff --check`、run.sh语法检查通过。
+- 本轮文件：更新本状态、产品决定、[思考内容实施记录](nautilus-discussion-reasoning-2026-09-24.md)；安装 frontend/dist 构建，指定 trial 的库/备份/运行状态随授权更新。应用改动和迁移029的文件明细见上一快照及实施记录。原未提交工作保留，未暂存/提交/push；001–028 未修改。
+- frontend-skill 的 enabled=false 配置仍保持；技能文件保留，Codex 需自身重启重新加载配置，本次 Nautilus 服务重启不替代它。另一项 frontend-design 未修改。
+- 边界与限制：未查看学习正文/凭据，未调用真实 Provider，未执行恢复或彻底删除，未触碰默认 data/ 或 diagnostic-backups/。本次授权已执行，不扩展为未来迁移授权。真实 Provider 的思考返回、首字延迟与长回复待作者试用；仅显示实际返回内容。
+- **唯一下一项：作者刷新试用页，在题目讨论发送新问题，复试思考流、正文流和刷新恢复；按真实反馈继续最小修复。** 不重复请求此次已完成的升级授权，不自动启动后续大型能力。
+- 更新历史（2026-09-24）：收到明确授权后完成指定库备份、028→029升级、修复版安装和重启，数据/备份/页面/API健康验证通过。
+
+## 2026-09-24 较早思考内容修复完成快照（历史，029 已于下轮授权启用）
+
+- **代码与隔离验收完成，真实试用仍运行旧 028。** 根因是题目讨论跳过 reasoning 块。本轮完整接入 Provider 明确返回的思考片段，独立持久化并通过 SSE 恢复，与普通 AI 学习室共用同一个 ReasoningBlock：生成时展开、完成/取消后折叠、手动查看。旧记录未保存的思考不补造。
+- 新增迁移 **029_discussion_reasoning.sql**（001–028 不改），独立 reasoning_content 列及同步清除触发器；取消/失败保留部分思考，重试清空，派生删除、引用失效、迟到片段防复活及备份恢复保护均覆盖思考。兼容旧备份无该列的检查。
+- 文件：backend/app/question_discussion.py、learning_production.py、新迁移029；frontend/src/LearningRoomLayout.tsx、AiLearningRoom.tsx、QuestionDiscussion.tsx、api.ts；讨论/验证回看/领域 schema/API 四份后端测试，frontend/e2e/verification-review.spec.ts、Mock Provider；同步 PRD/产品决定/本状态，新增[思考内容实施与启用方案](nautilus-discussion-reasoning-2026-09-24.md)。原未提交修改保留，未暂存/提交/push。
+- 验证：定向 **51 passed**；最终全量后端 **377 passed，1 个既有 warning**。隔离构建 `/tmp/nautilus-reasoning-dist` 通过（既有大包提示）；普通学习室和验证回看浏览器 **14 passed**。包含思考先于正文、生成中刷新、正文中刷新、完成折叠、手动查看、取消重试和原引用预览回归；028→029 合成升级演练保留旧正文，备份/完整性/FK/思考清除通过。命令及文件明细见实施记录。
+- 已按用户要求在 `/home/kingdom/.codex/config.toml` 设置 frontend-skill 的 enabled=false，解析确认；技能文件保留，另一项 frontend-design 未修改。配置加载需重启 Codex，与 Nautilus 重启独立。本轮不再应用该技能。
+- 运行：现有 `http://172.17.253.105:5188/` 和 API 8018 HTTP 200，仍为上一轮服务与构建。**本轮没有真实库迁移、安装构建或重启**；没有读取真实学习正文/凭据或调用真实 Provider。默认 data/、diagnostic-backups/ 未触碰。
+- 授权边界：产品决定 09-16 明确普通启动不含迁移授权，09-23 的 028 授权明确不包含未来迁移。本轮 029 与已验收构建已准备好，启用需作者授权指定独立试用库的备份、升级与重启；旧服务继续运行。不要直接重启当前工作区新代码，否则会因 028/029 版本不匹配停止启动。
+- 已知限制：真实 Provider 延迟和长思考展示待作者启用后复试；历史未保存内容无法恢复。真实使用基线与产品阶段验收仍未完成。
+- **唯一下一项：取得指定 trial 的 028→029 备份/升级/重启授权后，按实施记录启用并更新运行事实；再请作者刷新复试。** 不重复开发已通过的界面和流式链路，不擅自迁移。
+- 更新历史（2026-09-24）：完成思考内容全链路补修、377/14 回归、合成升级演练与 frontend-skill 停用配置，真实库升级待授权。
+
+## 2026-09-24 较早题目讨论正文流式与引用预览快照（历史）
+
+- **最新状态：按用户要求补齐题目讨论的即时右侧气泡、真实流式正文、取消/重试/刷新恢复，以及引用记录的逐条渐变预览；已安装验收构建并重启试用服务。** 上轮“讨论非流式/整段回复”为历史状态。真实使用基线和产品阶段验收仍未完成。
+- 根因：原发送接口等待完整回答，前端也等待整个请求后才渲染消息。现在先保存立即确认，客户端乐观呈现本人气泡；Provider 实际流式块写入原可清除字段，通过 SSE 当前轮次快照送达。刷新重连只接收已有运行，不重复提问；取消/失败保留部分正文，同一问题幂等重试，旧尝试和删除后的迟到输出不能覆写新状态。无新迁移，无新常驻进程。
+- 体验：学习室共用面板支持新消息/流式内容跟随，上滚阅读时保持位置；取消按钮与普通对话一致。查阅记录首次展开列出所有命中段落的短预览，长内容透明渐隐，每条独立展开/收起；已检查 390/1440 截图与无横向溢出。仅展示实际检索段落，未扩大检索数量、长度或权限。
+- 文件：backend/app/question_discussion.py、routers/learning.py、main.py；frontend/src/QuestionDiscussion.tsx、LearningRoomLayout.tsx、AiLearningRoom.tsx、api.ts、styles/ai-learning.css，新增 DiscussionSources.tsx；新增 backend/tests/test_discussion_streaming.py，更新 test_learning_verifications/test_verification_review、frontend/e2e/verification-review.spec.ts、scripts/mock-openai-provider.py；同步 PRD、决策、计划、本状态，新增[本轮实施记录](nautilus-discussion-streaming-2026-09-24.md)。原有未提交修改保留；未暂存/提交/push，HEAD 仍为 0973056。技能文件及 Codex 配置未更改。
+- 验证：流式/回看定向 **20 passed**；加入 HTTP 边界用例后全量 `env PYTHONPATH=backend .venv/bin/pytest -q backend/tests --tb=short` → **376 passed，1 个既有 Starlette/httpx warning**。隔离构建 `npm --prefix frontend run build -- --outDir /tmp/nautilus-stream-dist` 通过（既有大包提示）；frontend 中 `env NAUTILUS_E2E_BUILD_DIR=/tmp/nautilus-stream-dist ./node_modules/.bin/playwright test e2e/verification-review.spec.ts e2e/ai-learning.spec.ts` → **14 passed**。Git 空白、启动脚本语法检查通过；全部测试均为隔离合成数据。
+- 关键证据：浏览器主动阻塞发送请求时仍立即显示右侧气泡、清空输入；首段正文出现时仍可取消；生成中刷新只保留一条问题；取消后部分正文保留、重试无重复问题。后端还覆盖订阅断开、失败/关闭、HTTP 访问隔离、清除部分回复与禁止重放/复活。截图 `/tmp/nautilus-stream-sources-390.png`、`/tmp/nautilus-stream-sources-1440.png` 已实际查看，单条展开与渐变样式由浏览器断言验证。
+- 运行：沿用 run.sh，核对旧进程后停止并安装构建；当前脚本/API/Web PID 为 19901/19903/19941（后续需重新核对）。实际 WSL2 `http://172.17.253.105:5188/`，API 8018，均绑定 0.0.0.0。入口及新 JS `index-b5SWCrLt.js`、CSS `index-BEDFnmSN.css` HTTP 200；直连/代理健康 status/database=ok，未登录记录及 SSE 接口均 401。无迁移、恢复或真实删除，未读取学习正文/凭据、未调用真实 Provider；默认 data/ 和 diagnostic-backups/ 未触碰。
+- 限制：真实 DeepSeek 首字延迟和长回复表现待本人复试；进程仍运行时支持生成中刷新，服务重启后中断轮次保留部分正文供重试，不自动继续调用。仅回复正文流式展示，未新增 Provider 额外推理字段的持久化。既有本地检索与备份/外部副本边界保持；FOLLOWUP-SEARCH-001 保持后续。
+- **唯一下一项：作者刷新试用页，在题目讨论发送问题，复试即时气泡、流式正文、取消/刷新恢复及引用逐条展开。** 根据实际反馈继续最小修复，不自动进入后续大型能力。
+- 更新历史（2026-09-24）：完成本次交互补修、376 后端/14 浏览器回归、截图检查、构建安装与重启，运行健康检查通过。
+
+## 2026-09-23 逐题反馈与布局补修快照（历史）
+
+- **最新状态：按再次试用反馈修复逐题反馈完整性、题目讨论布局与删除命名，并已安装新构建、重启独立试用服务。** 现阶段仍是作者继续真实试用；不把工程回归或上线视为产品阶段/学习价值验收完成。
+- 根因：新评估校验曾允许缺少 question_feedback 的四字段总结响应，因此可出现评估成功但无逐题反馈。现在提示 schema v4 显式携带各题 ID/题干，新结果必须覆盖全部题目且逐题反馈非空；缺失、重复、错配或空反馈失败关闭，保存的作答可重试。原完成规则、历史成功评估和内容均不改写，无新迁移。
+- 展示：每题先展示题目、本人作答、AI 反馈与建议/参考解法/拓展，最后显示整体验证总结。旧记录没有逐题反馈时明确提示，保留整体总结。“讨论这道题”复用学习室的聊天面板、消息和输入区，题目来源可展开；从学习记录进入也使用专注布局。共用呈现组件与业务状态分开，为后续全站布局调整保留边界，本轮不重做全站。
+- 命名：验证次级菜单改为“更多操作”，按钮仍为“彻底删除本次验证内容”。“隐私删除”不是新增删除类型；现有确认影响、不可恢复及完成事实保留规则不变。
+- 本轮文件：后端 verification.py；验证测试 review/learning_verifications/reliability/evidence；新增前端 LearningRoomLayout.tsx、QuestionFeedbackContent.tsx，修改 AiLearningRoom/QuestionDiscussion/VerificationReview/LearningVerification 和 ai-learning/fact-workspace/v6-workspace 三份样式；扩充 verification-review 浏览器测试及 Mock Provider；同步 PRD、产品决策、本状态，新增[补修实施记录](nautilus-feedback-layout-fixes-2026-09-23.md)。HEAD 仍为 0973056，既有全部未提交修改保留，未暂存/提交/push。
+- 验证：五个验证相关后端文件 **66 passed**；全量 `env PYTHONPATH=backend .venv/bin/pytest -q backend/tests --tb=short` → **370 passed, 1 个既有 warning**。隔离输出 `npm --prefix frontend run build -- --outDir /tmp/nautilus-feedback-dist` 通过（既有大包提示）。首次 verification-review/learning-feedback/ai-learning/learning-continuity 联合 **17 passed**；最后共用消息状态样式/输入法细节和旧总结浏览器用例调整后，verification-review/ai-learning 复验 **14 passed**。数字不相加；全部浏览器命令使用 `NAUTILUS_E2E_BUILD_DIR=/tmp/nautilus-feedback-dist ./node_modules/.bin/playwright test ...`，无真实库测试或真实 Provider 调用。
+- 已检查 390/1024/1440 无横向溢出、390 内容区可滚动、输入区留在视口内、逐题反馈对应与总结顺序、题目来源完整展示、发送与刷新恢复、完成后学习记录入口及删除。已查看 `/tmp/nautilus-discussion-390.png`、`/tmp/nautilus-discussion-1440.png`、`/tmp/nautilus-discussion-from-records.png` 合成截图。`git diff --check`、启动脚本语法检查通过。
+- 运行：核对现有进程后停止原试用 supervisor，安装已验收 assets 并原子替换入口，沿用 run.sh 启动，服务不自动迁移。当前 `http://172.17.253.105:5188/`，API 8018，均绑定 0.0.0.0；PID 16233（脚本）/16235（API）/16273（Web），以后需重新核验。入口、新 JS `index-C0DUULfa.js`、CSS `index-LiMlKy6S.css` 均 HTTP 200，直连及代理健康 status/database=ok，未登录学习记录 401。未打开学习正文/凭据、未执行迁移/恢复/删除；默认 data/ 和 diagnostic-backups/ 未触碰。
+- 已知限制：新结构在实际 DeepSeek 上的反馈质量仍待用户验证，旧记录不会自动补造逐题反馈。讨论继续为整段回复，本地关键词检索和既有备份/外部副本限制未扩大；完整真实使用基线尚未形成，FOLLOWUP-SEARCH-001 保持后续。
+- **唯一下一项：作者刷新 Web 做一次新验证，检查各题反馈与最后总结，再复试“讨论这道题”的来源、输入区和刷新恢复。** 根据下一次真实反馈继续最小修复，不自动进入后续大型能力。
+- 更新历史（2026-09-23）：完成本轮补修、隔离回归、截图检查、安装与重启；具体根因、文件和布局复用边界见补修实施记录。
+
+## 同日较早 028 启用与服务恢复快照（历史）
+
+- **最新状态：用户已明确授权，本轮新版本已启用到独立试用环境。** 已完成学习库 027 → 028、升级前/后备份、新前端安装及服务启动。下文“未升级/未启用/等待授权”均为同日较早历史，不再作为下一项。
+- HEAD `0973056`，branch `main...origin/main`；所有既有未提交修改保留，没有暂存、提交、push。此次只有运行构建及文档同步，没有新增业务代码、迁移或测试。
+- 授权范围：`/home/kingdom/ai_learning/tmp/nautilus-trial-20260919/learning.sqlite3` 的本次 027 → 028 备份/升级和试用服务启用。升级前只缺 028，无需其他历史回填；升级前后现有各表记录数量一致，完整性与外键检查均 ok。没有读取/输出学习正文或凭据，没有触碰默认 `data/` 或受禁目录，没有真实数据删除、恢复或测试样本写入。
+- 备份目录 `tmp/nautilus-trial-20260919/backups/learning/`，权限 0700；备份及清单 0600。升级前 `learning-pre-upgrade-20260923T150453961390Z.sqlite3`，升级后 `learning-post-upgrade-20260923T150454397876Z.sqlite3`。仅记录路径/检查结果，不复制正文进文档。升级结果摘要保存在试用目录 `upgrade-028-result.json`。
+- 服务：`http://172.17.253.105:5188/`；API 8018，均绑定 `0.0.0.0`。沿用 `tmp/nautilus-trial-20260919/run.sh`，仅校验 schema、不自动迁移。23:22 CST 按用户要求恢复服务，当前 PID 11444（启动脚本）、11446（API）、11488（Web）；后续必须重新核对，不能盲用历史 PID。WSL 地址可能变化。
+- 本轮检查：重新构建 `npm --prefix frontend run build -- --outDir /tmp/nautilus-review-dist` 通过（上一轮 /tmp 构建已清理）；原有服务当时已停止。将新构建安装到 frontend/dist，入口原子替换；当前 JS 为 `index-BRYOYg_g.js`。Web/新 JS 均 HTTP 200，代理 `/api/health` 返回 status/database=ok，未登录访问 `/api/learning/records` 返回 401。备份权限检查、启动脚本语法及 `git diff --check` 通过。
+- 没有重跑 pytest/Playwright、自动访问真实学习内容或调用真实 Provider；365 后端、42 契约、22 浏览器通过是上一实施轮证据。本次是经授权的运行启用，不是新的学习有效性验证。
+- **Task 13B 作者本人继续试用：READY（运行条件已具备）；完整真实使用基线仍未形成。唯一下一项：作者在 Web 复试“学习记录 → 历史验证原答案 → 单题继续讨论 → 刷新恢复”，并验证一次新 DeepSeek 逐题反馈。** 旧验证只有整体反馈时保持原样；本地历史检索不是联网服务。FOLLOWUP-SEARCH-001 继续保留，后续大型能力不自动开始。
+- 已知限制继续适用：本地关键词检索有界、讨论非流式、外部副本不保证清除、普通备份不会随 purge 物理擦除、网络/全副本删除/更广试点及长期冻结等产品决定未擅自扩大。用户本次授权已经执行，不等于今后任意真实数据读取、迁移或恢复授权；无需再为已完成的 028 升级询问确认。
+- 更新历史（2026-09-23）：按用户“好的，授权”完成升级、备份、启用和健康检查，同步基线/决策/计划/实施记录并提供[新窗口交接提示词](nautilus-new-window-handoff-2026-09-23.md)。
+
+### 同日 23:22 CST 服务恢复（最新运行检查）
+
+- 用户要求“继续，并且重启服务”。启动前 8018/5188 均无监听，未发现原试用服务进程；通过持久终端运行既有 `bash tmp/nautilus-trial-20260919/run.sh`，前后端均已恢复并绑定 `0.0.0.0`。继续使用此前已启用的 028 版本和现有前端构建。
+- 检查：WSL2 实际 IP `172.17.253.105`；Web、`index-BRYOYg_g.js`、`index-BlYSDT7N.css` 均 HTTP 200；直接 API 与 Web 代理 `/api/health` 均返回 status/database=ok；未登录学习记录接口返回 401。启动脚本 `bash -n` 和 `git diff --check` 通过。初次健康检查使用未安装的 `python` 命令而未执行，改用 `.venv/bin/python` 后全部通过。
+- 本轮仅修改本状态文档，无业务代码、新迁移或构建变更，未重跑 pytest/Playwright、未调用真实 Provider；原有未提交修改保留，未暂存/提交/push。没有执行迁移、恢复或测试数据写入，也未读取真实学习正文或凭据。
+- 已知限制：真实 DeepSeek 新逐题反馈及实际连续旅程仍待本人复试，完整真实使用基线尚未形成；既有本地检索、删除与备份边界不变。唯一下一项：作者从“学习记录”打开历史验证，检查原答案、单题继续讨论及刷新恢复，再验证一次新 DeepSeek 逐题反馈；FOLLOWUP-SEARCH-001 保持后续计划。
+
+### 同日工程验收与待启用快照（历史）
+
+- **本轮结论：FOLLOWUP-VERIFY-REVIEW-001 工程与隔离验收完成，尚未启用到真实试用库。** 已实现本人原题/作答/逐题反馈回看、提交版本、题目讨论、实际同委托历史检索、学习记录入口、删除下沉；旧反馈保持原样，完成事实不被讨论改写。右栏继续默认折叠保留。
+- HEAD `0973056 feat: implement the verified learning slice`，branch `main...origin/main`；原有大量未提交修改保留，本轮仍未暂存、提交、push。最新代码迁移为 **028_verification_discussions**；仅隔离库执行。真实试用沿用此前 027，本轮没有打开核验其真实数据库，不把历史版本记录当成本轮查询结果。
+- 文件/模型：新增 `learning_records.py`、`question_discussion.py`、028（讨论/轮次/来源依赖三个表及删除触发器）；新增前端 VerificationReview/QuestionDiscussion/LearningRecords；修改 verification/continuity/API/启动恢复/受控恢复保护、学习室/验证/返回卡和测试。完整按类文件清单见[实施记录](nautilus-verification-review-implementation-2026-09-23.md)。001–027 未修改。
+- 新增契约：逐题反馈不全或题目错配则评估失败，答案保留；原要求有缺口则不通过；反馈后补答不再成为新的独立证据。清除验证或其普通产出会同事务清除根讨论及引用它的衍生讨论；迟到回答、回放、受控恢复不能复活私文。新方向选择先暂停正在运行的会话，记录 choose_other/switched，幂等重试不误停下一次学习。
+- 验证：`env PYTHONPATH=backend timeout 180 .venv/bin/pytest -q backend/tests --tb=short` → **365 passed, 1 warning**；最后评估提示调整后四个受影响契约文件 → **42 passed**。`npm --prefix frontend run build -- --outDir /tmp/nautilus-review-dist` 通过（既有大包提示）；frontend 中 `env NAUTILUS_E2E_BUILD_DIR=/tmp/nautilus-review-dist ./node_modules/.bin/playwright test e2e/verification-review.spec.ts e2e/learning-feedback.spec.ts e2e/learning-continuity.spec.ts e2e/ai-learning.spec.ts e2e/nautilus-first-slice-facts.spec.ts` → **22 passed**。覆盖 390/1024/1440、完成/中断/回看/续问/实际来源/删除与旧事实链。`git diff --check` 和 `bash -n scripts/start-e2e.sh` 通过。中间失败、修复与具体命令见实施记录，不累计测试次数。
+- 未动态验收：真实 DeepSeek 对新逐题结构及讨论的表现、新版本真实库升级/恢复、全部其他前端套件、真机软键盘；真实使用基线和学习有效性仍未知。本地检索仅一次有界子串查询，会漏同义表达；讨论为整段回复，无后台 Agent 或独立题库。
+- 当前试用：`http://172.17.253.105:5188/`，0.0.0.0 绑定，Web HTTP 200，代理健康接口 ok。本轮误用 test:e2e 隐含默认构建曾短暂覆盖 dist；已恢复**兼容旧 027 服务的前端构建**（非逐字节原包），确认不含新学习记录/讨论 API 入口。后续构建与自动测试均使用 /tmp 独立输出。未重启真实服务、迁移真实库或读取学习正文/凭据。**不能直接重启当前源码：028 schema guard 会拒绝旧库。**
+- 已知 P1/边界：新功能未启用；历史 schema v1 证据账本私文、普通备份/外部副本承诺、跨库协调恢复仍有既有未决边界。不可声称全副本清除或通用掌握。五项产品负责人决策继续保留；FOLLOWUP-SEARCH-001 联网配置未遗漏、未开通。不得自动进入 Task 15/16/17B/18–21。
+- **Task 13B 本轮新旅程真实验收：NOT READY（待新版本启用及真实 Provider 复试）；已有作者试用与采集能力保留，完整真实基线尚无。唯一下一项：取得对独立试用学习库 027 → 028 备份、升级与重启的明确授权后启用本轮版本。** 已准备可审阅迁移、升级命令和隔离演练，见实施记录。
+- 更新历史：2026-09-23 按用户确认完成验证回看与按题续学，修复切换新方向时旧会话阻塞；同步五份基线与实施记录。以下同日右栏和反馈审查为历史，不覆盖本快照。
+
+### 同日右栏默认折叠实施（历史）
+
+- 最新落实用户决定：右侧 AI 学习伙伴默认折叠，保留功能。桌面右上角可展开/收起，折叠后主区使用释放宽度；展开保留拖动调宽，本页内切换保留状态，刷新回到折叠。窄屏仍为抽屉。没有删除伙伴组件、规划入口或任何用户数据。
+- 本次文件：`frontend/src/Workspace.tsx`、`frontend/src/styles/v6-workspace.css`；调整既有 `e2e/v6-workspace.spec.ts`、`e2e/ai-learning.spec.ts`、`e2e/direct-learning.spec.ts`，同步 PRD、决策、实施计划、本状态和反馈审查记录。无后端/迁移变更，HEAD 和未提交状态不变。
+- 验证：`npm --prefix frontend run build` 通过（既有大包提示）；frontend 中 `./node_modules/.bin/playwright test e2e/v6-workspace.spec.ts e2e/ai-learning.spec.ts e2e/direct-learning.spec.ts e2e/plan-workspace.spec.ts` 初轮 **24 passed / 3 failed**：两项旧测试未先展开右栏，已修正；另一项计划设置测试在合成计划创建请求时失败，未确定首次原因。随后 `./node_modules/.bin/playwright test e2e/ai-learning.spec.ts e2e/plan-workspace.spec.ts --grep 'provider connection distinguishes|model discovery keeps|plan settings protect'` → **3 passed**（新隔离环境；非第二次全套通过）。初轮五项 V6 测试包含默认隐藏、展开/收起、主区宽度、拖动、计时及窄屏检查，均通过。未重跑后端、全部浏览器套件或真实 Provider。`git diff --check` 通过。
+- 试用预览已提供新构建，Web `http://172.17.253.105:5188/` HTTP 200、代理健康接口 ok，实际 WSL2 IP 未变；本次未重启服务、迁移或读取真实学习正文/凭据。右栏折叠只完成当前布局决定，验证回看/按题续学尚未实现，唯一下一项仍为 FOLLOWUP-VERIFY-REVIEW-001。
+
+### 同日稍早反馈审查（历史，右栏决定已由上文覆盖）
+
+- 作者表示完成本次试用，提出验证后答案消失、逐题反馈/续问、历史回看、删除按钮与右栏必要性、完成委托难找等反馈。已核对代码：存储链存在，本人回看/逐题反馈/题目续问/常用历史入口未完成；不能再把这些旅程写成已验收。未读取真实学习正文或数据库，未核验具体记录完整性。
+- 本轮仅审查并修订文档：PRD V2、产品决策、实施计划、本状态；新增 `docs/progress/nautilus-verification-review-feedback-2026-09-23.md`。用户明确的回看/保存/按题续学已记为待实施需求；删除入口下沉、右栏收起属于建议，没有替用户确认。
+- HEAD `0973056`，branch `main...origin/main`；既有未提交改动保留。最新迁移仍为 027，本轮无业务代码或迁移变更，无服务重启、真实数据操作、提交/push。
+- 验证：本轮只读代码/规格调查，`git diff --check` 通过；未运行 pytest/Playwright/构建/真实 Provider。09-22 工程数字均是历史证据。运行地址上次为 `http://172.17.253.105:5188/`，今天未动态检查，不据此宣称仍在线。
+- 当前产品缺口：完成后的回看与继续讨论不完整；模型尚不能实际检索同委托历史。新增题目对话/摘录/快照需同步设计删除边界，不扩大原隐私保证。真实结构化基线、未决网络/全副本删除等边界保持未完成。
+- **唯一下一项：FOLLOWUP-VERIFY-REVIEW-001 验证回看与按题继续学习纵切片，先补本人作答详情与委托历史入口。** FOLLOWUP-SEARCH-001 额外联网配置保持独立后续任务，不遗漏、不自动开通服务。
+
+### 2026-09-22 运行与补修记录（历史）
+
+- 最新运行记录（2026-09-22）：按用户要求重新启动现有独立试用服务。启动前 8018/5188 无监听，旧 supervisor 已退出；沿用既有 `tmp/nautilus-trial-20260919/run.sh` 在持久终端启动，绑定 `0.0.0.0`。WSL2 实际 IP `172.17.253.105`；Web `http://172.17.253.105:5188/` HTTP 200，代理 `/api/health` 返回 `status=ok`、`database=ok`。
+- 此次仅更新本状态并启动服务；使用已有构建，未重跑构建/pytest/Playwright，无业务代码或迁移改动。未读取学习原文/凭据，未迁移、重建或清理试用数据，未操作默认真实库。唯一下一项：用户在 Web 继续验证 AI 答题滚动与提交；搜索配置 FOLLOWUP-SEARCH-001 仍在后续计划。
+
+- 最新补修：AI 出题后的答题页已有内容超出屏幕却无法手动滚动。根因是学习室固定高度且外层裁剪，而验证包装层没有滚动区域。为包装层增加 `verification-scroll`，允许在可用高度内纵向滚动，不改变作答/完成语义。
+- 本次改动：`frontend/src/AiLearningRoom.tsx`、`frontend/src/styles/fact-workspace.css`、`frontend/e2e/learning-feedback.spec.ts`、本状态和反馈实施记录。无后端改动、无新迁移，保留既有工作区修改，未提交/push；未读取或操作真实学习数据/凭据。
+- 验证：新增实际滚轮回归在旧构建失败（scrollTop 始终为 0），修复构建后通过。`npm --prefix frontend run build` → 通过（既有包体提示）；frontend 中 `./node_modules/.bin/playwright test e2e/learning-feedback.spec.ts` → **1 passed**，覆盖 390×844、1024×640、1440×1000 滚到底部提交/回顶部、390px Chromium 触摸滑动与原完成旅程。`git diff --check` 通过。未重跑后端/完整浏览器套件、未做真机或真实 Provider 验证；测试均使用隔离合成库和 Mock。中途两次运行仍使用旧 dist，构建后才验证新 CSS。
+- 试用预览已提供新构建，Web/新 CSS/代理健康接口检查正常，WSL2 IP 为 `172.17.253.105`；无需重启后端。**唯一下一项：作者保留未提交答案后刷新试用页，复试 AI 答题页上下滚动与提交验证。** 搜索待办 FOLLOWUP-SEARCH-001 保留在后续计划，尚未实现。
+
+### 同日验证方式补修记录（历史）
+
+- 最新补修：验证页恢复已有“提交材料”尝试后不再隐藏方式选择；未确认完成时可切换 AI 出题/提交材料，恢复对应已保存尝试，当前页面内草稿分别保留。刷新只恢复已保存记录，不承诺恢复未提交正文；删除后不从草稿恢复已清除内容。正式完成条件不变。
+- 本次文件：`frontend/src/LearningVerification.tsx`、`frontend/e2e/learning-feedback.spec.ts`、实施计划、产品决策、本状态及反馈实施记录；无后端改动、无新迁移。HEAD 仍为 `0973056`，原有未提交改动全部保留，未提交/push。
+- 本次验证：`npm --prefix frontend run build` → 通过（既有大包提示）；frontend 目录分别运行 `./node_modules/.bin/playwright test e2e/learning-feedback.spec.ts` → **1 passed**、`./node_modules/.bin/playwright test e2e/learning-continuity.spec.ts` → **2 passed**。覆盖刷新后入口、两种方式及草稿切换、已有提交保留、出题失败后切回、完成返回与 390px 中断恢复；390px 截图已检查。`git diff --check` 通过。此补修未重跑后端/全部前端套件，未调用真实 DeepSeek；下方较早测试数字不是本次重跑结果。
+- 新前端构建已由原试用预览提供，Web 与代理健康接口正常，WSL2 IP 仍为 `172.17.253.105`；无需重启后端，刷新页面加载。未读取试用学习内容、凭据或数据库，未执行迁移/清理。
+- 用户明确要求的额外搜索服务配置已列入实施计划 **FOLLOWUP-SEARCH-001**，包含设置、启停、连接测试、真实检索来源与失败处理；尚未实现。具体供应商、费用和出站范围仍待确定，不自动开通。
+
+### 同日较早修复记录（以下测试与服务重启属于前一轮）
+
+- 首轮作者反馈已收到：入口混乱、搜索能力不明、公式不渲染、DeepSeek 官方 API 出题失败。仅记录问题类别，没有读取真实学习正文、凭据或数据库；真实结构化使用基线尚未核验。
+- 本轮修复：开始学习收敛为返回卡/目标起步，历史计划独立保留且不双写；学习室/验证题目/反馈支持数学公式；JSON 出题与评估、8192 输出预算、总超时、明确安全错误、学习室模型选择一致性及失败重试保护。未接入搜索服务，未把 DeepSeek 官网搜索当成 API 能力。那一次真实失败的唯一根因未获实际请求证据，需复试。
+- 文件：后端 providers/verification/routers.learning/conversations；前端 FactWorkspace/Workspace/PlanWorkspace/AiLearningRoom/LearningVerification/AiProviderDialog/api/样式、新增 LearningMarkdown、依赖清单；新增 Provider 验证契约与反馈旅程测试，调整相关既有浏览器测试和 Mock；同步 PRD、决策、本状态与 `docs/progress/nautilus-trial-feedback-fixes-2026-09-22.md`。本轮未新增迁移，未修改旧迁移，未提交/push。
+- 验证命令与结果：`env PYTHONPATH=backend timeout 180 .venv/bin/pytest -q backend/tests --tb=short` → **353 passed, 1 warning**；最后的字面 think 标签保护补丁后，`env PYTHONPATH=backend timeout 120 .venv/bin/pytest -q backend/tests/test_verification_provider_contract.py backend/tests/test_learning_verifications.py backend/tests/test_verification_reliability.py backend/tests/test_providers.py --tb=short` → **59 passed**。后一次未再跑全量，不混加计数。
+- 前端：`npm --prefix frontend run build` 通过（既有大包提示，数学库使包体增大）；frontend 目录执行 `./node_modules/.bin/playwright test e2e/learning-feedback.spec.ts` → **1 passed**；`./node_modules/.bin/playwright test e2e/ai-learning.spec.ts e2e/direct-learning.spec.ts e2e/plan-workspace.spec.ts e2e/learning-continuity.spec.ts e2e/nautilus-first-slice-facts.spec.ts` → **29 passed**。390/1440 公式截图和无横向溢出已检查。`git diff --check` 通过。未跑全部其他前端套件、真实 DeepSeek、真实手机软键盘；测试样本只在隔离库。
+- 服务已用新代码重启：`http://172.17.253.105:5188/` HTTP 200，代理 `/api/health` 为 ok。沿用现有独立试用数据，未迁移、重建或清除。Agent 没有读取试用正文或凭据；正常应用启动继续使用用户授权的试用目录。原有 `data/` 和受禁目录未操作。
+- **唯一下一项：作者刷新试用页面，确认能从提交材料切换到 AI 出题，并复试 DeepSeek 出题及完成后返回，反馈成功与否或新的安全错误分类。** 搜索已纳入 FOLLOWUP-SEARCH-001 后续计划，供应商/费用选择仍待用户决定，不自动接入外部服务、不进入后续扩张。真实价值与学习有效性均未被此次工程验证证明。
+- 更新历史（2026-09-22）：完成入口、数学渲染及验证请求修复，核对官方搜索能力边界；记录测试中的配置刷新问题、依赖样式版本修正及实际未验收范围。下面 09-21/09-19 记录均为历史。
+
+### 2026-09-21 运行记录（历史）
+
+- 更新历史（2026-09-21）：按用户要求重新启动既有独立试用服务。启动前 8018/5188 未监听；沿用 `tmp/nautilus-trial-20260919/run.sh` 后，Web `http://172.17.253.105:5188/` 返回 HTTP 200，代理 `/api/health` 返回 `status=ok`、`database=ok`。服务在持久终端运行。
+- 本次只更新本状态文档并重启服务；沿用试用数据，不重新初始化、不迁移、不清理、不读取试用正文或凭据，未操作原有 `data/`。无新迁移、业务代码修改或新增产品决策，未重跑构建/pytest/Playwright；仅完成页面与健康接口检查。唯一下一项仍为作者本人在 Web 完成真实学习及中断返回验证；真实使用结果尚未核验。
+
+- **最新运行状态：作者本人独立 Web 试用已启动。** 用户授权准备并启动试用环境；Web `http://172.17.253.105:5188`，API `http://172.17.253.105:8018`，均绑定 `0.0.0.0`。使用生产预览，无 HMR；仅交付当前 Windows/WSL2 宿主访问方式，不扩大网络安全承诺。
+- 试用数据独立保存在 `/home/kingdom/ai_learning/tmp/nautilus-trial-20260919`（Git 忽略、目录权限 0700），不会在停止服务时清理。此目录从空白创建；主库 001–010、学习库 011–027 初始化成功，完整性及外键检查通过。原有 `data/` 未打开或迁移，未复制旧凭据，未导入自动化样本。用户开始试用后，此目录应视为真实用户数据，不能用于自动化测试或无授权读取。
+- 启动文件：`tmp/nautilus-trial-20260919/run.sh`（本地忽略文件）；重新运行仅校验现有 schema，不自动迁移。服务保留在持久终端会话；WSL 关闭后需重新启动，IP 可能变化。首次 nohup 启动未留下监听，已改用持久终端并确认 HTTP 200 与代理健康接口 `ok`。
+- 本次试用准备验证：`npm --prefix frontend run build` 通过（既有包大小提示）；`bash -n tmp/nautilus-trial-20260919/run.sh` 通过；WSL 实际 IP 的 Web 和 `/api/health` 均成功。仅运行环境准备，无业务代码或迁移文件改动，未重跑 pytest/Playwright；下方 340/20 为上一实施轮证据。
+- 本次改动：本状态文件、产品决策记录、本地试用启动文件与空白运行目录；没有提交、push 或原环境部署。新环境没有预置 Provider，用户需在 Web 配置；Agent 不读取授权码、API Key 或试用原文。
+- **Task 13B：环境已就绪，可开始作者本人试用；真实基线未形成。唯一下一项：用户在 Web 配置 Provider 并完成第一次真实学习及中断返回。** 更广试点人群、网络与全副本删除承诺仍未决；不自动进入后续扩张。
+- 更新历史：2026-09-19 根据用户“我来在 web 页面测试”的明确指令准备独立环境并启动；以下工程交接中的 NOT READY/试点确认是启动前状态，由本条覆盖。
+
+### 同日工程交接快照（试用启动前）
+
+- HEAD：`0973056 feat: implement the verified learning slice`；branch：`main...origin/main`（本地跟踪状态，未 fetch）。未提交、未 push、未部署。
+- 工作区：开始时无已跟踪未提交修改；本轮改动保留未提交。原有两个未跟踪项目保持不动；受禁目录未读取/搜索/操作。完整本轮文件清单见实施记录。
+- 最新迁移：`027_learning_continuity`；本轮新增 025（provenance/历史当前缓存降级）、026（真实投影比较）、027（返回推荐/无正文行为）。旧迁移和 approved v1 未改。只在隔离库执行，真实库未打开、未升级。
+- 已确认实现：Stage A 新写入可信性、三版本幂等清除、普通证据私文删除及防恢复、BEGIN IMMEDIATE 截止内回放、v3 指标；Task 17A.0 规则返回卡、支持/未知分离、拒绝/继续/暂停、原委托与对话恢复、完成即返回。没有改变正式完成条件。
+- 动态验证：最终后端全量 **340 passed**。最终联合浏览器 **20 passed**（连续旅程 2、旧事实链 5、学习室 13）；另有阶段定向复验，详见实施记录。构建与空白检查通过。历史独立数据库 TestClient 项本轮已通过；沙箱挂起已定位为执行环境限制，在沙箱外仍仅用临时库复验。
+- 未复验范围：真实 Provider、生产升级/恢复、真实学习、全部其他前端套件、真实手机软键盘；自动化窄屏与缩放不替代真机验收。
+- 仍有 P1/启动风险：历史 schema v1 证据事件可能留私文，本轮不篡改；普通备份/外部副本范围未决；单库恢复无协调跨库保证。无真实使用基线，不得宣称长期学习价值或通用掌握。五项负责人决策仍待确认。
+- Task 13B：**NOT READY（真实试点启动）**；结构化采集与工程闭环已准备，尚缺试点对象、网络/删除承诺边界和必要真实环境授权。
+- **唯一下一项：完成 Task 13B 试点启动确认。** 不自动进入 Task 15/16/17B/18–21。
+
+实施记录（文件、迁移、命令、失败与限制）：`docs/progress/nautilus-learning-continuity-implementation-2026-09-19.md`。
+
+更新历史：2026-09-19 先完成只读事实调查与五份文档基线修订，再实施可信性基础和最小连续旅程；上面的快照覆盖本轮早期“A1 为下一项”的记录。没有接触真实数据、没有提交部署。
+
+## 以下为历史快照
+
+下文旧“当前”“精确下一步”和测试数字均属于其标注日期，不覆盖 CURRENT SNAPSHOT。
+
+
 > 本文件是 Nautilus 当前开发状态的单一事实入口。
 >
 > 所有接手开发的 Agent 必须先阅读正式规格，再阅读本文件。每次完成开发、改变数据库、调整运行方式或修改下一步计划后，都必须在结束前更新本文件。
@@ -1902,3 +2076,75 @@ docs/progress/nautilus-development-status.md
 - 本轮没有打开默认/真实学习库、没有应用生产迁移；024 仅隔离验证，真实库实际版本未查。未启动/重启服务、未暂存/提交/推送，保留所有既有改动，未操作 diagnostic-backups/。
 - 保留限制：私密作答编辑框跨刷新不恢复；无会话旧记录不接证据；分析能力限现有已审核标准；外部副本、旧离线备份、Provider 内容及磁盘取证级擦除不在本轮完成声明内；独立 URL、最小复核/返回视图、指标修正和真实基线未完成。
 - 精确下一项：Task 17A.0，先核对测量口径与返回/完成入口，交付当前位置、已有依据、未知缺口、一个推荐行动及理由和继续入口；正式计划变化仍须确认，不直接开发成果图、主动后台教练或操作真实库。
+
+
+### 2026-09-19：Stage A 与 Task 17A.0 工程切片交接
+
+- 已交付执行来源绑定、历史缓存降级、多版本清除、普通证据私文 store、并发回放与实际摘要比较、v3 指标、规则返回卡和同委托会话/对话恢复。025～027 新迁移仅临时库演练。
+- 最终后端 340 passed；前端构建成功；最终联合浏览器 20 passed，涵盖 2 条连续旅程、5 条旧事实链和 13 条学习室回归。过程中失败、测试共享库限制及未运行范围见实施记录，未以测试数量证明产品价值。
+- 本轮改动文件、迁移、已知问题、唯一下一项以 CURRENT SNAPSHOT 和实施记录为准；旧日期中的“精确下一项”均为历史。真实库、受禁目录、提交/push/部署均未操作。
+
+
+### 2026-09-22：验证方式恢复入口补修与搜索后续计划
+
+- 修复已保存验证导致方式选择消失；保留两类记录与页内草稿，刷新恢复已保存尝试。补充对应浏览器回归；构建通过，反馈旅程 1 passed，连续旅程 2 passed，未重跑后端或全部前端套件。
+- 按用户指示将额外搜索服务配置写入实施计划 FOLLOWUP-SEARCH-001，并同步产品决策；没有新增外部调用或迁移。试用服务提供新前端构建，页面与健康检查正常，未读用户正文/凭据或操作真实数据库。
+- 唯一下一项：作者刷新试用页面，复试方式切换、DeepSeek 出题与完成返回。真实结构化使用基线仍未核验。
+
+
+### 2026-09-22：AI 答题页纵向滚动修复
+
+- 修复固定高度学习室内验证页缺少滚动容器；实际滚轮回归先复现失败，构建后滚轮三尺寸及 Chromium 触摸滑动通过。此前自动定位输入框/点击的测试不足以证明用户能滚动，本次补上真实输入事件检查。
+- 构建通过、反馈旅程 1 passed、空白检查通过；未重跑后端和完整前端套件，未做真机测试。改动文件及限制见顶部；无迁移、真实数据操作、提交或 push。
+- 唯一下一项：用户刷新页面后复试 AI 答题滚动和提交；搜索配置后续计划继续保留。
+
+
+### 2026-09-22：按用户要求再次启动试用服务
+
+- 原服务已停止，复用现有启动脚本恢复前后端；Web HTTP 200、代理健康接口 ok，实际地址见 CURRENT SNAPSHOT。无迁移/数据清理/业务代码修改，仅更新本文件；未重跑工程测试，既有已知限制保留。
+- 唯一下一项：用户继续验证 AI 答题滚动与提交。
+
+
+### 2026-09-23：验证后回看/续学与信息架构审查
+
+- 收到作者六项真实试用反馈，核实保存与展示断点、整次反馈契约、缺失历史/题目续问入口及旧右栏实现。新增审查记录并同步 PRD、决策、计划和本状态，明确需求、事实、建议与待实现范围。
+- 无业务实现或迁移/真实数据操作；只读核对与空白检查，未跑工程测试。下一项为验证回看与按题继续学习纵切片，联网搜索后续待办保留。
+
+
+### 2026-09-23：右侧 AI 学习伙伴默认折叠
+
+- 用户确认保留右栏但默认折叠；实现桌面展开/收起和释放宽度，窄屏抽屉沿用。同步五处需求/计划/状态记录并修改既有入口测试，未增后端能力、迁移或删除数据。
+- 构建通过；相关联合浏览器初轮 24 passed / 3 failed，修正两处测试入口后定向复验三项全部通过。计划创建首次失败原因未确定，不称全套无失败；详见顶部。页面与健康检查正常，未重启服务。
+- 唯一下一项：验证回看与按题继续学习，先本人作答详情和委托历史入口；额外联网搜索仍留后续计划。
+
+### 2026-09-23 23:22 CST：按用户要求恢复试用服务
+
+- 接续顶部已启用 028 的状态，确认前后端均已停止后，用现有 run.sh 在持久终端启动；Web/API 均绑定 0.0.0.0，实际 WSL2 地址为 `http://172.17.253.105:5188/`。
+- 页面、JS/CSS、直连及代理健康检查通过，未登录学习记录接口 401；脚本语法和 Git 空白检查通过。仅更新本状态文档，无代码、构建或迁移变更，未重跑工程测试或调用真实 Provider，未读取学习正文/凭据。
+- 唯一下一项：作者复试学习记录、历史原答案、单题讨论与刷新恢复，以及新 DeepSeek 逐题反馈；实际使用基线仍待形成。
+
+
+### 2026-09-23：逐题反馈完整性、学习室布局复用与删除命名
+
+- 根据再次真实试用反馈收紧新评估完整性；逐题展示 AI 建议后再展示总结，历史总结保留。题目讨论复用共用聊天/消息/输入组件，入口改为“讨论这道题”，删除菜单改为“更多操作”，彻底删除语义不变。
+- 后端定向 66、全量 370 项通过；浏览器联合 17 项通过，最后相关两文件 14 项通过；隔离构建、截图、空白检查通过。无新迁移，无真实学习内容读取或自动化写入。
+- 本轮代码已启用并按既有授权重启试用服务，WSL2 地址和健康检查正常；未提交/push。唯一下一项：作者刷新后验证新逐题反馈及讨论布局，真实 DeepSeek 和真实使用价值仍待复试。
+
+
+### 2026-09-24：题目讨论实际流式交互与引用渐变预览
+
+- 修复等待完整回答才显示本人/AI 消息的问题，补齐即时气泡、真实流式正文、独立运行与 SSE 重连、取消/失败保留部分内容及同问题幂等重试；引用改为逐条预览和独立展开，长段透明渐隐。
+- 后端全量 376 passed、浏览器相关 14 passed、隔离构建与截图检查通过；无新迁移，沿用已有删除和来源边界。详细文件、命令、限制见顶部及本轮实施记录。
+- 新构建已安装，试用服务已重启且健康检查通过；未读取真实正文/凭据、未调用真实 Provider、未提交/push。唯一下一项为作者实际复试流式讨论、恢复和引用展开。
+
+### 2026-09-24：题目讨论思考内容与普通对话共用展示
+
+完成独立 reasoning_content 持久化/SSE/刷新恢复及共用 ReasoningBlock，新增029清除触发器和恢复保护。377后端、14浏览器通过，合成028→029升级通过。frontend-skill已写入停用配置；真实试用继续运行028，升级与启用等待指定范围授权，详见顶部快照与实施记录。
+
+### 2026-09-24：授权执行029升级与思考内容修复启用
+
+用户明确授权指定trial的备份、升级与重启后，完成028→029升级、升级前后私有备份及哈希校验、业务记录数量保持、完整性/FK检查、已验收构建安装和服务重启。实际WSL2入口172.17.253.105:5188，API8018，健康/资源/未授权边界检查通过。唯一下一项为作者刷新复试思考流与刷新恢复；运行细节见顶部最新快照。
+
+### 2026-09-24：开发流程审计与提交收尾
+
+核查一套trial的双库及4份备份、09-19以来未提交积压，明确029为结构版本。AGENTS落实本地commit、按影响验证和短文档习惯；产品决定区分已执行修正与待确认的备份/授权建议。本轮不改应用代码、不删除备份、不重复回归，按明确路径提交当前基线116bc9c与流程记录。

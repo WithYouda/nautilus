@@ -32,6 +32,13 @@ Before ending every development turn:
 3. Append an entry to the document's update history.
 4. Do not overstate a vertical slice as a completed product phase.
 
+Proportionate local development:
+
+- After a coherent change passes the relevant checks, create a local Git commit for the reviewed task files unless the user asks to keep it uncommitted. Do not leave completed work uncommitted merely because pushing or publishing would need separate authorization. Exclude unrelated work and private runtime data; use explicit file paths when staging.
+- Reuse validation results while the tested code is unchanged. Run focused checks for small changes; broaden testing for shared behavior, data lifecycle changes, failures, or other concrete concerns. Do not rerun a full suite merely to record another handoff or commit.
+- Keep the current progress summary short. Record actual changes, checks, limitations, and the next task without repeating the same report across multiple documents. Update the product decision record or PRD only when their substance changes; routine fixes do not need a new standalone implementation report.
+- UI/code edits and ordinary service restarts do not require database backups. Database version numbers identify schema migrations, not additional environments. Keep using the existing trial environment; the separate rules for real-data migrations, restoration, and destructive operations still apply unless explicitly revised.
+
 Repository safety rules:
 
 - Never write access tokens, cookies, API keys, or user content into progress documentation.
