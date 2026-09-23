@@ -17,6 +17,8 @@ import {
   getLearningEvidenceProvider,
   getLearningMetrics,
   getLearningState,
+  getReturnReview,
+  type ReturnReview,
   getLearningRoom,
   listAgentPermissionRequests,
   listAiProviders,
@@ -49,8 +51,10 @@ import {
   type LearningMeasurementReport,
   type AgentContext,
   type LearningState,
-  type Task,
 } from "./api";
+
+import ReturnReviewCard from "./ReturnReviewCard";
+import LearningRecords from "./LearningRecords";
 
 type FactOperation =
   | "action"
@@ -148,20 +152,20 @@ function manualSetupDraft(intent: string): LearningSetupDraft {
 }
 
 type FactWorkspaceProps = {
-  existingTasks?: Task[];
-  onOpenTaskLearning?: (taskId: string) => void;
-  onStartTaskTimer?: (taskId: string) => Promise<boolean>;
+  hasLegacyTasks?: boolean;
+  onOpenLegacyPlans?: () => void;
   onOpenLearningRoom?: (initialDraft: string, brief: LearningRoomBrief) => void;
 };
 
-type LearningEntryMode = "guided" | "direct";
-
 export default function FactWorkspace({
-  existingTasks = [],
-  onOpenTaskLearning,
-  onStartTaskTimer,
+  hasLegacyTasks = false,
+  onOpenLegacyPlans,
   onOpenLearningRoom,
 }: FactWorkspaceProps) {
+  const [recordsOpen, setRecordsOpen] = useState(() => new URLSearchParams(window.location.search).has('record'));
+  const [returnCard, setReturnCard] = useState<ReturnReview | null>(null);
+  const [newSetup, setNewSetup] = useState(false);
+  const [setupReviewId, setSetupReviewId] = useState<string>();
   const [state, setState] = useState<LearningState | null>(null);
   const [metrics, setMetrics] = useState<LearningMeasurementReport | null>(null);
   const [events, setEvents] = useState<LearningEvent[]>([]);
@@ -185,8 +189,6 @@ export default function FactWorkspace({
   const [setupDraft, setSetupDraft] = useState<LearningSetupDraft | null>(null);
   const [setupCriterionId, setSetupCriterionId] = useState("");
   const [setupConfirmed, setSetupConfirmed] = useState(false);
-  const [entryMode, setEntryMode] = useState<LearningEntryMode>("guided");
-  const [directTaskId, setDirectTaskId] = useState("");
 
   const [actionForm, setActionForm] = useState({ title: "", contextKey: "default" });
   const [outcomeForm, setOutcomeForm] = useState({
@@ -206,11 +208,13 @@ export default function FactWorkspace({
 
   const loadState = useCallback(async () => {
     try {
-      const [nextState, nextMetrics] = await Promise.all([
+      const [nextState, nextMetrics, nextReturn] = await Promise.all([
         getLearningState(),
         getLearningMetrics(),
+        getReturnReview(),
       ]);
       setState(nextState);
+      setReturnCard(nextReturn);
       setMetrics(nextMetrics);
       setError("");
     } catch (reason: unknown) {
@@ -270,13 +274,6 @@ export default function FactWorkspace({
     void loadProviderSettings();
   }, [loadProviderSettings]);
 
-  useEffect(() => {
-    setDirectTaskId((current) =>
-      current && existingTasks.some((task) => task.id === current && task.status !== "canceled")
-        ? current
-        : existingTasks.find((task) => task.status !== "canceled")?.id ?? "",
-    );
-  }, [existingTasks]);
 
   useEffect(() => {
     const runningSession = state?.sessions.find((session) => session.status === "running");
@@ -500,6 +497,8 @@ export default function FactWorkspace({
     if (!setupDraft || busy) return;
     const standard = state?.standards.find((item) => item.id === setupCriterionId) ?? null;
     const payload = {
+      draft_id: setupDraft.draft_id,
+      review_id: setupReviewId,
       original_intent: setupIntent.trim(),
       goal_title: setupDraft.goal_title.trim(),
       goal_description: setupDraft.goal_description.trim(),
@@ -533,6 +532,7 @@ export default function FactWorkspace({
       setSelectedOutcomeId(result.outcome_id);
       setSelectedDelegationId(result.delegation_id);
       setSetupConfirmed(true);
+      setNewSetup(true);
       setNotice("学习安排已确认，下一步是开始这项任务");
     });
   }
@@ -650,23 +650,6 @@ export default function FactWorkspace({
       setNotice("学习会话已开始");
     });
     return started;
-  }
-
-  async function handleDirectLearning(withTimer: boolean) {
-    const task = existingTasks.find((item) => item.id === directTaskId && item.status !== "canceled");
-    if (!task || !onOpenTaskLearning) {
-      setError(existingTasks.some((item) => item.status !== "canceled") ? "请选择一个计划任务" : "还没有可进入学习室的计划任务");
-      return;
-    }
-    if (withTimer && task.status === "completed") {
-      setError("已完成任务可以进入学习室，但不能重新开始计时");
-      return;
-    }
-    if (withTimer && onStartTaskTimer) {
-      const started = await onStartTaskTimer(task.id);
-      if (!started) return;
-    }
-    onOpenTaskLearning(task.id);
   }
 
   async function submitArtifact(event: FormEvent<HTMLFormElement>) {
@@ -993,8 +976,8 @@ export default function FactWorkspace({
   const canEndSession = Boolean(selectedSession?.status === "running" && selectedAction);
   const canAnalyzeArtifact = Boolean(selectedArtifact && selectedDelegation?.criterion_id != null);
   const selectedSetupStandard = state?.standards.find((item) => item.id === setupCriterionId) ?? null;
-  const directTasks = existingTasks.filter((task) => task.status !== "canceled");
-  const directTask = directTasks.find((task) => task.id === directTaskId) ?? null;
+
+  if (recordsOpen) return <LearningRecords onClose={() => setRecordsOpen(false)} onLearning={brief => onOpenLearningRoom?.("", brief)} />;
 
   return (
     <section className="fact-workspace" aria-label="开始学习">
@@ -1002,15 +985,15 @@ export default function FactWorkspace({
         <div>
           <p className="eyebrow">LEARNING START</p>
           <h1>开始学习</h1>
-          <p className="lead">选择直接使用已有计划，或输入学习目标，让 AI 帮你整理一次可修改的起步安排。</p>
+          <p className="lead">继续上次的学习，或告诉我你想学会什么。</p>
         </div>
         <div className="fact-header__actions">
+          <button className="button button--quiet" type="button" onClick={() => setRecordsOpen(true)}>学习记录</button>
+          {hasLegacyTasks && <button className="button button--quiet" type="button" onClick={onOpenLegacyPlans}>查看历史计划</button>}
           <button className="button button--quiet" type="button" onClick={() => void loadState()} disabled={busy || loading}>
             刷新状态
           </button>
-          <button className="button button--dark" type="button" onClick={() => void handleReplay()} disabled={busy || loading}>
-            回放事实
-          </button>
+
         </div>
       </header>
 
@@ -1020,6 +1003,8 @@ export default function FactWorkspace({
 
       {!loading && state && (
         <>
+          {returnCard && !newSetup && <ReturnReviewCard card={returnCard} onChanged={loadState} onSetup={(reviewId) => { setSetupReviewId(reviewId); setNewSetup(true); }} onContinue={(brief) => onOpenLearningRoom?.("", brief)} />}
+          {(!returnCard || newSetup) && <>
           {noStandard && selectedDelegation && (
             <div className="fact-warning" role="status">
               <strong>未绑定合格标准</strong>
@@ -1027,70 +1012,10 @@ export default function FactWorkspace({
             </div>
           )}
 
-          <section className="fact-card learning-entry-choice" aria-label="选择学习方式">
-            <div className="fact-card__header">
-              <p className="eyebrow">START HERE</p>
-              <h2>你准备怎么开始？</h2>
-            </div>
-            <div className="learning-entry-choice__options">
-              <button
-                className={`learning-entry-choice__option${entryMode === "direct" ? " is-active" : ""}`}
-                type="button"
-                aria-pressed={entryMode === "direct"}
-                onClick={() => setEntryMode("direct")}
-              >
-                <strong>我已有学习计划</strong>
-                <span>选择一个计划任务，直接进入学习室</span>
-              </button>
-              <button
-                className={`learning-entry-choice__option${entryMode === "guided" ? " is-active" : ""}`}
-                type="button"
-                aria-pressed={entryMode === "guided"}
-                onClick={() => setEntryMode("guided")}
-              >
-                <strong>我想从学习目标开始</strong>
-                <span>输入目标，让 AI 整理一次可修改的起步安排</span>
-              </button>
-            </div>
-          </section>
-
-          {entryMode === "direct" ? (
-            <section className="fact-card direct-learning" aria-label="按计划进入学习室">
-              <div className="fact-card__header">
-                <p className="eyebrow">USE MY PLAN</p>
-                <h2>按计划开始</h2>
-              </div>
-              {directTasks.length === 0 ? (
-                <p className="fact-empty">还没有可进入学习室的计划任务，请先在计划视图创建任务。</p>
-              ) : (
-                <>
-                  <label className="field">
-                    <span>选择计划任务</span>
-                    <select value={directTaskId} onChange={(event) => setDirectTaskId(event.target.value)}>
-                      {directTasks.map((task) => (
-                        <option key={task.id} value={task.id}>
-                          {task.title} · {task.goal_title ?? "当前计划"} · {task.status === "completed" ? "已完成" : "可继续"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="guided-setup__actions">
-                    <button className="button button--accent" type="button" onClick={() => void handleDirectLearning(false)}>
-                      进入学习室
-                    </button>
-                    <button className="button button--dark" type="button" onClick={() => void handleDirectLearning(true)} disabled={directTask?.status === "completed"}>
-                      开始专注并进入
-                    </button>
-                  </div>
-                  <p className="guided-setup__rationale">学习室只负责答疑和记录；计划、任务完成状态与专注时长仍按现有工作区记录。</p>
-                </>
-              )}
-            </section>
-          ) : (
           <section className="fact-card guided-setup" aria-label="从学习意图开始">
             <div className="fact-card__header">
               <p className="eyebrow">START HERE</p>
-              <h2>开始一次学习</h2>
+              <h2>你想学会什么？</h2>
             </div>
             <label className="field">
               <span>学习目标</span>
@@ -1122,13 +1047,17 @@ export default function FactWorkspace({
                   <span>{setupConfirmed ? "已确认" : "等待确认"}</span>
                 </div>
                 <p className="guided-setup__rationale">{setupDraft.rationale}</p>
+                <label className="field"><span>你的目标</span><input value={setupDraft.goal_title} disabled={setupConfirmed} onChange={(event) => setSetupDraft({ ...setupDraft, goal_title: event.target.value })} /></label>
+                <label className="field"><span>现在先做什么</span><input value={setupDraft.action_title} disabled={setupConfirmed} onChange={(event) => setSetupDraft({ ...setupDraft, action_title: event.target.value })} /></label>
+                <label className="field"><span>做到什么程度先停</span><textarea value={setupDraft.stop_conditions} disabled={setupConfirmed} onChange={(event) => setSetupDraft({ ...setupDraft, stop_conditions: event.target.value })} rows={2} /></label>
+                <details><summary>调整安排详情</summary>
                 <div className="field-grid field-grid--two">
                   <label className="field">
                     <span>目标</span>
                     <input value={setupDraft.goal_title} onChange={(event) => setSetupDraft({ ...setupDraft, goal_title: event.target.value })} disabled={setupConfirmed} />
                   </label>
                   <label className="field">
-                    <span>计划</span>
+                    <span>学习安排名称</span>
                     <input value={setupDraft.plan_title} onChange={(event) => setSetupDraft({ ...setupDraft, plan_title: event.target.value })} disabled={setupConfirmed} />
                   </label>
                 </div>
@@ -1179,6 +1108,7 @@ export default function FactWorkspace({
                     ))}
                   </select>
                 </label>
+                </details>
                 {!setupConfirmed ? (
                   <div className="guided-setup__actions">
                     <button className="button button--accent" type="button" onClick={() => void handleConfirmSetup()} disabled={busy}>
@@ -1190,7 +1120,7 @@ export default function FactWorkspace({
                   </div>
                 ) : (
                   <div className="guided-setup__next">
-                    <span>安排已保存，学习目标、计划、任务和学习委托已经连在一起。</span>
+                    <span>安排已保存，现在可以开始第一步。</span>
                     <button className="button button--dark" type="button" onClick={() => void handleStartGuidedSession()} disabled={busy || !selectedDelegation}>
                       进入学习室并开始这项任务
                     </button>
@@ -1199,9 +1129,9 @@ export default function FactWorkspace({
               </div>
             )}
           </section>
-          )}
 
-          {entryMode === "guided" && !setupDraft && selectedSession?.status === "running" && (
+          </>}
+          {!returnCard && !setupDraft && selectedSession?.status === "running" && (
             <section className="fact-card active-learning-session" aria-label="当前学习会话">
               <div className="fact-card__header">
                 <p className="eyebrow">CURRENT SESSION</p>
@@ -1219,7 +1149,7 @@ export default function FactWorkspace({
             </section>
           )}
 
-          {entryMode === "guided" && !setupDraft && (
+          {!setupDraft && (
           <details className="advanced-facts">
             <summary>高级：记录与复核工具</summary>
             <p className="advanced-facts__intro">这些工具用于查看事实、产出和证据状态，不是开始学习的必填步骤。</p>
@@ -1318,7 +1248,7 @@ export default function FactWorkspace({
           </section>
 
           <div className="fact-grid">
-            {entryMode === "guided" && !setupConfirmed && (
+            {!setupConfirmed && (
               <>
             <section className="fact-card" aria-label="创建任务">
               <div className="fact-card__header">
@@ -1712,7 +1642,7 @@ export default function FactWorkspace({
                       <article className="fact-claim" key={claim.id}>
                         <header>
                           <strong>{claim.dimension_id} · {claim.stance}</strong>
-                          <span>{claim.status} · {claim.source}</span>
+                          <span>{claim.status} · {claim.source_trusted ? claim.source : "来源待核实"}</span>
                         </header>
                         <p>{claim.statement}</p>
                         <footer>

@@ -259,7 +259,7 @@ export default function PlanWorkspace({
 
   if (!planId) {
     return <div className="workspace-content plans-page plan-list-page">
-      <section className="page-heading page-heading--plans"><div><p className="eyebrow">LEARNING PLANS</p><h1>学习计划</h1><p>先看清全部计划，再进入一个计划处理概览、结构或排期。</p></div></section>
+      <section className="page-heading page-heading--plans"><div><p className="eyebrow">LEARNING PLANS</p><h1>历史计划</h1><p>管理此前保存的计划和任务。新学习的安排与进展请在“开始学习”中继续查看。</p></div></section>
       {error && <div className="workspace-alert" role="alert">{error}</div>}
       <PlanPortfolioMetrics summaries={summaries} />
       {summaries.length ? <section className="plan-summary-list" aria-label="全部计划">
@@ -271,7 +271,7 @@ export default function PlanWorkspace({
           </button>
           <div className="plan-summary-next"><span>下一项</span>{summary.next_task ? <button type="button" onClick={() => openPlan(summary.id, "structure", summary.next_task!.id)}><strong>{summary.next_task.title}</strong><small>{[summary.next_task.subject_title, summary.next_task.topic_title].filter(Boolean).join(" / ")}</small></button> : <p>暂无待办</p>}<button className="button button--quiet button--compact button--with-icon" type="button" onClick={() => openPlan(summary.id)}>打开计划<ArrowUpRight size={14} /></button></div>
         </article>)}
-      </section> : <section className="empty-state empty-state--plans"><ListTree size={28} strokeWidth={1.5} /><h3>还没有学习计划</h3><p>请从开始学习进入已有计划，或让 AI 先帮你整理一条起步路线。</p></section>}
+      </section> : <section className="empty-state empty-state--plans"><ListTree size={28} strokeWidth={1.5} /><h3>没有历史计划</h3><p>你可以在“开始学习”中填写想学会的内容，或继续上次的学习。</p></section>}
     </div>;
   }
 

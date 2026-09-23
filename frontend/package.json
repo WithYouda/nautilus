@@ -10,12 +10,15 @@
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
+    "katex": "^0.16.47",
     "lucide-react": "^1.28.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

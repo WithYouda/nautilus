@@ -200,3 +200,25 @@
   .ai-composer textarea { max-height: 88px; }
   .ai-composer-actions > span { display: none; }
 }
+
+/* Shared chat frame: messages scroll, while notices and the composer stay in view. */
+.ai-chat-notice:empty { display: none; }
+.question-discussion-context { align-self: center; color: var(--muted); font-size: 12px; }
+.question-discussion-source { margin-bottom: 24px; border-bottom: 1px solid var(--line); }
+.question-discussion-source > summary { padding: 8px 0 14px; cursor: pointer; color: var(--ink-soft); font-size: 13px; }
+.question-discussion-source__body { max-width: 820px; padding-bottom: 20px; font-size: 13px; line-height: 1.7; }
+.question-discussion-source__body h3 { margin: 18px 0 8px; font-size: 14px; }
+.question-feedback { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); }
+.question-feedback h4 { margin: 8px 0; }
+.question-feedback details > summary, .discussion-sources > summary { cursor: pointer; }
+.discussion-sources { margin-top: 14px; font-size: 12px; }
+.discussion-sources blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--line); }
+
+.discussion-sources__list { display: grid; gap: 0; margin-top: 10px; }
+.discussion-source { min-width: 0; padding: 12px 0; border-top: 1px solid var(--line); }
+.discussion-source h4 { margin: 0 0 8px; color: var(--ink-soft); font-size: 11px; font-weight: 600; }
+.discussion-source__excerpt { max-height: 5.4em; overflow: hidden; font-size: 12px; line-height: 1.8; }
+.discussion-source__excerpt.is-truncated { mask-image: linear-gradient(to bottom, #000 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent 100%); }
+.discussion-source__excerpt.is-expanded { max-height: none; overflow: visible; }
+.discussion-source__toggle { display: flex; align-items: center; gap: 4px; min-height: 32px; margin-top: 4px; padding: 0; border: 0; color: var(--accent-dark); background: transparent; font: inherit; cursor: pointer; }
+.discussion-source__toggle:focus-visible { outline: 2px solid var(--accent-dark); outline-offset: 3px; }

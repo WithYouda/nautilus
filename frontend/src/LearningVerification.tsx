@@ -1,5 +1,7 @@
+import LearningMarkdown from "./LearningMarkdown";
+import VerificationReview from "./VerificationReview";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Check, CircleAlert, Send, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Send, ShieldCheck } from "lucide-react";
 import {
   startLearningVerification,
   submitLearningVerification,
@@ -8,11 +10,19 @@ import {
   confirmLearningVerification,
   analyzeVerificationEvidence,
   purgeVerification,
+  getVerificationReview,
   type LearningRoomBrief,
   type LearningVerification,
 } from "./api";
 
 type VerificationMode = "ai_challenge" | "user_material";
+type VerificationDraft = {
+  responses: Record<string, string>;
+  material: string;
+  learnerWork: string;
+  independent: boolean;
+  editing: boolean;
+};
 
 function requestId() {
   return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -22,13 +32,17 @@ export default function LearningVerification({
   brief,
   onBack,
   onCompleted,
+  onDiscuss,
 }: {
   brief: LearningRoomBrief;
   onBack: () => void;
   onCompleted?: () => void;
+  onDiscuss: (id: string) => void;
 }) {
   const [mode, setMode] = useState<VerificationMode>("ai_challenge");
   const [verification, setVerification] = useState<LearningVerification | null>(null);
+  const [attempts, setAttempts] = useState<LearningVerification[]>([]);
+  const drafts = useRef(new Map<string, VerificationDraft>());
   const [responses, setResponses] = useState<Record<string, string>>({});
   const [material, setMaterial] = useState("");
   const [learnerWork, setLearnerWork] = useState("");
@@ -46,8 +60,12 @@ export default function LearningVerification({
     setLoading(true);
     listLearningVerifications().then((items) => {
       if (!active) return;
-      const current = items.find((item) => item.action_id === brief.action_id && item.delegation_id === brief.delegation_id
+      const related = items.filter((item) => item.action_id === brief.action_id && item.delegation_id === brief.delegation_id
         && item.session_id === (brief.session_id ?? null));
+      setAttempts(related);
+      drafts.current.clear();
+      setResponses({}); setMaterial(""); setLearnerWork(""); setIndependent(false); setEditing(false); setStopConfirmed(false);
+      const current = related[0];
       setVerification(current ?? null);
       if (current) setMode(current.mode);
     }).catch((reason: unknown) => {
@@ -59,6 +77,30 @@ export default function LearningVerification({
   function changed() {
     submissionKey.current = requestId();
     setStopConfirmed(false);
+  }
+
+  function updateVerification(next: LearningVerification) {
+    setVerification(next);
+    setAttempts((current) => [next, ...current.filter((item) => item.id !== next.id)]);
+  }
+
+  function changeMode(nextMode: VerificationMode) {
+    if (busy || nextMode === mode || attempts.some((item) => item.status === "passed")) return;
+    if (verification && !verification.content_purged) {
+      drafts.current.set(verification.id, { responses, material, learnerWork, independent, editing });
+    }
+    const next = attempts.find((item) => item.mode === nextMode && !item.content_purged) ?? null;
+    if (!next && attempts.some((item) => item.mode === nextMode)) startKey.current = requestId();
+    const draft = next ? drafts.current.get(next.id) : undefined;
+    setMode(nextMode);
+    setVerification(next);
+    setResponses(draft?.responses ?? {});
+    setMaterial(draft?.material ?? "");
+    setLearnerWork(draft?.learnerWork ?? "");
+    setIndependent(draft?.independent ?? false);
+    setEditing(draft?.editing ?? false);
+    setError("");
+    changed();
   }
 
   async function begin() {
@@ -76,7 +118,7 @@ export default function LearningVerification({
         mode,
         request_key: `verification:${brief.delegation_id}:${brief.session_id ?? "none"}:${mode}:${startKey.current}`,
       });
-      setVerification(next);
+      updateVerification(next);
       setResponses({});
       setMaterial("");
       setLearnerWork("");
@@ -103,10 +145,10 @@ export default function LearningVerification({
         evidence_condition: independent ? "independent" : "with_materials",
         request_key: submissionKey.current,
       });
-      setVerification(saved);
+      updateVerification(saved);
       setEditing(false);
       const next = await evaluateLearningVerification(saved.id, saved.latest_submission_id!, requestId());
-      setVerification(next);
+      updateVerification(next);
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "验证提交失败");
     } finally {
@@ -119,7 +161,7 @@ export default function LearningVerification({
     setBusy(true);
     setError("");
     try {
-      setVerification(await evaluateLearningVerification(verification.id, verification.latest_submission_id, requestId()));
+      updateVerification(await evaluateLearningVerification(verification.id, verification.latest_submission_id, requestId()));
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "评估重试失败，作答已保存");
     } finally { setBusy(false); }
@@ -131,7 +173,7 @@ export default function LearningVerification({
     setError("");
     try {
       const next = await confirmLearningVerification(verification.id, verification.latest_submission_id, verification.evaluation.id);
-      setVerification(next);
+      updateVerification(next);
       if (next.status === "passed") onCompleted?.();
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "完成确认失败，评估结果已保留");
@@ -154,23 +196,25 @@ export default function LearningVerification({
     if (!verification || busy) return;
     setBusy(true);
     setError("");
-    try { setVerification(await analyzeVerificationEvidence(verification.id)); }
+    try { updateVerification(await analyzeVerificationEvidence(verification.id)); }
     catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "证据分析失败，作答仍保留"); }
     finally { setBusy(false); }
   }
 
   async function removeMaterial() {
-    if (!verification || busy || !window.confirm("彻底删除本次验证的所有提交、题目及评估内容？关联证据将失效，成果状态与回访安排会重新计算，内容无法恢复。行动完成记录会保留。")) return;
+    if (!verification || busy) return;
     setBusy(true);
     try {
-      setVerification(await purgeVerification(verification.id));
+      const detail = await getVerificationReview(verification.id);
+      if (!window.confirm(`彻底删除本次验证的全部提交、题目及评估？另有 ${detail.purge_discussion_count} 段关联或引用它的题目讨论正文会一并清除。依赖证据失效，完成记录保留，内容不可恢复。`)) return;
+      updateVerification(await purgeVerification(verification.id));
+      drafts.current.delete(verification.id);
       setResponses({}); setMaterial(""); setLearnerWork(""); setEditing(false);
     } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "删除失败"); }
     finally { setBusy(false); }
   }
 
   const questions = verification?.challenge.questions ?? [];
-  const submitted = verification?.status === "submitted" || verification?.status === "passed" || verification?.status === "failed";
   const completed = verification?.status === "passed";
   const answering = !verification?.latest_submission_id || editing;
   const canConfirm = !answering && verification?.result?.passed && verification.stop_condition_met === true;
@@ -188,6 +232,20 @@ export default function LearningVerification({
         </div>
       </header>
 
+      {!loading && !completed && <section className="verification-mode-picker" aria-label="选择验证方式">
+          <div className="verification-options" role="group" aria-label="验证方式">
+            <button type="button" className={mode === "ai_challenge" ? "is-active" : ""} aria-pressed={mode === "ai_challenge"} disabled={busy} onClick={() => changeMode("ai_challenge")}>
+              <strong>AI 出题验证</strong>
+              <span>按本次成果设计场景题、项目题、简答题或判断题</span>
+            </button>
+            <button type="button" className={mode === "user_material" ? "is-active" : ""} aria-pressed={mode === "user_material"} disabled={busy} onClick={() => changeMode("user_material")}>
+              <strong>提交我的材料</strong>
+              <span>粘贴题目、标准答案、项目结果或自己的理解，由 AI 评估</span>
+            </button>
+          </div>
+        <p className="form-hint">可随时切换方式；已保存的记录会保留，未提交输入仅在当前页面内保留。</p>
+      </section>}
+
       {error && <div className="workspace-alert" role="alert">{error}</div>}
 
       {loading ? <p role="status">正在恢复验证记录…</p> : !verification ? (
@@ -196,18 +254,8 @@ export default function LearningVerification({
             <ShieldCheck size={20} />
             <div>
               <strong>现在单独验证本次学习</strong>
-              <p>验证页面不会显示答案。提交后才会得到结果和下一步建议。</p>
+              <p>使用当前学习室所选模型出题和评估。提交后再查看结果和下一步建议。</p>
             </div>
-          </div>
-          <div className="verification-options" role="group" aria-label="验证方式">
-            <button type="button" className={mode === "ai_challenge" ? "is-active" : ""} onClick={() => setMode("ai_challenge")}>
-              <strong>AI 出题验证</strong>
-              <span>按本次成果设计场景题、项目题、简答题或判断题</span>
-            </button>
-            <button type="button" className={mode === "user_material" ? "is-active" : ""} onClick={() => setMode("user_material")}>
-              <strong>提交我的材料</strong>
-              <span>粘贴题目、标准答案、项目结果或自己的理解，由 AI 评估</span>
-            </button>
           </div>
           <button className="button button--accent" type="button" onClick={() => void begin()} disabled={busy}>
             {busy ? "正在准备验证" : "开始验证"}
@@ -224,17 +272,17 @@ export default function LearningVerification({
         <form className="verification-panel verification-panel--exam" onSubmit={submit}>
           <div className="verification-panel__exam-head">
             <div>
-              <span>验证进行中</span>
+              <span>{completed ? "本次委托已完成" : answering ? "验证进行中" : "验证记录"}</span>
               <strong>{questions.length ? `${questions.length} 道验证任务` : "材料评估"}</strong>
             </div>
-            <span className="verification-private-note">答案不会在本页显示</span>
+            <span className="verification-private-note">{answering ? "先独立作答，提交后可查看反馈" : "作答与反馈已保存"}</span>
           </div>
 
           {verification.challenge.instructions && <p className="verification-instructions">{verification.challenge.instructions}</p>}
-          {questions.map((question, index) => (
+          {answering && questions.map((question, index) => (
             <fieldset className="verification-question" key={question.id}>
               <legend>{index + 1}. {question.type === "project" ? "项目任务" : question.type === "scenario" ? "场景任务" : question.type === "true_false" ? "判断题" : "简答题"}</legend>
-              <p>{question.prompt}</p>
+              <div className="ai-markdown"><LearningMarkdown>{question.prompt}</LearningMarkdown></div>
               {question.source_urls.length > 0 && (
                 <div className="verification-sources">
                   <small>Provider 提供的来源，系统未独立核验</small>
@@ -260,20 +308,13 @@ export default function LearningVerification({
             <label className="field"><span>我的过程、理解或项目结果</span><textarea value={learnerWork} onChange={(event) => { changed(); setLearnerWork(event.target.value); }} rows={8} placeholder="说明你自己做了什么、如何判断，以及实际结果" disabled={completed || busy} /></label>
           </>)}
 
-          {!answering && submitted && verification.result && (
-            <div className={`verification-result${verification.result.passed ? " is-passed" : " is-failed"}`} role="status">
-              {verification.result.passed ? <Check size={20} /> : <CircleAlert size={20} />}
-              <div>
-                <strong>{verification.result.passed ? "验证通过" : "还需要补强"}</strong>
-                <p>{verification.result.feedback}</p>
-                <span>{verification.result.next_step}</span>
-                {verification.result.passed && verification.stop_condition_met !== true && <small>验证通过，但停止条件尚未满足，任务不会自动关闭。</small>}
-                {completed && <small>{verification.action_completed ? "停止条件已确认，学习行动已完成。" : "本次委托已完成；其他委托仍开放，学习行动可以继续。"}</small>}
-              </div>
-            </div>
-          )}
+          {!answering && verification.latest_submission_id && <VerificationReview
+            id={verification.id} refreshKey={`${verification.latest_submission_id}:${verification.evaluation?.id}:${verification.evaluation?.status}`}
+            onDiscuss={onDiscuss} onPurged={value => { drafts.current.delete(value.id); setResponses({}); setMaterial(""); setLearnerWork(""); updateVerification(value); }} onReadSolution={() => setIndependent(false)}
+          />}
+          {completed && <p>{verification.action_completed ? "停止条件已确认，学习行动已完成。" : "本次委托已完成；其他委托仍开放，学习行动可以继续。"}</p>}
 
-          {!answering && verification.latest_submission_id && !completed && <p role="status">作答已保存。{verification.evaluation?.status === "failed" ? "AI 评估未完成，可重试已保存的作答。" : verification.evaluation?.status === "running" ? "评估尚未返回；如请求已中断，可手动重试。" : ""}</p>}
+          {!answering && verification.latest_submission_id && !completed && <p role="status">作答已保存。{verification.evaluation?.status === "failed" ? (verification.evaluation.message ?? "AI 评估未完成，可重试已保存的作答。") : verification.evaluation?.status === "running" ? "评估尚未返回；如请求已中断，可手动重试。" : ""}</p>}
           {!completed && canConfirm && <>
             <label className="verification-stop-check">
               <input type="checkbox" checked={stopConfirmed} onChange={(event) => setStopConfirmed(event.target.checked)} disabled={busy} />
@@ -282,7 +323,7 @@ export default function LearningVerification({
             <button className="button button--accent" type="button" onClick={() => void confirm()} disabled={busy || !stopConfirmed}>确认完成本次委托</button>
           </>}
           {!completed && answering && <button className="button button--accent" type="submit" disabled={busy}><Send size={16} />{busy ? "正在保存或评估" : "保存作答并验证"}</button>}
-          {!completed && answering && <label className="verification-stop-check"><input type="checkbox" checked={independent} onChange={(event) => { changed(); setIndependent(event.target.checked); }} disabled={busy} /><span>本次作答由我独立完成，未查阅答案、资料或接受提示。未勾选仍可保存并评估。</span></label>}
+          {!completed && answering && <label className="verification-stop-check"><input type="checkbox" checked={independent} onChange={(event) => { changed(); setIndependent(event.target.checked); }} disabled={busy} /><span>本次作答由我独立完成，未查阅答案、资料或接受提示。未勾选仍可保存并评估；看过本次反馈后的补答按有帮助记录。</span></label>}
           {!completed && !answering && <>
             {verification.evaluation?.status !== "succeeded" && <button className="button button--accent" type="button" onClick={() => void retryEvaluation()} disabled={busy}>重试已保存的作答</button>}
             <button className="button button--quiet" type="button" onClick={() => { changed(); setIndependent(false); setEditing(true); }} disabled={busy}>提交新的作答</button>
@@ -294,7 +335,7 @@ export default function LearningVerification({
             {brief.criterion_id && <button className="button button--quiet" type="button" onClick={() => void collectEvidence()} disabled={busy || verification.evidence?.status === "succeeded"}>按已审核标准分析证据</button>}
             {verification.evidence && <p role="status">{verification.evidence.status === "succeeded" ? "候选证据已生成，等待复核；这不代表已经掌握。" : "证据分析未完成，作答已保留，可以重试。"}</p>}
           </div>}
-          <button className="button button--quiet" type="button" onClick={() => void removeMaterial()} disabled={busy}>彻底删除本次验证内容</button>
+          {answering && <details className="review-actions"><summary>更多操作</summary><p>仅在不想保留这些内容时使用，删除不可恢复。</p><button className="button button--danger" type="button" onClick={() => void removeMaterial()} disabled={busy}>彻底删除本次验证内容</button></details>}
         </form>
       )}
     </section>

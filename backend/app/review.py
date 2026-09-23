@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .learning_domain import CriterionRecipe, DomainError, Principal
+from .learning_domain import CriterionRecipe, DomainError, Principal, trusted_claim_method
 from .learning_service import LearningService
 from .state_derivation import StateDerivationService
 
@@ -69,11 +69,10 @@ class ReviewService:
 
     def _qualifies_for_adoption(self, principal: Principal, claim: dict[str, Any]) -> bool:
         recipe = self._recipe(principal, claim["criterion_id"])
-        method = _SOURCE_TO_METHOD[claim["source"]]
+        method = trusted_claim_method(claim)
         return any(
             dimension.id == claim["dimension_id"]
             and requirement.method == method
-            and requirement.condition == claim["evidence_condition"]
             for dimension in recipe.dimensions
             for requirement in dimension.requirements
         )
@@ -272,8 +271,8 @@ class ReviewService:
                 action,
             )
 
-        if action != "defer":
-            self.state_derivation.derive(identity, claim["criterion_id"])
+            if action != "defer":
+                self.state_derivation.derive(identity, claim["criterion_id"], connection=connection)
 
         row = self.database.fetchone(
             "SELECT * FROM learning_review_action WHERE owner_id=? AND id=?",
@@ -406,10 +405,10 @@ class ReviewService:
                 action,
             )
 
-        if action != "defer":
-            criteria = {claim["criterion_id"] for claim in claims}
-            for criterion_id in criteria:
-                self.state_derivation.derive(identity, criterion_id)
+            if action != "defer":
+                criteria = {claim["criterion_id"] for claim in claims}
+                for criterion_id in criteria:
+                    self.state_derivation.derive(identity, criterion_id, connection=connection)
 
         row = self.database.fetchone(
             "SELECT * FROM learning_batch_review_action WHERE owner_id=? AND id=?",
@@ -425,25 +424,25 @@ class ReviewService:
         artifact_id: str,
     ) -> dict[str, Any]:
         principal = self._principal(identity)
-        latest = self.database.fetchone(
-            """SELECT MAX(content_version) AS latest FROM learning_raw_artifact
-               WHERE owner_id=? AND artifact_id=?""",
-            (principal.owner_id, artifact_id),
-        )
-        if latest is None or latest["latest"] is None:
-            raise DomainError("not_found", 404)
-        latest_version = latest["latest"]
-        claims = self.database.fetchall(
-            """SELECT id, status, criterion_id FROM learning_evidence_claim
-               WHERE owner_id=? AND artifact_id=? AND content_version<?""",
-            (principal.owner_id, artifact_id, latest_version),
-        )
-        now = utc_timestamp()
-        superseded_count = 0
-        criterion_ids: set[str] = set()
         with self.database.transaction(immediate=True) as connection:
+            latest = self.database.fetchone(
+                """SELECT MAX(content_version) AS latest FROM learning_raw_artifact
+                   WHERE owner_id=? AND artifact_id=?""",
+                (principal.owner_id, artifact_id),
+            )
+            if latest is None or latest["latest"] is None:
+                raise DomainError("not_found", 404)
+            latest_version = latest["latest"]
+            claims = self.database.fetchall(
+                """SELECT id, status, criterion_id FROM learning_evidence_claim
+                   WHERE owner_id=? AND artifact_id=? AND content_version<?""",
+                (principal.owner_id, artifact_id, latest_version),
+            )
+            now = utc_timestamp()
+            superseded_count = 0
+            criterion_ids: set[str] = set()
             for claim in claims:
-                if claim["status"] == "superseded":
+                if claim["status"] in {"superseded", "invalidated"}:
                     continue
                 review_id = self._insert_review_action(
                     connection,
@@ -461,6 +460,12 @@ class ReviewService:
                     "UPDATE learning_evidence_claim SET status='superseded' WHERE owner_id=? AND id=?",
                     (principal.owner_id, claim["id"]),
                 )
+                if self.evidence_events is not None:
+                    self.evidence_events.append(principal.owner_id, "review", review_id, "review.recorded", {
+                        "id": review_id, "claim_id": claim["id"], "action": "supersede",
+                        "from_status": claim["status"], "to_status": "superseded", "reason": "artifact corrected",
+                        "request_key": f"correction:{artifact_id}:{latest_version}:{claim['id']}", "created_at": now,
+                    }, connection=connection)
                 superseded_count += 1
                 criterion_ids.add(claim["criterion_id"])
                 self._audit(
@@ -481,8 +486,8 @@ class ReviewService:
                     "artifact_corrected",
                 )
 
-        for criterion_id in criterion_ids:
-            self.state_derivation.derive(identity, criterion_id)
+            for criterion_id in criterion_ids:
+                self.state_derivation.derive(identity, criterion_id, connection=connection)
 
         return {
             "artifact_id": artifact_id,

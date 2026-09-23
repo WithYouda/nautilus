@@ -8,7 +8,20 @@ test("fact gate saves, corrects, replays, and survives refresh without a standar
   await authorize(page);
   await openFactWorkspace(page);
 
-  await expect(page.getByText("还没有原始产出。")).toBeVisible();
+  // Suites share only the newly created /tmp test database. Preserve earlier
+  // synthetic artifacts and pause any previous journey before starting ours.
+  const existing = await (await page.request.get("/api/learning/state")).json();
+  const running = existing.sessions.find((item: { status: string }) => item.status === "running");
+  if (running) {
+    const delegation = existing.delegations.find((item: { id: string }) => item.id === running.delegation_id);
+    const action = existing.actions.find((item: { id: string }) => item.id === delegation.action_id);
+    const paused = await page.request.post(`/api/learning/sessions/${running.id}/end`, { data: {
+      disposition: "interrupted", expected_version: action.aggregate_version,
+      idempotency_key: `synthetic-fact-isolation:${running.id}`,
+    }});
+    expect(paused.ok()).toBeTruthy();
+    await page.getByRole("button", {name:"刷新状态"}).click();
+  }
 
   await page.getByLabel("任务标题").fill("Playwright 事实门任务");
   await page.getByLabel("上下文").first().fill("playwright-context");
@@ -24,7 +37,7 @@ test("fact gate saves, corrects, replays, and survives refresh without a standar
   await page.getByLabel("停止条件").fill("保存一份文本产出");
   await page.getByRole("button", { name: "创建学习委托" }).click();
   await expect(page.getByText("学习委托已保存")).toBeVisible();
-  await expect(page.getByText("未绑定合格标准")).toBeVisible();
+  await expect(page.getByText("尚无已审核标准，本次反馈不派生成果状态。")).toBeVisible();
 
   await page.getByRole("button", { name: "开始学习会话" }).click();
   await expect(page.getByText("学习会话已开始")).toBeVisible();
@@ -35,7 +48,7 @@ test("fact gate saves, corrects, replays, and survives refresh without a standar
   const saveButton = page.getByRole("button", { name: "保存原始产出" });
   await saveButton.click();
   await expect(page.getByText("学习产出已保存")).toBeVisible();
-  await expect(page.locator(".fact-list li")).toHaveCount(1);
+  await expect(page.locator(".fact-list li").filter({hasText:"Playwright 事实门任务"})).toHaveCount(1);
   await expect(page.getByText("这是第一版 Playwright 学习产出。")).toBeVisible();
   await expect(page.getByText("blocked_no_criterion")).toBeVisible();
   await expect(page.getByText("no approved criterion")).toBeVisible();
@@ -81,7 +94,7 @@ test("fact workspace keeps the mobile page within the viewport", async ({ page }
   await authorize(page);
   await openFactWorkspace(page);
 
-  await expect(page.getByRole("heading", { name: "任务" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "任务", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 });
 
@@ -272,9 +285,9 @@ test("derived state recalculates after review and artifact correction", async ({
   });
   const applicationState = page.locator(".fact-state-list li").filter({ hasText: "application" });
   const syntaxState = page.locator(".fact-state-list li").filter({ hasText: "syntax_semantics" });
-  await expect(applicationState).toContainText("supported");
-  await expect(syntaxState).toContainText("supported");
-  await expect(applicationState).toContainText("requirements_met");
+  await expect(applicationState).toContainText("partially_supported");
+  await expect(syntaxState).toContainText("partially_supported");
+  await expect(applicationState).toContainText("independence_unverified");
   await expect(applicationState).toContainText("v1");
   await expect(applicationState).toContainText("v1");
 

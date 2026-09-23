@@ -191,6 +191,17 @@ def _backup_restores_verification_content(current, backup):
     backup_verification_columns = {row[1] for row in backup.execute("PRAGMA table_info(learning_verification)")}
     if "purged_at" not in current_columns:
         return False
+    # Ordinary artifacts have the same deletable evidence boundary. A backup
+    # with erased raw text can still retain a quotation in a projection.
+    for artifact_id in _purged_artifacts(current):
+        if 'learning_evidence_claim' not in backup_tables:
+            continue
+        for claim in backup.execute("SELECT id, statement, scope, verification_method, status FROM learning_evidence_claim WHERE artifact_id=?", (artifact_id,)).fetchall():
+            if tuple(claim)[1:] != ('内容已彻底删除', 'artifact', 'redacted', 'invalidated'):
+                return True
+            for table, column in (('learning_review_action', 'reason'), ('learning_evidence_follow_up', 'note')):
+                if table in backup_tables and backup.execute(f'SELECT 1 FROM {table} WHERE claim_id=? AND {column} IS NOT NULL', (claim[0],)).fetchone():
+                    return True
     for row in current.execute("SELECT id, verification_id FROM learning_verification_submission WHERE purged_at IS NOT NULL"):
         if "learning_verification_submission" in backup_tables:
             saved = backup.execute("SELECT content_json FROM learning_verification_submission WHERE id=?", (row[0],)).fetchone()
@@ -213,6 +224,15 @@ def _backup_restores_verification_content(current, backup):
                 snapshot = backup.execute("SELECT contract_snapshot_json FROM learning_verification WHERE id=?", (row[0],)).fetchone()
                 if snapshot and json.loads(snapshot[0] or '{}') not in ({}, {"version": 0, "stop_conditions": ""}):
                     return True
+    if "learning_question_discussion" in backup_tables and current.execute("SELECT 1 FROM sqlite_master WHERE name='learning_question_discussion'").fetchone():
+        turn_columns = {row[1] for row in backup.execute('PRAGMA table_info(learning_discussion_turn)')}
+        private_content = 'user_content IS NOT NULL OR assistant_content IS NOT NULL'
+        if 'reasoning_content' in turn_columns:
+            private_content += ' OR reasoning_content IS NOT NULL'
+        for row in current.execute("SELECT id FROM learning_question_discussion WHERE purged_at IS NOT NULL"):
+            saved = backup.execute("SELECT purged_at FROM learning_question_discussion WHERE id=?", (row[0],)).fetchone()
+            if saved and (saved[0] is None or backup.execute(f"SELECT 1 FROM learning_discussion_turn WHERE discussion_id=? AND ({private_content})", (row[0],)).fetchone()):
+                return True
     if "learning_evidence_private_content" in backup_tables:
         for row in current.execute("SELECT event_id FROM learning_evidence_private_content WHERE purged_at IS NOT NULL"):
             if backup.execute(

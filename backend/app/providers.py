@@ -248,6 +248,7 @@ class OpenAICompatibleProvider:
         messages: list[dict[str, str]],
         *,
         max_tokens: int = 48,
+        json_mode: bool = False,
     ) -> str:
         """执行一次短的非流式文本请求，用于标题等轻量后台任务。"""
         payload: dict[str, Any] = {
@@ -256,6 +257,8 @@ class OpenAICompatibleProvider:
             "stream": False,
             "max_tokens": max_tokens,
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         try:
             async with self._client() as client:
                 response = await client.post(
@@ -280,19 +283,34 @@ class OpenAICompatibleProvider:
         choices = parsed.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise ProviderError("提供方非流式响应缺少 choices", kind="protocol_error")
+        if choices[0].get("finish_reason") == "length":
+            raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
+        if choices[0].get("finish_reason") == "content_filter":
+            raise ProviderError("提供方未返回可用内容", kind="content_filtered")
         message = choices[0].get("message")
         if not isinstance(message, dict):
             raise ProviderError("提供方非流式响应缺少 message", kind="protocol_error")
         content = message.get("content")
+        if message.get("refusal"):
+            raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
         if not isinstance(content, str) or not content.strip():
             reasoning_content = message.get("reasoning_content")
             if isinstance(reasoning_content, str) and reasoning_content.strip():
                 raise ProviderError(
                     "提供方只返回了推理过程，没有给出最终文本",
-                    kind="protocol_error",
+                    kind="reasoning_only",
                 )
             raise ProviderError("提供方非流式响应没有正文", kind="protocol_error")
-        return content
+        # Only strip an explicit leading reasoning preamble. A literal <think>
+        # inside a JSON string or code sample belongs to the final answer.
+        final = content
+        if content.lstrip().startswith("<think>"):
+            _reasoning, separator, final = content.partition("</think>")
+            if not separator:
+                final = ""
+        if not final.strip():
+            raise ProviderError("提供方没有返回最终文本", kind="reasoning_only")
+        return final
 
     @staticmethod
     def _parse_stream_event(

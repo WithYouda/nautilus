@@ -33,7 +33,7 @@ def test_metrics_report_no_sample_and_traceability(client):
     response = client.get("/api/learning/metrics")
     assert response.status_code == 200
     report = response.json()
-    assert report["metric_version"] == "2.0"
+    assert report["metric_version"] == "3.0"
     assert report["window"] == "All records through report time; review-to-next-action observation window is 7 days."
 
     assert report["product_metrics"]["interrupted_delegation_recovery"]["status"] == "no_sample"
@@ -41,6 +41,7 @@ def test_metrics_report_no_sample_and_traceability(client):
     assert report["product_metrics"]["evidence_traceability"] == {
         "numerator": 2,
         "denominator": 2,
+        "sample_count": 2,
         "value": 1.0,
         "status": "pass",
         "unit": "ratio",
@@ -51,6 +52,7 @@ def test_metrics_report_no_sample_and_traceability(client):
     assert report["hard_guards"]["unsupported_claim_rate"] == {
         "numerator": 0,
         "denominator": 2,
+        "sample_count": 2,
         "value": 0.0,
         "status": "pass",
         "unit": "ratio",
@@ -103,6 +105,7 @@ def test_metrics_ai_failure_save_success_and_replay_consistency(client):
         assert report["hard_guards"]["ai_failure_save_success"] == {
             "numerator": 1,
             "denominator": 1,
+            "sample_count": 1,
             "value": 1.0,
             "status": "pass",
             "unit": "ratio",
@@ -117,7 +120,7 @@ def test_metrics_ai_failure_save_success_and_replay_consistency(client):
         client.app.state.evidence.semantic_analyzer = original_semantic_analyzer
 
 
-def test_metrics_replay_failure_fails_rebuild_guard(client):
+def test_rejected_replay_is_excluded_from_projection_comparisons(client):
     authorize(client)
     created = create_standard_chain(client)
     client.app.state.evidence.semantic_analyzer = None
@@ -139,8 +142,9 @@ def test_metrics_replay_failure_fails_rebuild_guard(client):
     assert replay.status_code == 409
     report = client.get("/api/learning/metrics").json()
     assert report["hard_guards"]["event_rebuild_consistency"]["numerator"] == 0
-    assert report["hard_guards"]["event_rebuild_consistency"]["denominator"] == 1
-    assert report["hard_guards"]["event_rebuild_consistency"]["status"] == "fail"
+    assert report["hard_guards"]["event_rebuild_consistency"]["denominator"] == 0
+    assert report["hard_guards"]["event_rebuild_consistency"]["status"] == "no_sample"
+    assert report["hard_guards"]["event_rebuild_consistency"]["excluded"]["rejected_before_comparison"] == 1
 
 
 def end_session(client, session_id, version, disposition="ended", key="metrics-end"):
@@ -187,15 +191,10 @@ def test_metrics_measure_interrupted_delegation_recovery(client):
     )
 
     report = client.get("/api/learning/metrics").json()
-    assert report["product_metrics"]["interrupted_delegation_recovery"] == {
-        "numerator": 1,
-        "denominator": 1,
-        "value": 1.0,
-        "status": "pass",
-        "unit": "ratio",
-        "notes": ["First session started after an interruption is the restore attempt."],
-        "excluded": {"awaiting_first_selection": 0},
-    }
+    metric = report["product_metrics"]["interrupted_delegation_recovery"]
+    assert metric['status'] == 'no_sample'
+    assert metric['denominator'] == 0  # Same delegation alone is not a user choice.
+
 
 
 def test_metrics_count_wrong_first_restore_selection(client):
@@ -244,10 +243,9 @@ def test_metrics_count_wrong_first_restore_selection(client):
     report = client.get("/api/learning/metrics").json()
     metric = report["product_metrics"]["interrupted_delegation_recovery"]
     assert metric["numerator"] == 0
-    assert metric["denominator"] == 1
-    assert metric["value"] == 0.0
-    assert metric["status"] == "fail"
-    assert metric["excluded"] == {"awaiting_first_selection": 0}
+    assert metric["denominator"] == 0
+    assert metric["value"] is None
+    assert metric["status"] == "no_sample"
 
 
 def test_metrics_measure_review_to_completed_next_action(client):
@@ -272,15 +270,10 @@ def test_metrics_measure_review_to_completed_next_action(client):
     end_session(client, next_session["id"], 6, key="review-next-complete")
 
     report = client.get("/api/learning/metrics").json()
-    assert report["product_metrics"]["review_to_next_action"] == {
-        "numerator": 1,
-        "denominator": 1,
-        "value": 1.0,
-        "status": "pass",
-        "unit": "ratio",
-        "notes": ["A completed later session on the same action counts as the next action."],
-        "excluded": {"window_pending": 0, "invalidated_by_purge": 0, "cancelled_follow_up": 0},
-    }
+    metric = report["product_metrics"]["review_to_next_action"]
+    assert metric['status'] == 'no_sample'
+    assert metric['denominator'] == 0  # An ended session is not completed learning.
+
 
 
 def test_metrics_single_list_pending_review_window_and_purged_sample(client):
@@ -298,7 +291,7 @@ def test_metrics_single_list_pending_review_window_and_purged_sample(client):
     pending = report["product_metrics"]["review_to_next_action"]
     assert pending["status"] == "no_sample"
     assert pending["denominator"] == 0
-    assert pending["excluded"]["window_pending"] == 1
+    assert pending["excluded"]["window_pending"] == 0
 
     purged = client.post(
         f"/api/learning/artifacts/{created['artifact']['id']}/purge",
@@ -313,7 +306,7 @@ def test_metrics_single_list_pending_review_window_and_purged_sample(client):
     invalidated = report["product_metrics"]["review_to_next_action"]
     assert invalidated["status"] == "no_sample"
     assert invalidated["denominator"] == 0
-    assert invalidated["excluded"]["invalidated_by_purge"] == 1
+    assert invalidated["sample_count"] == 0
 
 
 def test_metrics_report_does_not_expose_private_content_or_credentials(client):

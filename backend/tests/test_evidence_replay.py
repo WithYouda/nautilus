@@ -47,7 +47,7 @@ def test_evidence_replay_rebuilds_claims_reviews_states_and_follow_ups(client):
     assert replay.json()["event_count"] > 0
     assert replay.json()["aggregate_count"] > 0
     assert all(
-        row["schema_version"] == 1
+        row["schema_version"] in (1, 2)
         for row in client.app.state.learning.database.fetchall(
             "SELECT schema_version FROM learning_evidence_event"
         )

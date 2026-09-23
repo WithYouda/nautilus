@@ -337,6 +337,8 @@ class LearningSetupDraftRequest(BaseModel):
 
 
 class LearningSetupConfirmRequest(BaseModel):
+    review_id: str | None = Field(default=None, max_length=100)
+    draft_id: str | None = Field(default=None, pattern=r'^[0-9a-f-]{36}$')
     original_intent: str = Field(min_length=1, max_length=4000)
     goal_title: str = Field(min_length=1, max_length=200)
     goal_description: str = Field(default="", max_length=1000)
@@ -595,3 +597,16 @@ class ArtifactPurgeRequest(BaseModel):
 class EvidenceProviderSelectionRequest(BaseModel):
     provider_profile_id: str = Field(min_length=1, max_length=100)
     provider_model_id: str = Field(min_length=1, max_length=100)
+
+
+class QuestionDiscussionCreateRequest(BaseModel):
+    evaluation_id: str | None = Field(default=None, max_length=100)
+    submission_id: str = Field(min_length=1, max_length=100)
+    question_id: str = Field(min_length=1, max_length=100)
+    request_key: str = Field(min_length=1, max_length=200)
+
+
+class QuestionDiscussionMessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=12000)
+    request_key: str = Field(min_length=1, max_length=200)
+    retry: bool = False

@@ -44,6 +44,7 @@ PASS = json.dumps(
     {
         "passed": True,
         "stop_condition_met": True,
+        "question_feedback": [{"question_id": "q1", "feedback": "已说明关键步骤，建议比较不同输入。", "reference_answer": "先说明步骤，再检验边界。", "follow_up_questions": [], "unmet_requirements": []}],
         "feedback": "回答包含关键步骤。",
         "next_step": "可以结束本次任务。",
     },
@@ -53,6 +54,7 @@ STOP_NOT_MET = json.dumps(
     {
         "passed": True,
         "stop_condition_met": False,
+        "question_feedback": json.loads(PASS)["question_feedback"],
         "feedback": "回答基本正确，但还没有完成约定的停止条件。",
         "next_step": "补充一次独立实践。",
     },
@@ -62,11 +64,23 @@ FAIL = json.dumps(
     {
         "passed": False,
         "stop_condition_met": False,
+        "question_feedback": [{"question_id": "q1", "feedback": "请补充关键依据和独立说明。", "reference_answer": "先说明步骤，再检验边界。", "follow_up_questions": [], "unmet_requirements": ["缺少关键依据"]}],
         "feedback": "还缺少关键依据。",
         "next_step": "补充一次独立说明。",
     },
     ensure_ascii=False,
 )
+
+
+def for_material(response):
+    result = json.loads(response)
+    for item in result['question_feedback']:
+        item['question_id'] = 'material'
+    return json.dumps(result, ensure_ascii=False)
+
+
+MATERIAL_PASS = for_material(PASS)
+MATERIAL_FAIL = for_material(FAIL)
 
 
 class FakeConversations:
@@ -83,6 +97,9 @@ def response_transport(responses: list[str]):
 
     def handler(_request: httpx.Request) -> httpx.Response:
         response = remaining.pop(0)
+        if json.loads(_request.content).get('stream'):
+            event = json.dumps({'choices': [{'delta': {'content': response}}]})
+            return httpx.Response(200, headers={'content-type': 'text/event-stream'}, content=f'data: {event}\n\ndata: [DONE]\n\n')
         return httpx.Response(200, json={"choices": [{"message": {"content": response}}]})
 
     return httpx.MockTransport(handler)
@@ -246,7 +263,7 @@ async def test_failed_verification_can_be_retried_without_completing_until_passe
 @pytest.mark.asyncio
 async def test_user_material_mode_evaluates_material_without_returning_private_content(learning_database):
     context = create_context(learning_database, "material")
-    service = verification_service(learning_database, [PASS])
+    service = verification_service(learning_database, [MATERIAL_PASS])
     started = await service.start(IDENTITY, {**context, "mode": "user_material"}, "verification-material")
     private_material = "我的题目、标准答案和个人解题过程"
 
@@ -285,7 +302,7 @@ async def test_generation_failure_does_not_consume_request_and_can_retry(learnin
     context = create_context(learning_database, "generation")
     service = verification_service(learning_database, ["not json", CHALLENGE])
 
-    with pytest.raises(DomainError, match="verification_generation_failed"):
+    with pytest.raises(DomainError, match="verification_invalid"):
         await service.start(IDENTITY, {**context, "mode": "ai_challenge"}, "retry-generation")
 
     retried = await service.start(IDENTITY, {**context, "mode": "ai_challenge"}, "retry-generation")

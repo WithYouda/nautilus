@@ -288,6 +288,7 @@ export default function AiProviderDialog({
             </div>
 
             <p className="form-hint">点击模型输入框会从 Base URL 获取模型并缓存；获取失败时仍可手动填写。密钥只交给本地服务处理。</p>
+            <p className="form-hint">联网搜索尚未接入。模型官网的搜索功能不会随 API 自动启用；当前回答和出题不包含实时检索。</p>
             {provider?.credential_error && <p className="form-error" role="alert">{provider.credential_error}</p>}
             {error && <p className="form-error" role="alert">{error}</p>}
 

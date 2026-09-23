@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .conversations import ConversationError, ConversationService
 from .core.commands import ConfirmLearningSetup
+from .core.events import digest
+from .continuity import record_usage
 from .learning_domain import DomainError
 from .learning_service import LearningService
 from .providers import ProviderError, build_provider
@@ -122,8 +125,53 @@ class LearningSetupService:
         valid_ids = {item["id"] for item in available_standards}
         if draft.recommended_criterion_id not in valid_ids:
             draft = draft.model_copy(update={"recommended_criterion_id": None})
-        return draft.model_dump(mode="json")
+        result = draft.model_dump(mode="json")
+        # Keep only a fingerprint for change measurement, never a second draft body.
+        draft_id = str(uuid4())
+        comparison = {key: result[key] for key in (
+            "goal_title", "goal_description", "plan_title", "plan_description", "action_title",
+            "boundaries", "stop_conditions", "time_budget_minutes")}
+        comparison.update(object_description=result['outcome_object'], behavior=result['outcome_behavior'],
+                          context_key=result['context_key'], outcome_context_key=result['outcome_context_key'],
+                          criterion_id=result['recommended_criterion_id'])
+        standard = next((s for s in available_standards if s['id']==draft.recommended_criterion_id), None)
+        if standard:
+            comparison.update(object_description=standard['object_description'], behavior=standard['behavior'],
+                              context_key=standard['context_key'], outcome_context_key=standard['context_key'])
+        comparison = {key: value.strip() if isinstance(value, str) else value for key, value in comparison.items()}
+        with self.learning.database.transaction(immediate=True) as connection:
+            record_usage(connection, principal.owner_id, 'setup_ai', f'draft:{draft_id}:{digest(comparison)}')
+        return {**result, 'draft_id': draft_id}
 
     def confirm(self, identity: dict[str, Any], payload: dict[str, Any], key: str) -> dict[str, Any]:
         principal = self.learning.principal(identity)
-        return self.learning.core.execute(principal, ConfirmLearningSetup(**payload), key)
+        payload = dict(payload)
+        draft_id = payload.pop('draft_id', None)
+        review_id = payload.pop('review_id', None)
+        command = ConfirmLearningSetup(**payload)
+        with self.learning.database.transaction(immediate=True) as connection:
+            review = None
+            if review_id:
+                review = connection.execute("SELECT * FROM learning_return_review WHERE owner_id=? AND id=? AND kind='choose_next'", (principal.owner_id, review_id)).fetchone()
+                accepted = connection.execute("SELECT 1 FROM learning_usage_event WHERE owner_id=? AND review_id=? AND kind='continue'", (principal.owner_id, review_id)).fetchone()
+                if review is None or accepted is None:
+                    raise DomainError('not_found', 404)
+            draft = connection.execute("SELECT request_key FROM learning_usage_event WHERE owner_id=? AND kind='setup_ai' AND request_key LIKE ?",
+                (principal.owner_id, f'draft:{draft_id}:%')).fetchone() if draft_id else None
+            if draft_id and not draft:
+                raise DomainError('not_found', 404)
+            result = self.learning.core.execute_in_transaction(connection, principal, command, key)
+            if review:
+                if review['action_id'] not in (None, result['action_id']):
+                    raise DomainError('version_conflict')
+                # choose_next had no action yet; bind the user's confirmed choice.
+                connection.execute('UPDATE learning_return_review SET action_id=?, delegation_id=? WHERE owner_id=? AND id=?',
+                    (result['action_id'], result['delegation_id'], principal.owner_id, review_id))
+            record_usage(connection, principal.owner_id, 'setup_ai' if draft else 'setup_manual', f'setup:{key}',
+                         review_id=review_id, action_id=result['action_id'], delegation_id=result['delegation_id'])
+            comparison = {name: value.strip() if isinstance(value, str) else value
+                          for name, value in command.model_dump(exclude={'original_intent', 'outcome_id'}).items()}
+            if draft and draft['request_key'].rsplit(':',1)[1] != digest(comparison):
+                record_usage(connection, principal.owner_id, 'setup_modified', f'modified:{key}',
+                             action_id=result['action_id'], delegation_id=result['delegation_id'])
+            return result

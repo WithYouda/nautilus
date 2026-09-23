@@ -115,3 +115,25 @@ class LearningRepository:
         except (ValidationError, json.JSONDecodeError) as exc:
             raise DomainError("criterion_invalid_recipe") from exc
         return {"criterion": criterion, "reason": None}
+
+
+def trusted_claim_method(claim: dict) -> str | None:
+    """Fail closed for legacy/unbound provenance; adoption is not human review."""
+    import json
+    try:
+        provenance = json.loads(claim.get("provenance_json") or "null")
+        if not isinstance(provenance, dict):
+            return None
+        expected = {
+            "ai_analysis": ("semantic_analysis", "provider_semantic", "semantic_analysis"),
+            "deterministic_check": ("python_re_search", "regex_deterministic", "deterministic_check"),
+        }.get(claim["source"])
+        if not expected or (claim["verification_method"], provenance.get("executor_kind")) != expected[:2]:
+            return None
+        if any(provenance.get(key) != claim.get(key) for key in ("source", "verification_method", "evidence_condition")):
+            return None
+        if provenance.get("executor_version") != "1" or not provenance.get("observed_at"):
+            return None
+        return expected[2]
+    except (ValueError, TypeError, KeyError):
+        return None

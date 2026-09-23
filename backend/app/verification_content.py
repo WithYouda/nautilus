@@ -33,6 +33,7 @@ def purge_artifact_copies(connection, owner_id, artifact_id, now):
         (owner_id, artifact_id),
     ).fetchone()
     if submission is None:
+        scrub_evidence_copies(connection, owner_id, artifact_id)
         return
     connection.execute(
         "UPDATE learning_verification_submission SET content_json='{}', purged_at=? WHERE owner_id=? AND id=?",

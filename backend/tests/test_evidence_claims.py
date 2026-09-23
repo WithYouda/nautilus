@@ -110,7 +110,8 @@ def test_analysis_with_approved_standard_creates_referenced_candidate_claim(clie
     assert claim["status"] == "candidate"
     assert claim["source"] == "deterministic_check"
     assert claim["verification_method"] == "python_re_search"
-    assert claim["evidence_condition"] == "independent"
+    assert claim["evidence_condition"] == "with_materials"
+    assert "unobserved" in claim["provenance_json"]
 
     listed = client.get("/api/learning/evidence-claims").json()
     assert len(listed) == 2

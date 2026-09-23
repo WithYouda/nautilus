@@ -17,7 +17,7 @@ from app.review import ReviewService
 from app.state_derivation import StateDerivationService
 from app.verification import VerificationService
 from test_learning_domain_schema import learning_database  # noqa: F401
-from test_learning_verifications import IDENTITY, OWNER, PASS, CHALLENGE, create_context, FakeConversations, response_transport
+from test_learning_verifications import IDENTITY, OWNER, MATERIAL_PASS as PASS, PASS as CHALLENGE_PASS, CHALLENGE, create_context, FakeConversations, response_transport
 
 WORK = "regex: ^Nautilus[0-9]+$\nsample: Nautilus42\nI used anchors to restrict the match."
 REFERENCE = "PRIVATE_REFERENCE_SHOULD_NOT_BECOME_EVIDENCE"
@@ -77,6 +77,7 @@ async def test_submission_is_atomic_fact_and_private_reference_is_not_analyzed(l
 @pytest.mark.asyncio
 async def test_reference_only_cannot_pass_or_generate_evidence(learning_database):
     service, evidence, _, saved = await chain(learning_database, work="", material=WORK)
+    assert learning_database.fetchone("SELECT COUNT(*) FROM learning_usage_event WHERE kind='first_artifact'")[0] == 0
     evaluated = await service.evaluate(IDENTITY, saved["id"], saved["latest_submission_id"], "evaluate")
     assert evaluated["result"]["passed"] is False
     with pytest.raises(DomainError, match="verification_learner_work_required"):
@@ -200,7 +201,7 @@ async def test_assisted_submission_cannot_become_independent_evidence(learning_d
 @pytest.mark.asyncio
 async def test_ai_challenge_evidence_uses_only_saved_response(learning_database):
     service, evidence, _, first = await chain(learning_database)
-    service.transport = response_transport([CHALLENGE, PASS])
+    service.transport = response_transport([CHALLENGE, CHALLENGE_PASS])
     started = await service.start(IDENTITY, {
         "action_id": first["action_id"], "delegation_id": first["delegation_id"],
         "session_id": first["session_id"], "mode": "ai_challenge",
@@ -242,7 +243,7 @@ async def test_mixed_batch_reason_is_erased_without_invalidating_other_artifact(
         assert all(REFERENCE not in str(row) for row in review.actions(IDENTITY))
         assert REFERENCE not in str(events.events(OWNER.owner_id))
         assert evidence.claims(IDENTITY, other["id"])[0]["status"] == "adopted"
-        assert next(s for s in state.states(IDENTITY) if s["dimension_id"] == "application")["status"] == "supported"
+        assert next(s for s in state.states(IDENTITY) if s["dimension_id"] == "application")["status"] == "partially_supported"
 
 
 @pytest.mark.asyncio

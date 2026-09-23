@@ -10,6 +10,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("provider connection distinguishes an unreachable local API from an upstream error", async ({ page }) => {
+  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
   await page.getByRole("button", { name: "提供方设置" }).click();
   await page.route("**/api/ai/provider/models", (route) => route.abort("failed"));
   await page.route("**/api/ai/provider/test", (route) => route.abort("failed"));
@@ -26,6 +27,7 @@ test("provider connection distinguishes an unreachable local API from an upstrea
 });
 
 test("model discovery keeps structured upstream errors actionable and allows manual models", async ({ page }) => {
+  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
   await page.getByRole("button", { name: "提供方设置" }).click();
   await page.route("**/api/ai/provider/models", (route) => route.fulfill({
     status: 404,
@@ -218,6 +220,7 @@ test("global plan and task entries persist distinct AI context scopes", async ({
   await configureProvider(page.request, "mock-success");
   await page.reload();
 
+  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
   const companion = page.getByRole("complementary", { name: "AI 学习伙伴" });
   await expect(companion.getByText("全局上下文", { exact: true })).toBeVisible();
   await companion.getByRole("button", { name: "进入学习室" }).click();
@@ -232,7 +235,7 @@ test("global plan and task entries persist distinct AI context scopes", async ({
   expect(globalConversation.context.scope_kind).toBe("global");
 
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "计划", exact: true }).click();
+  await page.getByRole("button", { name: "历史计划", exact: true }).click();
   await page.getByRole("heading", { name: task.goalTitle }).click();
   await expect(page.getByRole("complementary", { name: "AI 学习伙伴" }).getByText("计划级上下文", { exact: true })).toBeVisible();
   await page.getByRole("complementary", { name: "AI 学习伙伴" }).getByRole("button", { name: "进入学习室" }).click();

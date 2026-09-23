@@ -22,6 +22,12 @@ SUCCESS_CHUNKS = [
 ]
 REFRESH_CHUNKS = [f"刷新块 {index}。" for index in range(1, 13)]
 SLOW_CHUNKS = [f"慢速块 {index}。" for index in range(1, 61)]
+MATH_TEXT = (
+    "## 合成公式讲解\n\n行内 $x^2$ 与 \\(y^2\\)。\n\n"
+    "$$\n\\frac{1}{2}\n$$\n\n\\[\\sum_{i=1}^{n} i\\]\n\n"
+    "`\\(literal_code\\)`\n\n```text\n\\[literal_block\\]\n```\n\n"
+    "$$\\underbrace{a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a}_{n}$$"
+)
 
 
 class MockState:
@@ -114,7 +120,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
-        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error"} else "mock-success"
+        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review"} else "mock-success"
         is_title_request = payload.get("stream") is not True and int(payload.get("max_tokens") or 0) >= 256
         STATE.requested(f"title:{scenario}" if is_title_request else scenario)
 
@@ -122,15 +128,34 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             self._json(401, {"error": {"message": "Mock provider rejected the API key"}})
             return
         if payload.get("stream") is not True:
-            if scenario == "mock-evidence":
+            prompt = " ".join(str(message.get('content', '')) for message in payload.get('messages', []))
+            if 'output_schema' in prompt and 'goal_title' in prompt:
+                content = json.dumps(dict(goal_title='解释一个日志匹配', goal_description='合成学习目标',
+                    plan_title='一次小练习', plan_description='合成学习安排', action_title='解释日志样例',
+                    context_key='synthetic-continuity', outcome_object='日志样例', outcome_behavior='解释匹配过程',
+                    outcome_context_key='synthetic-continuity', boundaries='仅一份样例',
+                    stop_conditions='写出自己的判断与过程', time_budget_minutes=15,
+                    recommended_criterion_id=None, rationale='先完成一个可观察的小步骤'), ensure_ascii=False)
+            elif '评估本次作答' in prompt:
+                evaluation_prompt = json.loads(payload['messages'][-1]['content'])
+                question_ids = [q['id'] for q in evaluation_prompt['questions']]
+                content = json.dumps(dict(passed=True, stop_condition_met=True,
+                    feedback=r'合成评估：本次说明符合当前任务要求。\(x^2\) 与 $\frac{1}{2}$。' if scenario == 'mock-math' else '合成评估：本次说明符合当前任务要求。', next_step='再观察不同输入。',
+                    question_feedback=[dict(question_id=qid, feedback='合成逐题反馈：已说明过程和未知。' if qid != 'q2' else '第二题反馈：应单独检查空输入，不能据此泛化。', reference_answer='合成参考解法：先定位，再检查边界。', follow_up_questions=['换一个输入时，你会怎样检查？'], unmet_requirements=[]) for qid in question_ids]), ensure_ascii=False)
+            elif '为题目讨论决定是否查阅' in prompt:
+                content = '{"history_query":"合成"}'
+            elif '你在 Nautilus 题目学习室中' in prompt:
+                content = '合成续学讲解：可以继续分析不同输入；此前的记录见[记录1]。'
+            elif '验证设计助手' in prompt:
+                content = json.dumps(dict(questions=[dict(id='q1', type='short_response',
+                    prompt=MATH_TEXT if scenario == 'mock-math' else '解释合成样例中如何定位一个编号，并说明一个未知情况。', source_urls=[],
+                    pass_criteria='说明过程与未知', answer_key='通过说明边界判断本次表现')] + ([dict(id='q2', type='short_response', prompt='第二题：请说明空输入的处理。', source_urls=[], pass_criteria='说明边界', answer_key='检查空输入')] if scenario == 'mock-review' else [])), ensure_ascii=False)
+            elif scenario == "mock-evidence":
                 content = json.dumps(
                     {
                         "dimension_id": "syntax_semantics",
                         "stance": "supports",
-                        "source": "ai_analysis",
                         "statement": "语义分析确认产出说明了正则表达式的匹配语义。",
-                        "verification_method": "semantic_analysis",
-                        "evidence_condition": "independent",
                         "scope": "artifact",
                     },
                     ensure_ascii=False,
@@ -148,13 +173,17 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         chunks, delay = self._scenario_stream(scenario)
+        discussion_stream = any('你在 Nautilus 题目学习室中' in str(message.get('content', '')) for message in payload.get('messages', []))
+        if discussion_stream:
+            chunks = ['合成续学讲解：', '可以继续分析不同输入；', '此前的记录见[记录1]。']
+            delay = 0.8
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
         self.end_headers()
         try:
-            if scenario == "mock-reasoning":
+            if scenario == "mock-reasoning" or discussion_stream:
                 for reasoning in ["先识别题目条件。", "再核对推导路径。"]:
                     event = json.dumps(
                         {"choices": [{"delta": {"reasoning_content": reasoning}}]},
@@ -164,7 +193,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f"data: {event}\n\n".encode("utf-8"))
                     self.wfile.flush()
                     STATE.chunk_delivered(scenario)
-                    time.sleep(0.10)
+                    time.sleep(0.8 if discussion_stream else 0.10)
             for chunk in chunks:
                 event = json.dumps(
                     {"choices": [{"delta": {"content": chunk}}]},
@@ -193,6 +222,8 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _scenario_stream(scenario: str) -> tuple[list[str], float]:
+        if scenario == "mock-math":
+            return [MATH_TEXT[:35], MATH_TEXT[35:80], MATH_TEXT[80:]], 0.1
         if scenario == "mock-refresh":
             return REFRESH_CHUNKS, 0.12
         if scenario == "mock-slow":

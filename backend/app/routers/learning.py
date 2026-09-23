@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi.responses import StreamingResponse
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from ..conversations import ConversationError
+from ..verification import VERIFICATION_FAILURE_MESSAGES
 from ..dependencies import (
     agent_runtime,
     current_identity,
@@ -20,6 +23,9 @@ from ..dependencies import (
 )
 from ..learning_domain import DomainError
 from ..learning_room import LearningRoomService
+from ..learning_records import LearningRecords
+from ..question_discussion import QuestionDiscussionService
+from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest
 from ..schemas import (
     AgentPermissionDenyRequest,
     EvidenceAnalysisRequest,
@@ -55,6 +61,7 @@ router = APIRouter(prefix="/api/learning")
 
 def _raise_learning_error(error: DomainError) -> None:
     messages = {
+        "discussion_busy": "这段讨论正在回答，请等待结果或稍后回来。问题已保存。",
         "permission_denied": "当前身份无权访问或修改这条学习事实",
         "permission_request_not_pending": "权限申请已过期或已处理",
         "not_found": "学习事实不存在",
@@ -114,6 +121,7 @@ def _raise_learning_error(error: DomainError) -> None:
         "verification_submission_immutable": "验证提交不可更正，请在验证页提交新的作答",
         "verification_independent_evidence_required": "当前已审核标准要求独立作答；本次有资料或提示帮助的产出保留，但不作为独立能力证据",
     }
+    messages.update(VERIFICATION_FAILURE_MESSAGES)
     raise HTTPException(
         status_code=error.status,
         detail={
@@ -272,6 +280,22 @@ def get_learning_room(session_id: str, request: Request, identity: dict[str, Any
         _raise_learning_error(error)
 
 
+@router.post("/sessions/{session_id}/room/entered")
+def record_learning_room_entry(session_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    from ..continuity import record_usage
+    service = learning_service(request)
+    principal = service.principal(identity)
+    with service.database.transaction(immediate=True) as connection:
+        session = connection.execute("SELECT s.*, d.action_id FROM learning_session s JOIN learning_delegation d ON d.owner_id=s.owner_id AND d.id=s.delegation_id WHERE s.owner_id=? AND s.id=?", (principal.owner_id, session_id)).fetchone()
+        if session is None:
+            _raise_learning_error(DomainError('not_found', 404))
+        record_usage(connection, principal.owner_id, 'entered', f'room-entered:{session_id}', action_id=session['action_id'], delegation_id=session['delegation_id'], session_id=session_id)
+        for setup in connection.execute("SELECT DISTINCT review_id FROM learning_usage_event WHERE owner_id=? AND action_id=? AND kind IN ('setup_ai','setup_manual') AND review_id IS NOT NULL", (principal.owner_id, session['action_id'])).fetchall():
+            for kind in ('started', 'entered'):
+                record_usage(connection, principal.owner_id, kind, f"setup-{kind}:{setup['review_id']}:{session_id}", review_id=setup['review_id'], action_id=session['action_id'], delegation_id=session['delegation_id'], session_id=session_id)
+    return {'recorded': True}
+
+
 @router.put("/sessions/{session_id}/room")
 def select_learning_room_conversation(
     session_id: str, payload: LearningRoomConversationRequest, request: Request,
@@ -306,6 +330,75 @@ def list_learning_verifications(
     identity: dict[str, Any] = Depends(current_identity),
 ) -> list[dict[str, Any]]:
     return verification_service(request).list(identity)
+
+
+@router.get("/records")
+def list_learning_records(request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    return LearningRecords(verification_service(request)).list(identity)
+
+
+@router.get("/records/{delegation_id}")
+def get_learning_record(delegation_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return LearningRecords(verification_service(request)).delegation(identity, delegation_id)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.get("/verifications/{verification_id}")
+def get_verification_detail(verification_id: str, request: Request, submission_id: str | None = None,
+                            evaluation_id: str | None = None, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return LearningRecords(verification_service(request)).detail(identity, verification_id, submission_id, evaluation_id)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post("/verifications/{verification_id}/discussions", status_code=201)
+def create_question_discussion(verification_id: str, payload: QuestionDiscussionCreateRequest, request: Request,
+                               identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return QuestionDiscussionService(verification_service(request)).create(identity, verification_id, **payload.model_dump())
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.get("/discussions/{discussion_id}")
+def get_question_discussion(discussion_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return QuestionDiscussionService(verification_service(request)).get(identity, discussion_id)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post("/discussions/{discussion_id}/messages")
+async def send_discussion_message(discussion_id: str, payload: QuestionDiscussionMessageRequest, request: Request,
+                                  identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return request.app.state.discussions.start(identity, discussion_id, **payload.model_dump())
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.get("/discussions/{discussion_id}/turns/{turn_id}/stream")
+async def stream_discussion_turn(discussion_id: str, turn_id: str, request: Request,
+                                 identity: dict[str, Any] = Depends(current_identity)):
+    service = request.app.state.discussions
+    try:
+        service.turn_snapshot(identity, discussion_id, turn_id)
+        return StreamingResponse(service.stream(identity, discussion_id, turn_id), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post("/discussions/{discussion_id}/turns/{turn_id}/cancel")
+async def cancel_discussion_turn(discussion_id: str, turn_id: str, request: Request,
+                                 identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return await request.app.state.discussions.cancel(identity, discussion_id, turn_id)
+    except DomainError as error:
+        _raise_learning_error(error)
 
 
 @router.post("/verifications/{verification_id}/evaluate")
@@ -809,5 +902,34 @@ def replay_learning(
     service = learning_service(request)
     try:
         return service.replay(identity)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+from ..continuity import ContinuityService
+
+
+class ReturnChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["review_card_shown", "continue", "choose_other", "choose_new", "stop_for_now", "evidence_viewed", "corrected", "entered"]
+    request_key: str = Field(min_length=1, max_length=160)
+    delegation_id: str | None = None
+    session_id: str | None = None
+
+
+@router.get("/return-review")
+def return_review(request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return ContinuityService(learning_service(request)).get(identity)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post("/return-review/{review_id}/choice")
+def return_choice(review_id: str, payload: ReturnChoice, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return ContinuityService(learning_service(request)).decide(identity, review_id, **payload.model_dump())
     except DomainError as error:
         _raise_learning_error(error)

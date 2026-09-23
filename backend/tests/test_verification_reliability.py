@@ -10,7 +10,7 @@ from app.learning_domain import DomainError
 from app.schemas import LearningVerificationSubmitRequest, LearningVerificationConfirmRequest
 from pydantic import ValidationError
 from test_learning_verifications import (
-    IDENTITY, OWNER, PASS, FAIL, CHALLENGE, create_context, verification_service,
+    IDENTITY, OWNER, MATERIAL_PASS as PASS, MATERIAL_FAIL as FAIL, CHALLENGE, create_context, verification_service,
 )
 from test_learning_domain_schema import learning_database  # noqa: F401
 

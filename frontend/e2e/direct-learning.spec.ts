@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { authorize } from "./fact-helpers";
 
-test("existing plan can enter the learning room with or without focus timing", async ({ page }) => {
+test("historical plans stay accessible separately without creating new learning facts", async ({ page }) => {
   await authorize(page);
 
   const now = new Date();
@@ -56,26 +56,21 @@ test("existing plan can enter the learning room with or without focus timing", a
   await page.reload();
   await page.getByRole("button", { name: "开始学习" }).first().click();
   await expect(page.getByRole("heading", { name: "开始学习" })).toBeVisible();
-  await page.getByRole("button", { name: "我已有学习计划" }).click();
-
-  const direct = page.getByRole("region", { name: "按计划进入学习室" });
-  await direct.getByLabel("选择计划任务").selectOption(task.id);
-  await direct.getByRole("button", { name: "进入学习室" }).click();
+  await page.getByRole("button", { name: "查看历史计划" }).click();
+  await expect(page.getByRole("heading", { name: "历史计划", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "已有计划直达计时验证" })).toBeVisible();
+  await page.getByRole("heading", { name: "已有计划直达验证", exact: true }).click();
+  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
+  await page.getByRole("complementary", { name: "AI 学习伙伴" }).getByRole("button", { name: "进入学习室" }).click();
   await expect(page.getByRole("heading", { name: "AI 学习室" })).toBeVisible();
-  await page.getByRole("button", { name: "当前对话信息" }).click();
-  await expect(page.getByText("无计时答疑任务", { exact: true }).last()).toBeVisible();
+  await expect(page.getByRole("button", { name: "当前对话信息" })).toContainText("已有计划直达验证");
   await page.getByRole("button", { name: "返回工作区" }).click();
+  const learning = await (await page.request.get("/api/learning/state")).json();
+  expect(learning.actions).toHaveLength(0);
+  const plans = await (await page.request.get("/api/plans")).json();
+  expect(JSON.stringify(plans)).toContain(task.id);
+  expect(JSON.stringify(plans)).toContain(timedTask.id);
 
-  await page.getByRole("button", { name: "我已有学习计划" }).click();
-  await page.getByRole("region", { name: "按计划进入学习室" }).getByLabel("选择计划任务").selectOption(timedTask.id);
-  await page.getByRole("region", { name: "按计划进入学习室" }).getByRole("button", { name: "开始专注并进入" }).click();
-  await expect(page.getByRole("heading", { name: "AI 学习室" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "活动学习计时" })).toBeVisible();
-
-  await page.getByRole("button", { name: "返回工作区" }).click();
-  await expect(page.getByRole("region", { name: "活动学习计时" })).toBeVisible();
-  await page.getByRole("button", { name: "结束计时" }).click();
-  await expect(page.getByRole("region", { name: "活动学习计时" })).toBeHidden();
 });
 
 function localDateKey(value: Date) {

@@ -949,21 +949,34 @@ export async function streamAiRun(
     );
   }
 
-  const reader = response.body.getReader();
+  await readStreamFrames(response, frame => {
+    const parsed = parseAiStreamFrame(frame);
+    if (parsed) onEvent(parsed);
+  });
+}
+
+async function readStreamFrames(response: Response, onFrame: (frame: string) => void): Promise<void> {
+  const reader = response.body!.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary >= 0) {
-      const frame = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      const parsed = parseAiStreamFrame(frame);
-      if (parsed) onEvent(parsed);
-      boundary = buffer.indexOf("\n\n");
+  let buffer = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      // Normalize after concatenation, including CRLF split across network chunks.
+      buffer = buffer.replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        onFrame(frame);
+        boundary = buffer.indexOf('\n\n');
+      }
+      if (done) break;
     }
-    if (done) break;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 
@@ -1115,6 +1128,7 @@ export type LearningEvidenceClaim = {
   stance: "supports" | "refutes" | "insufficient";
   status: "candidate" | "adopted" | "questioned" | "withdrawn" | "superseded";
   source: "ai_analysis" | "human_review" | "deterministic_check";
+  source_trusted?: boolean;
   statement: string;
   verification_method: string;
   evidence_condition: "independent" | "with_materials" | "with_hints";
@@ -1193,7 +1207,8 @@ export type LearningMetricResult = {
   numerator: number;
   denominator: number;
   value: number | null;
-  status: "pass" | "fail" | "no_sample";
+  sample_count: number;
+  status: "pass" | "fail" | "no_sample" | "observed";
   unit: "ratio" | "count";
   notes: string[];
   excluded: Record<string, number>;
@@ -1284,6 +1299,7 @@ export type LearningSetup = {
 };
 
 export type LearningSetupDraft = {
+  draft_id?: string;
   goal_title: string;
   goal_description: string;
   plan_title: string;
@@ -1301,6 +1317,9 @@ export type LearningSetupDraft = {
 };
 
 export type LearningRoomBrief = {
+  history_only?: boolean;
+  continuity_review_id?: string;
+  open_verification?: boolean;
   action_id?: string;
   delegation_id?: string;
   session_id?: string;
@@ -1344,7 +1363,7 @@ export type LearningVerification = {
   created_at: string;
   submitted_at: string | null;
   latest_submission_id: string | null;
-  evaluation: { id: string; status: "running" | "succeeded" | "failed"; reason: string | null } | null;
+  evaluation: { id: string; status: "running" | "succeeded" | "failed"; reason: string | null; message?: string | null } | null;
   action_completed: boolean;
   stop_conditions: string;
   artifact_id: string | null;
@@ -1376,6 +1395,8 @@ export function createLearningSetupDraft(intent: string): Promise<LearningSetupD
 }
 
 export function confirmLearningSetup(payload: {
+  review_id?: string;
+  draft_id?: string;
   original_intent: string;
   goal_title: string;
   goal_description: string;
@@ -1528,6 +1549,10 @@ export type LearningRoomState = { brief: LearningRoomBrief; conversation_id: str
 
 export function getLearningRoom(sessionId: string): Promise<LearningRoomState> {
   return request<LearningRoomState>(`/api/learning/sessions/${sessionId}/room`);
+}
+
+export function recordLearningRoomEntry(sessionId: string): Promise<{ recorded: boolean }> {
+  return request(`/api/learning/sessions/${sessionId}/room/entered`, { method: 'POST' });
 }
 
 export function selectLearningRoomConversation(sessionId: string, conversationId: string): Promise<LearningRoomState> {
@@ -1847,4 +1872,78 @@ export function revokeAgentPermissionGrant(
 export function getAgentContext(targetId?: string): Promise<AgentContext> {
   const query = targetId ? `?target_id=${encodeURIComponent(targetId)}` : "";
   return request<AgentContext>(`/api/learning/agent/context${query}`);
+}
+
+export type ReturnReview = {
+  id: string;
+  position: { goal: string; plan: string; action: string; action_id: string; delegation_id: string; last_session: string | null; last_activity_at: string | null };
+  what_happened: { summary: string; action_status: string; delegation_status: string; verification_status: string | null };
+  supported: Array<{ claim_id: string; label: string; basis_kind: string; scope: string; user_facing_explanation: string }>;
+  unknowns: Array<{ reason_code: string; label: string }>;
+  recommendation: { kind: string; action_id: string | null; delegation_id: string | null; label: string; reason_code: string; explanation: string; verification_id: string | null };
+  choices: string[];
+  alternatives: Array<{ action_id: string; delegation_id: string; label: string }>;
+  evidence_details: Array<{ id: string; status: string; statement: string; source: string; source_trusted: boolean; scope: string }>;
+};
+export function getReturnReview(): Promise<ReturnReview | null> {
+  return request('/api/learning/return-review');
+}
+export function chooseReturnReview(id: string, kind: 'review_card_shown' | 'continue' | 'choose_other' | 'choose_new' | 'stop_for_now' | 'evidence_viewed' | 'corrected' | 'entered', requestKey: string, delegationId?: string, sessionId?: string): Promise<{ destination: string; session_id?: string; review_id?: string }> {
+  return request(`/api/learning/return-review/${id}/choice`, { method: 'POST', body: JSON.stringify({ kind, request_key: requestKey, delegation_id: delegationId, session_id: sessionId }) });
+}
+
+export type QuestionFeedback = { question_id: string; feedback: string; reference_answer: string; follow_up_questions: string[]; unmet_requirements: string[] };
+export type VerificationReview = {
+  verification: LearningVerification;
+  submissions: Array<{ id: string; created_at: string; purged_at: string | null }>;
+  selected_submission_id: string | null;
+  content: { responses?: Record<string, string>; material?: string; learner_work?: string; evidence_condition?: string } | null;
+  evaluations: Array<{ id: string; status: string; reason: string | null; created_at: string; result: (NonNullable<LearningVerification['result']> & { question_feedback?: QuestionFeedback[] }) | null }>;
+  selected_evaluation_id: string | null;
+  result: (NonNullable<LearningVerification['result']> & { question_feedback?: QuestionFeedback[] }) | null;
+  discussions: Array<{ id: string; question_id: string; submission_id: string; created_at: string; purged_at: string | null }>;
+  purge_discussion_count: number;
+};
+export type QuestionDiscussion = {
+  id: string; verification_id: string; submission_id: string; question_id: string; purged: boolean;
+  source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
+  turns: Array<{ id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+};
+export type LearningRecord = { id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
+export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
+export function getVerificationReview(id: string, submissionId?: string, evaluationId?: string): Promise<VerificationReview> {
+  const query = new URLSearchParams();
+  if (submissionId) query.set('submission_id', submissionId);
+  if (evaluationId) query.set('evaluation_id', evaluationId);
+  return request(`/api/learning/verifications/${id}?${query}`);
+}
+export function listLearningRecords(): Promise<LearningRecord[]> { return request('/api/learning/records'); }
+export function getLearningRecord(id: string): Promise<LearningRecordDetail> { return request(`/api/learning/records/${id}`); }
+export function createQuestionDiscussion(id: string, submissionId: string, questionId: string, requestKey: string, evaluationId?: string | null): Promise<QuestionDiscussion> {
+  return request(`/api/learning/verifications/${id}/discussions`, { method: 'POST', body: JSON.stringify({ submission_id: submissionId, question_id: questionId, request_key: requestKey, evaluation_id: evaluationId }) });
+}
+export function getQuestionDiscussion(id: string): Promise<QuestionDiscussion> { return request(`/api/learning/discussions/${id}`); }
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false): Promise<QuestionDiscussion> {
+  return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry }) });
+}
+
+
+export type DiscussionStreamUpdate = { turn: QuestionDiscussion['turns'][number]; purged: boolean };
+export function cancelDiscussionTurn(id: string, turnId: string): Promise<QuestionDiscussion> {
+  return request(`/api/learning/discussions/${id}/turns/${turnId}/cancel`, { method: 'POST' });
+}
+export async function streamDiscussionTurn(id: string, turnId: string, onUpdate: (value: DiscussionStreamUpdate) => void, signal: AbortSignal): Promise<void> {
+  const response = await fetch(`/api/learning/discussions/${id}/turns/${turnId}/stream`, {
+    credentials: 'include', headers: { Accept: 'text/event-stream' }, signal,
+  });
+  if (!response.ok || !response.body) throw new Error('暂时无法接收回复，请重新连接。');
+  let complete = false;
+  await readStreamFrames(response, frame => {
+    const lines = frame.split('\n');
+    const event = lines.find(line => line.startsWith('event:'))?.slice(6).trim();
+    const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+    if (event === 'turn' && data) onUpdate(JSON.parse(data) as DiscussionStreamUpdate);
+    if (event === 'done') complete = true;
+  });
+  if (!complete && !signal.aborted) throw new Error('连接已中断，正在恢复回复。');
 }

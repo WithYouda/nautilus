@@ -11,8 +11,8 @@ test("plan view starts with the portfolio and opens stacked overview sections", 
   await createPlan(page.request, "英语阅读提升计划", "英语", "阅读理解", "完成一篇真题阅读");
   await page.reload();
 
-  await page.getByRole("button", { name: "计划", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "学习计划" })).toBeVisible();
+  await page.getByRole("button", { name: "历史计划", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "历史计划" })).toBeVisible();
   await expect.poll(() => page.getByLabel("全部计划").locator(".plan-summary-row").count()).toBeGreaterThanOrEqual(2);
   await expect(page.getByRole("heading", { name: first.title })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "计划详情视图" })).toHaveCount(0);

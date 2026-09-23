@@ -27,6 +27,7 @@ from .review import ReviewService
 from .state_derivation import StateDerivationService
 from .learning_storage import open_learning_database
 from .verification import VerificationService
+from .question_discussion import QuestionDiscussionService
 from .model_discovery import ModelDiscoveryService
 from .network import wsl_ip
 from .plan_editor import PlanEditorService
@@ -85,6 +86,8 @@ def create_app(
             ),
         )
         verification_service.evidence = evidence_service
+        discussion_service = QuestionDiscussionService(verification_service)
+        discussion_service.recover()
         interrupted_title_runs = conversation_service.recover_interrupted_title_runs()
         if interrupted_title_runs:
             logger.warning("Recovered %s interrupted conversation title runs.", interrupted_title_runs)
@@ -110,6 +113,7 @@ def create_app(
         app.state.learning = learning_service
         app.state.learning_setup = learning_setup_service
         app.state.verification = verification_service
+        app.state.discussions = discussion_service
         app.state.agent_runtime = agent_runtime
         app.state.state_derivation = state_derivation_service
         app.state.review = review_service
@@ -127,6 +131,7 @@ def create_app(
         try:
             yield
         finally:
+            await discussion_service.shutdown()
             await ai_run_manager.shutdown()
             learning_service.close()
             try:

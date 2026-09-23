@@ -45,8 +45,8 @@ def test_state_derivation_separates_candidate_adopted_and_excluded_claims(client
     assert adopted.json()["to_status"] == "adopted"
 
     after_adopt = states_by_dimension(client)
-    assert after_adopt["application"]["status"] == "supported"
-    assert after_adopt["application"]["reason_code"] == "requirements_met"
+    assert after_adopt["application"]["status"] == "partially_supported"
+    assert after_adopt["application"]["reason_code"] == "independence_unverified"
     assert after_adopt["application"]["participating_claim_ids"] == [claim_id]
     assert after_adopt["application"]["excluded_claim_ids"] == []
     assert after_adopt["application"]["standard_version"] == 1
@@ -73,7 +73,7 @@ def test_state_derivation_separates_candidate_adopted_and_excluded_claims(client
     assert [item["calculation_version"] for item in application_history] == [1, 2, 3]
     assert [item["status"] for item in application_history] == [
         "pending_review",
-        "supported",
+        "partially_supported",
         "awaiting_evidence",
     ]
 
@@ -135,7 +135,7 @@ def test_fact_correction_supersedes_old_claims_and_recalculates_state(client):
         json={"action": "adopt", "request_key": "adopt-before-correction"},
     )
     assert adopted.status_code == 201
-    assert states_by_dimension(client)["application"]["status"] == "supported"
+    assert states_by_dimension(client)["application"]["status"] == "partially_supported"
 
     correction = client.post(
         f"/api/learning/artifacts/{created['artifact']['id']}/corrections",

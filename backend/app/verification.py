@@ -17,6 +17,32 @@ from .learning_service import LearningService
 from .providers import ProviderError, build_provider
 from .verification_content import submission_content, learner_content
 
+VERIFICATION_FAILURE_MESSAGES = {
+    "verification_provider_unavailable": "验证使用的 AI 配置不可用，请返回学习室检查所选提供方和模型。",
+    "verification_timeout": "AI 验证请求超时，可在提供方设置中增加超时时间后重试。已有学习记录和作答仍保留。",
+    "verification_auth_error": "AI 提供方拒绝访问，请检查 API Key、账户余额和模型权限。",
+    "verification_rate_limited": "AI 提供方限流或额度不足，请检查账户后重试。",
+    "verification_network_error": "无法连接 AI 提供方，请检查服务地址和网络。",
+    "verification_endpoint_not_found": "AI 接口或模型不存在，请检查提供方地址和模型名称。",
+    "verification_request_error": "AI 提供方不接受本次请求，请检查模型是否支持 JSON 输出及当前请求参数。",
+    "verification_upstream_error": "AI 提供方服务异常，请稍后重试。",
+    "verification_output_truncated": "AI 输出达到长度上限，题目或评估不完整；请缩小本次学习范围或换用适合的模型后重试。",
+    "verification_reasoning_only": "AI 只返回了思考过程，没有最终结果；请换用非推理模型或重试。",
+    "verification_content_filtered": "AI 提供方未提供本次内容，请调整学习范围或改为提交自己的材料。",
+    "verification_invalid": "AI 返回的 JSON 或验证结构不完整，请重试；也可以改为提交自己的材料。",
+}
+
+
+def _failure_code(error: Exception) -> str:
+    if isinstance(error, ConversationError):
+        return "verification_provider_unavailable"
+    if isinstance(error, TimeoutError):
+        return "verification_timeout"
+    if isinstance(error, ProviderError):
+        code = f"verification_{error.kind}"
+        return code if code in VERIFICATION_FAILURE_MESSAGES else "verification_invalid"
+    return "verification_invalid"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
@@ -64,13 +90,13 @@ class VerificationService:
             "mode": row["mode"],
             "status": row["status"],
             "challenge": challenge,
-            "result": result,
+            "result": {k: v for k, v in result.items() if k != "question_feedback"} if result else None,
             "stop_condition_confirmed": bool(row["stop_condition_confirmed"]),
             "stop_condition_met": None if row["stop_condition_met"] is None else bool(row["stop_condition_met"]),
             "created_at": row["created_at"],
             "submitted_at": row["submitted_at"],
             "latest_submission_id": row.get("latest_submission_id"),
-            "evaluation": dict(evaluation) if evaluation else None,
+            "evaluation": {**dict(evaluation), "message": VERIFICATION_FAILURE_MESSAGES.get(evaluation["reason"])} if evaluation else None,
             "action_completed": action["status"] == "completed",
             "stop_conditions": json.loads(row["contract_snapshot_json"])["stop_conditions"],
             "artifact_id": submission["artifact_id"] if submission else None,
@@ -108,9 +134,24 @@ class VerificationService:
             raise DomainError("delegation_not_startable")
         return action, delegation, dict(contract), dict(outcome), session
 
-    async def _generate_challenge(self, owner_id: str, outcome: dict[str, Any], contract: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _runtime(self, owner_id: str, session_id: str | None):
+        # Use the teaching room's explicit selection, including a resumed session.
+        # A broken explicit choice must not silently send work to the default provider.
+        link = self.learning.database.fetchone(
+            """SELECT r.conversation_id FROM learning_room_conversation r
+               JOIN learning_session linked ON linked.owner_id=r.owner_id AND linked.id=r.session_id
+               JOIN learning_session current ON current.owner_id=linked.owner_id AND current.delegation_id=linked.delegation_id
+               WHERE current.owner_id=? AND current.id=? ORDER BY r.selected_at DESC, r.conversation_id LIMIT 1""",
+            (owner_id, session_id),
+        ) if session_id else None
+        if link:
+            profile, config, _snapshot = self.conversations.runtime_for_conversation(owner_id, link["conversation_id"])
+            return profile, config
+        return self.conversations.provider_runtime(owner_id)
+
+    async def _generate_challenge(self, owner_id: str, outcome: dict[str, Any], contract: dict[str, Any], session_id: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         try:
-            _profile, config = self.conversations.provider_runtime(owner_id)
+            _profile, config = self._runtime(owner_id, session_id)
             provider = build_provider(config, transport=self.transport)
             prompt = {
                 "outcome": outcome,
@@ -119,33 +160,36 @@ class VerificationService:
                 "instructions": [
                     "生成 1 到 3 个真实、有区分度的验证任务，不要生成填空题。",
                     "优先使用真实场景、代码/项目任务、简答解释或判断题；问题必须能观察用户是否真的会做或会解释。",
-                    "如果当前模型具备联网检索能力，先查找权威资料或公开验证项目，并只引用你确认存在的 URL；不能编造来源。",
+                    "本次调用没有搜索工具。不得声称已联网、已搜索或已核验网页；source_urls 返回空数组。",
                     "题目中不要放答案、评分细节或隐藏提示。答案只放在 answer_key 字段供服务端评估。",
-                    "只返回 JSON，不要 Markdown。",
+                    "只返回 JSON，不要 Markdown 围栏。题目文字可含 Markdown 和 LaTeX，但 JSON 字符串中的反斜杠必须正确转义。",
+                    "type 只能是 scenario、project、short_response、true_false 中的一个。",
                 ],
                 "schema": {
                     "questions": [
                         {
                             "id": "q1",
-                            "type": "scenario|project|short_response|true_false",
+                            "type": "short_response",
                             "prompt": "题目",
-                            "source_urls": ["https://..."],
+                            "source_urls": [],
                             "pass_criteria": "通过条件",
                             "answer_key": "服务端答案或评估依据",
                         }
                     ]
                 },
             }
-            text = await provider.generate_text(
-                [
-                    {"role": "system", "content": "你是 Nautilus 的验证设计助手。验证必须与教学分离，且不能向考生泄露答案。"},
-                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-                ],
-                max_tokens=1800,
-            )
+            async with asyncio.timeout(config.timeout_seconds):
+                text = await provider.generate_text(
+                    [
+                        {"role": "system", "content": "你是 Nautilus 的验证设计助手。验证必须与教学分离，且不能向考生泄露答案。只输出 JSON。"},
+                        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                    ],
+                    max_tokens=8192,
+                    json_mode=True,
+                )
             parsed = json.loads(_clean_json(text))
         except (ConversationError, ProviderError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
-            raise DomainError("verification_generation_failed", 502) from exc
+            raise DomainError(_failure_code(exc), 502) from exc
 
         questions = parsed.get("questions") if isinstance(parsed, dict) else None
         if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
@@ -222,7 +266,7 @@ class VerificationService:
             principal.owner_id, payload["action_id"], payload["delegation_id"], payload.get("session_id")
         )
         if mode == "ai_challenge":
-            challenge, answer_key = await self._generate_challenge(principal.owner_id, outcome, contract)
+            challenge, answer_key = await self._generate_challenge(principal.owner_id, outcome, contract, payload.get("session_id"))
         else:
             challenge = {
                 "instructions": "粘贴题目、标准答案、项目材料或你自己的理解。系统只会评估你提交的材料，不会把材料当作已验证事实。",
@@ -349,6 +393,11 @@ class VerificationService:
             if current["status"] == "passed":
                 raise DomainError("verification_already_completed")
             self._check_contract(principal.owner_id, current)
+            # Keep the original request fingerprint for retries, but never turn
+            # another answer to these questions after feedback into fresh
+            # independent evidence merely because the learner checks a box.
+            if connection.execute("SELECT 1 FROM learning_verification_evaluation e JOIN learning_verification_submission s ON s.id=e.submission_id WHERE s.owner_id=? AND s.verification_id=? AND e.status='succeeded'", (principal.owner_id, verification_id)).fetchone():
+                submitted["evidence_condition"] = "with_materials"
             submission_id, now = str(uuid4()), _now()
             connection.execute(
                 """INSERT INTO learning_verification_submission
@@ -446,10 +495,10 @@ class VerificationService:
             )
         result, reason = None, None
         try:
-            profile, config = self.conversations.provider_runtime(principal.owner_id)
+            profile, config = self._runtime(principal.owner_id, current["session_id"])
             snapshot = {"model": config.model, "provider_kind": config.provider_kind,
                         "provider_profile_id": profile.get("id"), "provider_config_version": profile.get("config_version"),
-                        "timeout_seconds": config.timeout_seconds, "verification_prompt_schema_version": 2}
+                        "timeout_seconds": config.timeout_seconds, "verification_prompt_schema_version": 4}
             with self.learning.database.transaction(immediate=True) as connection:
                 connection.execute(
                     "UPDATE learning_verification_evaluation SET provider_snapshot_json=? WHERE id=?",
@@ -457,35 +506,67 @@ class VerificationService:
                 )
             provider = build_provider(config, transport=self.transport)
             prompt = {
-                "task": "评估本次作答，只返回 passed、stop_condition_met、feedback、next_step。",
+                "task": "评估本次作答：先针对每道题给出反馈与建议，再总结整个验证。必须返回 question_feedback、passed、stop_condition_met、feedback、next_step。",
+                "question_feedback_schema": [{"question_id": "题目原 id；用户材料使用 material", "feedback": "该题反馈",
+                    "reference_answer": "面向学习者的参考解法，不是隐藏评分依据", "follow_up_questions": ["可选拓展问题"],
+                    "unmet_requirements": ["未达到的本次原有必需条件；满足时为空数组"]}],
                 "stop_conditions": json.loads(current["contract_snapshot_json"])["stop_conditions"],
+                "questions": json.loads(current["challenge_json"]).get("questions", []) or [{"id": "material", "prompt": "本次材料验证"}],
                 "answer_key": json.loads(current["answer_key_json"]),
                 "learner_response": submitted,
                 "instructions": [
                     "passed 和 stop_condition_met 必须是布尔值；feedback 和 next_step 必须是文本。",
-                    "只指出依据、缺口和建议，不复述答案、隐藏评分依据或私密材料。",
+                    "question_feedback 必填，按 questions 中的原 id 逐题返回，完整覆盖所有题目且不重复。每题 feedback 必须具体回应该题作答，说明正确之处、问题和可操作的改进建议，不能留空或用整次总结代替。",
+                    "先完成逐题分析，再在顶层 feedback 总结整次验证，在 next_step 给出整体下一步；不得输出隐藏评分依据、内部推理或无关私人资料。",
+                    "reference_answer 是供提交后学习使用的解释性参考解法，不直接复制 answer_key 中的评分指令。",
+                    "区分原停止条件与可选拓展；若 unmet_requirements 不为空，passed 与 stop_condition_met 必须为 false。不得临时提高通过门槛。",
                     "用户材料中的标准答案本身不是能力证据；只评价用户过程、理解或项目结果。",
                 ],
             }
-            text = await provider.generate_text([
-                {"role": "system", "content": "你是 Nautilus 的独立验证评估器。不得泄露服务端答案。"},
-                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-            ], max_tokens=1000)
+            async with asyncio.timeout(config.timeout_seconds):
+                text = await provider.generate_text([
+                    {"role": "system", "content": "你是 Nautilus 的独立验证评估器。当前作答已提交，可以提供面向学习者的解释性参考解法；不得复制隐藏评分指令或输出内部推理。只输出 JSON。"},
+                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                ], max_tokens=8192, json_mode=True)
             evaluation = json.loads(_clean_json(text))
             if (not isinstance(evaluation, dict)
-                or set(evaluation) != {"passed", "stop_condition_met", "feedback", "next_step"}
+                or set(evaluation) != {"passed", "stop_condition_met", "feedback", "next_step", "question_feedback"}
                 or any(not isinstance(evaluation.get(key), bool) for key in ("passed", "stop_condition_met"))
-                or any(not isinstance(evaluation.get(key), str) for key in ("feedback", "next_step"))):
+                or any(not isinstance(evaluation.get(key), str) or not evaluation[key].strip() for key in ("feedback", "next_step"))):
                 raise ValueError("invalid verification result")
             result = {**evaluation, "feedback": evaluation["feedback"][:4000], "next_step": evaluation["next_step"][:1000]}
+            if "question_feedback" in result:
+                expected = {q["id"] for q in json.loads(current["challenge_json"]).get("questions", [])} or {"material"}
+                feedback = result["question_feedback"]
+                if not isinstance(feedback, list) or len(feedback) != len(expected):
+                    raise ValueError("invalid question feedback")
+                seen = set()
+                for item in feedback:
+                    if not isinstance(item, dict) or set(item) != {"question_id", "feedback", "reference_answer", "follow_up_questions", "unmet_requirements"}:
+                        raise ValueError("invalid question feedback")
+                    qid = item["question_id"]
+                    if not isinstance(qid, str) or qid not in expected or qid in seen:
+                        raise ValueError("invalid feedback question")
+                    seen.add(qid)
+                    for key in ("feedback", "reference_answer"):
+                        if not isinstance(item[key], str) or len(item[key]) > 6000:
+                            raise ValueError("invalid feedback text")
+                    if not item["feedback"].strip():
+                        raise ValueError("empty question feedback")
+                    for key in ("follow_up_questions", "unmet_requirements"):
+                        if not isinstance(item[key], list) or len(item[key]) > 5 or any(not isinstance(v, str) or len(v) > 1000 for v in item[key]):
+                            raise ValueError("invalid feedback list")
+                    if item["unmet_requirements"]:
+                        result.update(passed=False, stop_condition_met=False)
             if current["mode"] == "user_material" and not learner_content(submitted):
                 result.update(passed=False, stop_condition_met=False,
                               feedback="材料已保存；请另行提供自己的过程、理解或项目结果，参考答案本身不能证明完成验证。")
         except asyncio.CancelledError:
             self._finish_evaluation(principal, current, submission_id, evaluation_id, None, "cancelled")
             raise
-        except (ConversationError, ProviderError, TimeoutError, ValueError):
-            reason = "evaluation_failed"
+        except (ConversationError, ProviderError, TimeoutError, ValueError) as exc:
+            result = None
+            reason = _failure_code(exc)
         self._finish_evaluation(principal, current, submission_id, evaluation_id, result, reason)
         return self._public(self._owned(principal.owner_id, verification_id))
 
@@ -555,6 +636,12 @@ class VerificationService:
                 (principal.owner_id, verification_id),
             )
             self._audit(connection, principal, "ConfirmVerification", verification_id, "confirmed")
+            from .continuity import record_usage
+            action_status = connection.execute("SELECT status FROM learning_action WHERE owner_id=? AND id=?", (principal.owner_id, current["action_id"])).fetchone()[0]
+            if action_status == "completed":
+                for start in connection.execute("SELECT * FROM learning_usage_event WHERE owner_id=? AND kind='started' AND action_id=?", (principal.owner_id, current["action_id"])).fetchall():
+                    record_usage(connection, principal.owner_id, "completed", f"completion:{start['review_id']}:{verification_id}", review_id=start["review_id"], action_id=current["action_id"], delegation_id=current["delegation_id"], session_id=current["session_id"])
+
         return self._public(self._owned(principal.owner_id, verification_id))
 
     def list(self, identity: dict[str, Any]) -> list[dict[str, Any]]:

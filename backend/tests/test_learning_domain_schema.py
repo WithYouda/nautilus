@@ -80,6 +80,11 @@ def test_independent_schema_and_reopen_are_stable(tmp_path):
                 "022_learning_verifications",
                 "023_verification_submissions",
                 "024_verification_evidence",
+                "025_evidence_provenance",
+                "026_replay_checks",
+                "027_learning_continuity",
+                "028_verification_discussions",
+                "029_discussion_reasoning",
             ]
             assert database.fetchone("PRAGMA integrity_check")[0] == "ok"
             assert database.fetchall("PRAGMA foreign_key_check") == []
@@ -150,6 +155,11 @@ def test_learning_database_upgrades_from_016_with_existing_rows(tmp_path):
             "022_learning_verifications",
             "023_verification_submissions",
             "024_verification_evidence",
+            "025_evidence_provenance",
+            "026_replay_checks",
+            "027_learning_continuity",
+            "028_verification_discussions",
+            "029_discussion_reasoning",
         ]
         assert database.fetchone(
             "SELECT display_name FROM local_identity WHERE id='upgrade-owner'"

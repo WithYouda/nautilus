@@ -130,6 +130,10 @@ class EvidenceEventService:
         connection=None,
         private_claim_ids: list[str] | None = None,
     ) -> dict[str, Any]:
+        if connection is None:
+            with self.database.transaction(immediate=True) as transaction:
+                return self.append(owner_id, aggregate_type, aggregate_id, event_type, payload,
+                                   connection=transaction, private_claim_ids=private_claim_ids)
         if (aggregate_type, event_type) not in SUPPORTED_EVIDENCE_EVENT_TYPES:
             raise DomainError("evidence_event_type_unsupported", 409)
         query_connection = connection or self.database.connection
@@ -146,12 +150,7 @@ class EvidenceEventService:
         claim_ids.update(value for value in (payload.get("claim_id"), payload.get("superseded_claim_id"), payload.get("replacement_claim_id")) if value)
         if aggregate_type == "claim":
             claim_ids.add(aggregate_id)
-        verification_claims = {claim_id for claim_id in claim_ids if query_connection.execute(
-            """SELECT 1 FROM learning_evidence_claim c JOIN learning_verification_submission s
-               ON s.owner_id=c.owner_id AND s.artifact_id=c.artifact_id WHERE c.owner_id=? AND c.id=?""",
-            (owner_id, claim_id),
-        ).fetchone()}
-        if verification_claims:
+        if claim_ids:
             payload = dict(payload)
             private = {key: payload[key] for key in ("statement", "reason", "note", "scope", "verification_method") if key in payload}
             for key in private:
@@ -170,53 +169,28 @@ class EvidenceEventService:
             "created_at": utc_timestamp(),
         }
         event["event_hash"] = _event_hash(event)
-        if connection is None:
-            with self.database.transaction(immediate=True) as transaction_connection:
-                transaction_connection.execute(
-                    """INSERT INTO learning_evidence_event
-                       (id, owner_id, aggregate_type, aggregate_id, event_type, event_version,
-                        schema_version, payload_json, previous_hash, event_hash, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        event["id"],
-                        event["owner_id"],
-                        event["aggregate_type"],
-                        event["aggregate_id"],
-                        event["event_type"],
-                        event["event_version"],
-                        event["schema_version"],
-                        event["payload_json"],
-                        event["previous_hash"],
-                        event["event_hash"],
-                        event["created_at"],
-                    ),
-                )
-                if private is not None:
-                    transaction_connection.execute("INSERT INTO learning_evidence_private_content VALUES (?, ?, ?, ?, NULL)",
-                                                   (event["id"], owner_id, _canonical(sorted(verification_claims)), _canonical(private)))
-        else:
-            connection.execute(
-                """INSERT INTO learning_evidence_event
-                   (id, owner_id, aggregate_type, aggregate_id, event_type, event_version,
-                    schema_version, payload_json, previous_hash, event_hash, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    event["id"],
-                    event["owner_id"],
-                    event["aggregate_type"],
-                    event["aggregate_id"],
-                    event["event_type"],
-                    event["event_version"],
-                    event["schema_version"],
-                    event["payload_json"],
-                    event["previous_hash"],
-                    event["event_hash"],
-                    event["created_at"],
-                ),
-            )
-            if private is not None:
-                connection.execute("INSERT INTO learning_evidence_private_content VALUES (?, ?, ?, ?, NULL)",
-                                   (event["id"], owner_id, _canonical(sorted(verification_claims)), _canonical(private)))
+        connection.execute(
+            """INSERT INTO learning_evidence_event
+               (id, owner_id, aggregate_type, aggregate_id, event_type, event_version,
+                schema_version, payload_json, previous_hash, event_hash, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                event["id"],
+                event["owner_id"],
+                event["aggregate_type"],
+                event["aggregate_id"],
+                event["event_type"],
+                event["event_version"],
+                event["schema_version"],
+                event["payload_json"],
+                event["previous_hash"],
+                event["event_hash"],
+                event["created_at"],
+            ),
+        )
+        if private is not None:
+            connection.execute("INSERT INTO learning_evidence_private_content VALUES (?, ?, ?, ?, NULL)",
+                               (event["id"], owner_id, _canonical(sorted(claim_ids)), _canonical(private)))
         return event
 
     def events(self, owner_id: str) -> list[dict[str, Any]]:
@@ -276,10 +250,13 @@ class EvidenceEventService:
 
     def replay(self, owner_id: str) -> dict[str, Any]:
         try:
-            self._validate_chain(owner_id)
-            events = self.events(owner_id)
+            from .replay_check import EVIDENCE_TABLES, projection_snapshot, record_comparison
             with self.database.transaction(immediate=True) as connection:
-                connection.execute("DELETE FROM learning_revisit_item WHERE owner_id=?", (owner_id,))
+                cutoff = connection.execute("SELECT COALESCE(MAX(rowid),0) FROM learning_evidence_event WHERE owner_id=?", (owner_id,)).fetchone()[0]
+                self._validate_chain(owner_id)
+                events = self.events(owner_id)
+                before = projection_snapshot(connection, owner_id, EVIDENCE_TABLES)
+                connection.execute("PRAGMA defer_foreign_keys=ON")
                 connection.execute("DELETE FROM learning_derived_state WHERE owner_id=?", (owner_id,))
                 connection.execute("DELETE FROM learning_derived_state_history WHERE owner_id=?", (owner_id,))
                 connection.execute("DELETE FROM learning_claim_replacement WHERE owner_id=?", (owner_id,))
@@ -295,15 +272,15 @@ class EvidenceEventService:
                             """INSERT INTO learning_evidence_claim
                                (id, owner_id, artifact_id, content_version, fact_event_id, criterion_id,
                                 dimension_id, stance, status, source, statement, verification_method,
-                                evidence_condition, scope, analysis_run_id, created_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                evidence_condition, scope, analysis_run_id, created_at, provenance_json)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 payload["id"], owner_id, payload["artifact_id"],
                                 payload["content_version"], payload["fact_event_id"],
                                 payload["criterion_id"], payload["dimension_id"], payload["stance"],
                                 payload["status"], payload["source"], payload["statement"],
                                 payload["verification_method"], payload["evidence_condition"],
-                                payload["scope"], payload["analysis_run_id"], payload["created_at"],
+                                payload["scope"], payload["analysis_run_id"], payload["created_at"], payload.get("provenance_json"),
                             ),
                         )
                     elif event["aggregate_type"] == "claim" and event["event_type"] == "claim.replaced":
@@ -427,28 +404,30 @@ class EvidenceEventService:
                          )""",
                     (owner_id, owner_id),
                 )
-                connection.execute(
-                    """UPDATE learning_evidence_claim
-                       SET status='withdrawn'
-                       WHERE owner_id=?
-                         AND artifact_id IN (
-                             SELECT id FROM learning_artifact
-                             WHERE owner_id=? AND evidence_status='withdrawn'
-                         )
-                         AND status NOT IN ('withdrawn', 'invalidated')""",
-                    (owner_id, owner_id),
-                )
                 self._audit(owner_id, "succeeded", connection=connection)
 
                 from .verification_content import purge_artifact_copies
                 for artifact in connection.execute(
-                    "SELECT artifact_id, purged_at FROM learning_verification_submission WHERE owner_id=? AND purged_at IS NOT NULL AND artifact_id IS NOT NULL",
+                    "SELECT DISTINCT artifact_id, purged_at FROM learning_raw_artifact WHERE owner_id=? AND purged_at IS NOT NULL",
                     (owner_id,),
                 ).fetchall():
                     purge_artifact_copies(connection, owner_id, artifact["artifact_id"], artifact["purged_at"])
+                from .state_derivation import StateDerivationService
+                from .learning_service import LearningService
+                from .learning_domain import Principal
+                state = StateDerivationService(LearningService(self.database))
+                for guarded in state.states({'id': owner_id}, connection=connection):
+                    if guarded['reason_code'] == 'execution_provenance_unverified':
+                        connection.execute("UPDATE learning_derived_state SET status=?, reason_code=? WHERE owner_id=? AND id=?",
+                            (guarded['status'], guarded['reason_code'], owner_id, guarded['id']))
+                for criterion in connection.execute("SELECT DISTINCT criterion_id FROM learning_derived_state WHERE owner_id=?", (owner_id,)).fetchall():
+                    state._refresh_revisit_queue(Principal.user(owner_id), state._criterion(Principal.user(owner_id), criterion[0])[0], [dict(row) for row in connection.execute("SELECT * FROM learning_derived_state WHERE owner_id=? AND criterion_id=?", (owner_id, criterion[0]))], connection=connection)
+                after = projection_snapshot(connection, owner_id, EVIDENCE_TABLES)
+                comparison = record_comparison(connection, owner_id, "evidence", cutoff, before, after)
 
             return {
                 "status": "succeeded",
+                "comparison": comparison,
                 "event_count": len(events),
                 "aggregate_count": len({
                     (event["aggregate_type"], event["aggregate_id"]) for event in events

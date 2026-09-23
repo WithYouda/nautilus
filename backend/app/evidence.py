@@ -25,19 +25,24 @@ class AnalysisError(RuntimeError):
         self.message = message
 
 
-class EvidenceClaimDraft(BaseModel):
+class ModelObservationDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     dimension_id: str = Field(min_length=1, max_length=100)
     stance: str = Field(pattern=r"^(supports|refutes|insufficient)$")
-    source: str = Field(pattern=r"^(ai_analysis|human_review|deterministic_check)$")
     statement: str = Field(min_length=1, max_length=4000)
-    verification_method: str = Field(min_length=1, max_length=200)
-    evidence_condition: str = Field(pattern=r"^(independent|with_materials|with_hints)$")
     scope: str = Field(min_length=1, max_length=500)
 
 
-Analyzer = Callable[[dict[str, Any]], list[EvidenceClaimDraft]]
-SemanticAnalyzer = Callable[[dict[str, Any]], list[EvidenceClaimDraft] | Any]
+class EvidenceClaimDraft(ModelObservationDraft):
+    """Internal execution result; never used as the Provider output schema."""
+    source: str
+    verification_method: str
+    evidence_condition: str
+    provenance_json: str | None = None
+
+
+Analyzer = Callable[[dict[str, Any]], list[ModelObservationDraft]]
+SemanticAnalyzer = Callable[[dict[str, Any]], list[ModelObservationDraft] | Any]
 
 _SOURCE_TO_METHOD = {
     "ai_analysis": "semantic_analysis",
@@ -62,7 +67,7 @@ def utc_timestamp() -> str:
 class RegexDeterministicAnalyzer:
     """First-slice deterministic analyzer for the approved regex standard."""
 
-    def __call__(self, request: dict[str, Any]) -> list[EvidenceClaimDraft]:
+    def __call__(self, request: dict[str, Any]) -> list[ModelObservationDraft]:
         lines = str(request["content"]).splitlines()
         pattern = next(
             (line.removeprefix("regex:").strip() for line in lines if line.startswith("regex:")),
@@ -85,13 +90,10 @@ class RegexDeterministicAnalyzer:
             raise AnalysisError("invalid_output", "正则表达式未匹配示例文本")
 
         return [
-            EvidenceClaimDraft(
+            ModelObservationDraft(
                 dimension_id="application",
                 stance="supports",
-                source="deterministic_check",
                 statement="确定性检查通过：该正则表达式在示例文本中匹配成功。",
-                verification_method="python_re_search",
-                evidence_condition="independent",
                 scope="artifact",
             )
         ]
@@ -110,7 +112,7 @@ class ProviderSemanticAnalyzer:
         self.transport = transport
         self.provider_service = provider_service
 
-    async def __call__(self, request: dict[str, Any]) -> list[EvidenceClaimDraft]:
+    async def __call__(self, request: dict[str, Any]) -> list[ModelObservationDraft]:
         try:
             if self.provider_service is None:
                 _profile, config = self.conversations.provider_runtime(request["identity_id"])
@@ -130,9 +132,6 @@ class ProviderSemanticAnalyzer:
                 "dimension_id": "syntax_semantics",
                 "stance": "supports | refutes | insufficient",
                 "statement": "A concise evidence statement grounded only in the artifact.",
-                "source": "ai_analysis",
-                "verification_method": "semantic_analysis",
-                "evidence_condition": "independent",
                 "scope": "artifact",
             },
             "constraints": [
@@ -174,7 +173,7 @@ class ProviderSemanticAnalyzer:
         if not isinstance(parsed, list) or not parsed:
             raise AnalysisError("invalid_output", "语义分析输出为空")
         try:
-            return [EvidenceClaimDraft.model_validate(item) for item in parsed]
+            return [ModelObservationDraft.model_validate(item) for item in parsed]
         except Exception as exc:
             raise AnalysisError("invalid_output", "语义分析输出结构不合格") from exc
 
@@ -333,7 +332,7 @@ class EvidenceService:
                 raise AnalysisError("invalid_output", "候选主张引用了不存在的验收维度")
             method = _SOURCE_TO_METHOD[claim.source]
             if not any(
-                requirement.method == method and requirement.condition == claim.evidence_condition
+                requirement.method == method
                 for requirement in dimension.requirements
             ):
                 raise AnalysisError(
@@ -356,14 +355,27 @@ class EvidenceService:
             "recipe": recipe.model_dump(mode="json"),
         }
         drafts: list[EvidenceClaimDraft] = []
+        condition = artifact.get("evidence_condition", "with_materials")
+        condition_basis = "user_self_report" if artifact.get("verification_submission_id") else "unobserved"
+
+        def bind(observations, source, method, executor):
+            for item in observations:
+                # Injected in-process analyzers are also unable to promote their source.
+                fields = item.model_dump() if isinstance(item, BaseModel) else item
+                observation = ModelObservationDraft.model_validate({key: fields[key] for key in ModelObservationDraft.model_fields})
+                provenance = dict(source=source, verification_method=method,
+                    evidence_condition=condition, condition_basis=condition_basis,
+                    executor_kind=executor, executor_version="1", observed_at=utc_timestamp())
+                drafts.append(EvidenceClaimDraft(**observation.model_dump(), source=source,
+                    verification_method=method, evidence_condition=condition,
+                    provenance_json=json.dumps(provenance, sort_keys=True)))
+
         if self.semantic_analyzer is not None:
             semantic_result = self.semantic_analyzer(request)
             if inspect.isawaitable(semantic_result):
                 semantic_result = await semantic_result
-            drafts.extend(semantic_result)
-            drafts.extend(self.analyzer(request))
-        else:
-            drafts.extend(self.analyzer(request))
+            bind(semantic_result, "ai_analysis", "semantic_analysis", "provider_semantic")
+        bind(self.analyzer(request), "deterministic_check", "python_re_search", "regex_deterministic")
         self._validate_claims(recipe, drafts)
         return drafts, request.get("provider_snapshot")
 
@@ -509,8 +521,8 @@ class EvidenceService:
                     """INSERT INTO learning_evidence_claim
                        (id, owner_id, artifact_id, content_version, fact_event_id, criterion_id,
                         dimension_id, stance, status, source, statement, verification_method,
-                        evidence_condition, scope, analysis_run_id, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?)""",
+                        evidence_condition, scope, analysis_run_id, created_at, provenance_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         claim_id,
                         principal.owner_id,
@@ -527,6 +539,7 @@ class EvidenceService:
                         draft.scope,
                         run_id,
                         created_at,
+                        draft.provenance_json,
                     ),
                 )
                 if self.evidence_events is not None:
@@ -545,6 +558,7 @@ class EvidenceService:
                             "stance": draft.stance,
                             "status": "candidate",
                             "source": draft.source,
+                            "provenance_json": draft.provenance_json,
                             "statement": draft.statement,
                             "verification_method": draft.verification_method,
                             "evidence_condition": draft.evidence_condition,

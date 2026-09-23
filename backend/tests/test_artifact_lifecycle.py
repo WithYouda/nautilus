@@ -70,7 +70,7 @@ def test_soft_delete_restore_and_withdraw_are_distinct(client):
         item["dimension_id"]: item
         for item in client.get("/api/learning/derived-states").json()
     }["application"]
-    assert state["status"] == "supported"
+    assert state["status"] == "partially_supported"
 
     withdrawn = client.post(
         f"/api/learning/artifacts/{created['artifact']['id']}/withdraw",

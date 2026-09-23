@@ -6,10 +6,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .learning_domain import CriterionRecipe
+from .learning_domain import CriterionRecipe, trusted_claim_method
 from .learning_service import LearningService
 
-METRIC_VERSION = "2.0"
+METRIC_VERSION = "3.0"
 OBSERVATION_WINDOW_DAYS = 7
 _FAILURE_STATUSES = {
     "failed",
@@ -30,10 +30,11 @@ def utc_timestamp() -> str:
 
 
 class MetricResult(BaseModel):
+    sample_count: int = Field(default=0, ge=0)
     numerator: int = Field(ge=0)
     denominator: int = Field(ge=0)
     value: float | None = None
-    status: Literal["pass", "fail", "no_sample"]
+    status: Literal["pass", "fail", "no_sample", "observed"]
     unit: Literal["ratio", "count"]
     notes: list[str] = Field(default_factory=list)
     excluded: dict[str, int] = Field(default_factory=dict)
@@ -60,6 +61,7 @@ class MeasurementService:
         denominator: int,
         *,
         higher_is_better: bool = True,
+        observational: bool = False,
         notes: list[str] | None = None,
         excluded: dict[str, int] | None = None,
     ) -> MetricResult:
@@ -75,10 +77,11 @@ class MeasurementService:
         value = numerator / denominator
         passed = value == 1 if higher_is_better else value == 0
         return MetricResult(
+            sample_count=denominator,
             numerator=numerator,
             denominator=denominator,
             value=value,
-            status="pass" if passed else "fail",
+            status="observed" if observational else "pass" if passed else "fail",
             unit="ratio",
             notes=notes or [],
             excluded=excluded or {},
@@ -99,7 +102,7 @@ class MeasurementService:
             dict(row)
             for row in self.database.fetchall(
                 """SELECT c.id, c.artifact_id, c.content_version, c.fact_event_id,
-                          c.criterion_id, c.dimension_id, c.source, c.evidence_condition,
+                          c.criterion_id, c.dimension_id, c.source, c.evidence_condition, c.verification_method, c.provenance_json,
                           c.status AS claim_status, raw.purged_at,
                           raw.owner_id AS artifact_owner,
                           raw.fact_event_id AS artifact_fact_event_id,
@@ -133,13 +136,12 @@ class MeasurementService:
             recipe = CriterionRecipe.model_validate_json(row["recipe_json"])
         except Exception:
             return False
-        method = _SOURCE_TO_METHOD.get(row["source"])
+        method = trusted_claim_method(row)
         if method is None:
             return False
         return any(
             dimension.id == row["dimension_id"]
             and requirement.method == method
-            and requirement.condition == row["evidence_condition"]
             for dimension in recipe.dimensions
             for requirement in dimension.requirements
         )
@@ -183,123 +185,62 @@ class MeasurementService:
         except ValueError:
             return None
 
+    def _review_events(self, owner_id):
+        rows = self.database.fetchall("SELECT * FROM learning_return_review WHERE owner_id=?", (owner_id,))
+        for row in rows:
+            events = self.database.fetchall("SELECT rowid AS sequence, * FROM learning_usage_event WHERE owner_id=? AND review_id=? ORDER BY rowid", (owner_id, row["id"]))
+            yield dict(row), [dict(event) for event in events]
+
     def _interrupted_delegation_recovery(self, owner_id: str) -> MetricResult:
-        interrupted = self.database.fetchall(
-            """SELECT s.id, s.delegation_id, s.ended_at
-               FROM learning_session AS s
-               JOIN learning_delegation AS d
-                 ON d.owner_id=s.owner_id AND d.id=s.delegation_id
-               JOIN learning_event AS e
-                 ON e.owner_id=s.owner_id
-                AND e.aggregate_type='action'
-                AND e.aggregate_id=d.action_id
-                AND e.event_type='session.ended'
-                AND json_extract(e.payload_json, '$.session_id')=s.id
-               WHERE s.owner_id=?
-                 AND json_extract(e.payload_json, '$.disposition')='interrupted'
-               ORDER BY s.ended_at, s.id""",
-            (owner_id,),
-        )
-        sessions = self.database.fetchall(
-            """SELECT id, delegation_id, started_at
-               FROM learning_session WHERE owner_id=? ORDER BY started_at, id""",
-            (owner_id,),
-        )
-        successes = 0
-        attempts = 0
-        awaiting = 0
-        for interruption in interrupted:
-            ended_at = self._parse_time(interruption["ended_at"])
-            if ended_at is None:
+        successes = attempts = 0
+        excluded = {"unknown": 0, "switched": 0, "stopped": 0}
+        for review, events in self._review_events(owner_id):
+            if review["reason_code"] != "interrupted":
                 continue
-            selection = next(
-                (
-                    session
-                    for session in sessions
-                    if self._parse_time(session["started_at"]) and self._parse_time(session["started_at"]) > ended_at
-                ),
-                None,
-            )
-            if selection is None:
-                awaiting += 1
+            kinds = {event["kind"] for event in events}
+            if "choose_other" in kinds or "switched" in kinds:
+                excluded["switched"] += 1
+                continue
+            if "stop_for_now" in kinds:
+                excluded["stopped"] += 1
+                continue
+            entered = [event for event in events if event["kind"] == "entered"]
+            if not {"review_card_shown", "resume_candidate_presented", "continue", "started"}.issubset(kinds) or not entered:
+                excluded["unknown"] += 1
                 continue
             attempts += 1
-            if selection["delegation_id"] == interruption["delegation_id"]:
+            if entered[0]["delegation_id"] == review["delegation_id"] and "corrected" not in kinds:
                 successes += 1
-        return self._ratio(
-            successes,
-            attempts,
-            notes=["First session started after an interruption is the restore attempt."],
-            excluded={"awaiting_first_selection": awaiting},
-        )
+        return self._ratio(successes, attempts, observational=True,
+            notes=["Observed explicit resume choice and actual room entry; later correction removes success. No unobserved intent is inferred."], excluded=excluded)
 
     def _review_to_next_action(self, owner_id: str) -> MetricResult:
-        rows = self.database.fetchall(
-            """SELECT f.id, f.status, f.created_at,
-                      c.status AS claim_status, raw.purged_at, d.action_id
-               FROM learning_evidence_follow_up AS f
-               JOIN learning_evidence_claim AS c
-                 ON c.owner_id=f.owner_id AND c.id=f.claim_id
-               JOIN learning_raw_artifact AS raw
-                 ON raw.owner_id=c.owner_id
-                AND raw.artifact_id=c.artifact_id
-                AND raw.content_version=c.content_version
-               JOIN learning_session AS claim_session
-                 ON claim_session.owner_id=raw.owner_id AND claim_session.id=raw.session_id
-               JOIN learning_delegation AS d
-                 ON d.owner_id=claim_session.owner_id AND d.id=claim_session.delegation_id
-               WHERE f.owner_id=?""",
-            (owner_id,),
-        )
-        completed_sessions = self.database.fetchall(
-            """SELECT s.id, d.action_id, s.started_at, s.ended_at
-               FROM learning_session AS s
-               JOIN learning_delegation AS d
-                 ON d.owner_id=s.owner_id AND d.id=s.delegation_id
-               WHERE s.owner_id=? AND s.ended_at IS NOT NULL""",
-            (owner_id,),
-        )
+        successes = attempts = 0
+        excluded = {"window_pending": 0, "declined": 0, "no_linked_execution": 0}
         now = datetime.now(timezone.utc)
-        successes = 0
-        attempts = 0
-        pending = 0
-        purged = 0
-        cancelled = 0
-        for row in rows:
-            if row["status"] == "cancelled":
-                cancelled += 1
+        for review, events in self._review_events(owner_id):
+            kinds = {event["kind"] for event in events}
+            if not review["action_id"] or "review_card_shown" not in kinds:
                 continue
-            if row["purged_at"] is not None or row["claim_status"] == "invalidated":
-                purged += 1
+            if "choose_other" in kinds or "stop_for_now" in kinds or "corrected" in kinds:
+                excluded["declined"] += 1
                 continue
-            created_at = self._parse_time(row["created_at"])
-            if created_at is None:
+            started = next((event for event in events if event["kind"] == "started" and event["action_id"] == review["action_id"]), None)
+            if "continue" not in kinds or started is None:
+                excluded["no_linked_execution"] += 1
                 continue
-            window_end = created_at + timedelta(days=OBSERVATION_WINDOW_DAYS)
-            completed = any(
-                session["action_id"] == row["action_id"]
-                and created_at <= self._parse_time(session["started_at"])
-                and self._parse_time(session["ended_at"]) <= window_end
-                for session in completed_sessions
-                if self._parse_time(session["started_at"]) and self._parse_time(session["ended_at"])
-            )
+            deadline = self._parse_time(review["created_at"]) + timedelta(days=OBSERVATION_WINDOW_DAYS)
+            completed = any(event["kind"] == "completed" and event["action_id"] == review["action_id"]
+                and event['sequence'] > started['sequence'] and self._parse_time(event["created_at"]) <= deadline for event in events)
             if completed:
-                attempts += 1
                 successes += 1
-            elif now < window_end:
-                pending += 1
+                attempts += 1
+            elif now < deadline:
+                excluded["window_pending"] += 1
             else:
                 attempts += 1
-        return self._ratio(
-            successes,
-            attempts,
-            notes=["A completed later session on the same action counts as the next action."],
-            excluded={
-                "window_pending": pending,
-                "invalidated_by_purge": purged,
-                "cancelled_follow_up": cancelled,
-            },
-        )
+        return self._ratio(successes, attempts, observational=True,
+            notes=["Stable recommendation, accepted execution and formal action completion are linked; session end never counts."], excluded=excluded)
 
     def _ai_failure_save_success(self, owner_id: str) -> MetricResult:
         rows = self.database.fetchall(
@@ -336,19 +277,11 @@ class MeasurementService:
         )
 
     def _event_rebuild_consistency(self, owner_id: str) -> MetricResult:
-        rows = self.database.fetchall(
-            """SELECT result FROM learning_audit
-               WHERE owner_id=? AND operation IN ('Replay', 'EvidenceReplay')""",
-            (owner_id,),
-        )
-        if not rows:
-            return self._ratio(
-                0,
-                0,
-                notes=["No fact or evidence replay attempt is recorded."],
-            )
-        successes = sum(1 for row in rows if row["result"] == "succeeded")
-        return self._ratio(successes, len(rows))
+        rows = self.database.fetchall("SELECT matched, constraints_ok FROM learning_replay_check WHERE owner_id=?", (owner_id,))
+        rejected = self.database.fetchone("SELECT COUNT(*) FROM learning_audit WHERE owner_id=? AND operation IN ('Replay','EvidenceReplay') AND result='rejected'", (owner_id,))[0]
+        return self._ratio(sum(bool(row["matched"] and row["constraints_ok"]) for row in rows), len(rows),
+            notes=["Same-cutoff domain projection digests, counts, states, relations and constraints compared."],
+            excluded={"rejected_before_comparison": rejected})
 
     def _permission_violations(self, owner_id: str) -> MetricResult:
         count = self.database.fetchone(

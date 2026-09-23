@@ -38,7 +38,7 @@ def test_room_restores_owned_conversation_and_survives_fact_replay(learning_data
     assert learning_database.fetchall("PRAGMA foreign_key_check") == []
 
 
-def test_room_refuses_foreign_objects_and_cross_session_reassignment(learning_database):
+def test_room_refuses_foreign_objects_and_restores_same_delegation(learning_database):
     context = create_context(learning_database)
     room = LearningRoomService(LearningService(learning_database), Chats())
     with pytest.raises(DomainError, match="not_found"):
@@ -49,6 +49,6 @@ def test_room_refuses_foreign_objects_and_cross_session_reassignment(learning_da
     core = LearningCore(learning_database)
     core.execute(OWNER, EndSession(session_id=context["session_id"], disposition="interrupted", expected_version=3), "end")
     another = core.execute(OWNER, StartSession(delegation_id=context["delegation_id"], expected_version=4), "restart")
-    with pytest.raises(DomainError, match="verification_scope_invalid"):
-        room.select(IDENTITY, another["id"], "chat-1")
-    assert room.get(IDENTITY, another["id"])["conversation_id"] is None
+    room.select(IDENTITY, another["id"], "chat-1")
+    assert room.get(IDENTITY, another["id"])["conversation_id"] == "chat-1"
+    assert learning_database.fetchone("SELECT session_id FROM learning_room_conversation WHERE conversation_id=?", ("chat-1",))[0] == context["session_id"]

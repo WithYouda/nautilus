@@ -9,7 +9,16 @@ test.beforeEach(async ({ page }) => {
 test("V6 desktop shell supports collapse, bounded resize, and real navigation", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.getByRole("navigation", { name: "工作区视图" })).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "AI 学习伙伴" })).toBeVisible();
+  const companion = page.getByRole("complementary", { name: "AI 学习伙伴" });
+  await expect(companion).toBeHidden();
+  const collapsed = await layoutMetrics(page);
+  expect(collapsed.companion).toBe(0);
+  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
+  await expect(companion).toBeVisible();
+  expect((await layoutMetrics(page)).main).toBeLessThan(collapsed.main);
+  await page.getByRole("button", { name: "收起 AI 学习伙伴" }).click();
+  await expect(companion).toBeHidden();
+  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
   await expect(page.getByRole("navigation", { name: "当前视角" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "工作区视图" }).getByRole("button")).toHaveCount(3);
   await expect(page.getByRole("button", { name: "知识库（开发中）" })).toBeDisabled();
@@ -98,6 +107,7 @@ test("V6 active timer stays inside the main column", async ({ page }) => {
   await page.mouse.up();
   await expectTimerInsideMain(page);
 
+  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
   const companionSeparator = page.getByRole("separator", { name: "调整 AI 伙伴栏宽度" });
   const separatorBox = await companionSeparator.boundingBox();
   expect(separatorBox).not.toBeNull();
@@ -120,6 +130,7 @@ test("V6 active timer stays inside the main column", async ({ page }) => {
 
 test("desktop rails stay fixed while only the main column scrolls", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 760 });
+  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
   await page.locator(".workspace-content").evaluate((element) => {
     (element as HTMLElement).style.minHeight = "1800px";
   });

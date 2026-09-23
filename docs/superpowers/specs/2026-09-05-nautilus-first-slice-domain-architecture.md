@@ -1,5 +1,103 @@
 # 学海无涯（Nautilus）首个纵切片领域与架构规格
 
+## 当前工程契约（2026-09-19，优先于下文历史实现描述）
+
+### 来源信任边界
+
+| 类型 | 创建边界 | 能证明什么 |
+| --- | --- | --- |
+| AI observation | Provider 只返回 dimension/stance/statement/scope；服务端固定 ai_analysis/semantic_analysis | 模型对所给产出的候选解释 |
+| human review | 有身份、明确提交结果的人工执行链；当前仅 request_human_review，未实现 submit 结果 | 请求保持 pending，不能产生人工支持 |
+| deterministic check | RegexDeterministicAnalyzer 代码赋值 deterministic_check/python_re_search | 当前 pattern 在当前 sample 匹配 |
+| user self-report | 用户保存提交时的独立/资料/提示声明 | 自报条件，非系统证明独立 |
+| delayed recall | 未来实际延迟任务、时间及作答记录 | 当前无执行链，不允许 AI 模拟 |
+| transfer verification | 未来真实不同情境任务和观察 | 当前无执行链，不允许 AI 模拟 |
+
+模型观察与执行 provenance 分离；source、verification_method、evidence_condition、executor_kind/version、observed_at 由系统组合。历史无可信执行标记的主张不能默认为高信任来源。单次 AI 不产生稳定支持，标准 v1 不原地改写；未来 v2 的多正例/反例/边界/不同输入/解释/变式待批准。
+
+### 状态机与完成边界
+
+| 对象 | 状态及边界 |
+| --- | --- |
+| Action | open → completed；库还保留 cancelled；最后开放委托完成才关闭行动 |
+| Delegation | ready → active / paused → completed / cancelled；只有验证、停止条件与用户确认均通过才能完成本次委托 |
+| Session | running → ended / interrupted；ended 不代表行动完成，恢复建立后续会话并关联原委托 |
+| Verification | ready → submitted / failed → passed；submitted 是评估通过待用户确认，failed 可重试已保存提交 |
+| Evidence Claim | candidate → adopted / questioned / withdrawn / superseded / invalidated；采纳不是新验证方法 |
+| Derived State | awaiting_evidence / pending_review / insufficient_evidence / partially_supported / supported / contradicted（简称 awaiting/pending/insufficient/partial） |
+
+对象之间没有 completed 的一一映射。supported 仅表示当前标准版本和实际范围内支持，不是通用掌握或长期保持。用户自报独立性与执行检测结果分别展示。
+
+### 删除影响矩阵
+
+“原文/摘录”表示可能包含；普通删除只隐藏/退出当前计算，撤回不删内容，彻底删除是授权入口的内容清除。此矩阵是系统执行边界，不扩大尚待决定的产品保证。
+
+| 对象 | 原文 | 衍生摘录 | 普通删除 | 撤回 | 彻底删除 | 最小审计 | 恢复 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| learning_raw_artifact | 是 | 是 | 保留所有版本 | 保留 | 所有版本 content/hash=NULL | ID/时间/清除标记 | purge 后禁止 |
+| learning_artifact | 否 | 否 | soft_deleted/withdrawn | withdrawn | purged/invalidated | 状态关系 | 仅普通删除 |
+| learning_verification | 题目/旧材料 | 反馈 | 随关联失去证据资格 | 不删 | 整体验证入口清题目/答案/反馈；单产出入口只清其副本 | 完成事实 | 已清除部分禁止 |
+| learning_verification_submission | 是 | 是 | 保留 | 保留 | 关联正文清空，purged 标记 | ID/关联 | 禁止 |
+| learning_verification_evaluation | 可能 | 是 | 保留 | 保留 | 清结果，阻断迟到回写 | 非敏感运行元数据 | 禁止 |
+| learning_evidence_claim | 可能 | 是 | 排除当前计算 | 排除 | 正文/范围摘录清除，invalidated | 引用/状态 | 禁止复活 |
+| learning_review_action | 可能 | 是 | 保留 | 保留 | reason 清除 | 决定及关系 | 私文禁止 |
+| learning_batch_review_action | 可能 | 是 | 保留 | 保留 | 任一关联清除即清共享 reason | ID/选择 | 私文禁止 |
+| learning_evidence_follow_up | 可能 | 是 | 排除 | 排除 | note 清除、cancelled | 安排关系 | 私文禁止 |
+| learning_revisit_item | 否（原因码） | 否 | 排除 | 排除 | 依赖项取消/重算 | 原因码 | 不恢复无效依据 |
+| learning_evidence_event | schema v1 可能 | schema v1 可能 | 不改 | 不改 | 新写仅元数据/hash；不 UPDATE 历史账本 | 不可变事件 | v2 不能恢复私文；v1 见下文 |
+| learning_evidence_private_content | 可能 | 是 | 保留 | 保留 | content_json=NULL，标记清除；混合共享引用连带清文 | hash/关系 | 禁止 |
+| learning_question_discussion / learning_discussion_turn | 轮次包含 | AI 回复可能包含 | 暂无单独普通删除入口 | 不改变讨论正文 | 清除根提交关联及检索引用传播的讨论正文、来源/模型快照 | ID/状态/时间/依赖关系 | 禁止复活已清除正文 |
+| learning_discussion_dependency | 否 | 否 | 保留关系 | 保留关系 | 保留用于禁止副本复活的来源 ID | 是 | 不允许借恢复复活私文 |
+| 分析运行快照 | 不应 | 不应 | 保留 | 保留 | 只留模型/版本/状态，禁止存正文 | 是 | 可恢复非敏感元数据 |
+| 普通备份 | 可能 | 可能 | 无自动清理 | 无自动清理 | 不回写已有备份；恢复入口检查清除标记 | 恢复检查 | 拒绝复活已清内容 |
+| 恢复 | 可能 | 可能 | 不适用 | 不适用 | 必须与当前清除标记比较 | 是 | 缺少当前标记不可声称安全 |
+| 外部 Provider | 可能 | 可能 | 系统不控制 | 系统不控制 | 本地删除不保证外部副本清除 | 无外部证明 | 系统不可控制 |
+
+普通 artifact 的 schema v1 证据事件已经可能含私人文本，这是历史格式风险。新写入统一采用私密存储，事件仅保留关系、状态、ID、安全元数据及内容哈希。禁止直接改旧 append-only 事件。历史处理需单独设计：授权后盘点 v1、离线生成新账本/映射并校验、协调备份和切换；本轮不执行历史数据迁移，不读取真实库。手工导出和文件系统取证范围未承诺。
+
+### 回放一致性契约
+
+BEGIN IMMEDIATE → 确立事件截止位置 → 读取截止内事件 → 校验链/版本/引用 → 重建 → 校验实际投影、数量/状态/关系、外键和领域约束 → 提交。错误回滚保持原投影。事实和证据写入使用同一 SQLite 写锁；不能事务外读取旧 rows 再开始重建。应用内共享连接还受 Database RLock 保护，多连接由 SQLite 互斥。无需新基础设施。
+
+一致性记录只存 cutoff、before/after digest、数量与约束结果，不存正文；成功审计不替代比较。损坏投影修复与正常重建一致性分别报告。证据版本纠正、清除覆盖及派生状态须保持相同截止点语义。
+
+### 双数据库所有权
+
+| 对象 | 所有库 | 校验/降级 |
+| --- | --- | --- |
+| Identity | 主库权威，学习库镜像 | LearningService 校验已认证身份并同步；不能由学习库授予认证 |
+| Session/Auth | 主库 | 学习库历史 sessions 表不作为当前认证来源 |
+| Provider Profile / Model | 主库 | 配置服务校验 owner、enabled、存在性；失效显式失败，不静默换 Provider |
+| AI Conversation / AI Run | 主库 | ConversationService 校验 owner/删除状态 |
+| Learning Goal / Plan / Action | 学习库 | Core 范围和事务约束 |
+| Delegation / Learning Session | 学习库 | Core owner、契约版本、单一 running |
+| Question Discussion / Turn / Dependency | 学习库 | QuestionDiscussionService 校验 owner/委托/提交/评估与来源有效性；清除触发器同事务执行 |
+| Verification / Artifact | 学习库 | 服务与 Core 校验关联及清除状态 |
+| Evidence / Derived State | 学习库 | 执行 provenance、引用、生命周期与状态规则 |
+| learning_room_conversation | 学习库，引用主库 conversation | RoomService 检查双方 owner 和任务范围；不存在降级为无对话，保留学习事实 |
+| learning_evidence_provider | 学习库，引用主库 profile/model | EvidenceProviderService 检查 owner/可用性；缺失报告不可用 |
+| 身份同步 | 主库 → 学习库 | 请求边界同步；单库恢复不能暗中创建主库身份 |
+
+没有跨库 FK。单库恢复后应进行只读悬空引用核对（身份、room conversation、evidence provider）再启用；当前没有协调双库恢复保证，不能将一库 integrity_check 当成跨库完整性。生产核对、恢复与历史迁移都需另行授权。
+
+### 测量关联契约
+
+返回卡持久化稳定推荐 ID 和结构化选择，关联 review_card_shown、resume_candidate_presented、resume_choice、resume_started、resume_corrected/switched 以及 action completion。不保存标题/聊天/正文。恢复按已明确尝试原委托且实际进入统计，纠正另记；主动切换和意图未知单列。下一行动按稳定推荐与实际正式完成匹配，观察窗口固定七天；session ended 不替代完成。值只作 observed/no_sample；硬护栏有对应契约。测试库和真实使用库分离，不导入自动化样本。
+
+
+### 2026-09-19 已落实的接口与实现范围
+
+- `GET /api/learning/return-review` 汇总位置、事实、支持、未知与单一规则推荐。推荐以稳定 context fingerprint 复用 ID；仅保存 ID、推荐类型/原因码和时间，不保存返回文案或原文。最近会话按已提交事件位置排序，避免时钟回拨选错委托。
+- `POST /api/learning/return-review/{id}/choice` 接受展示、继续、换项、暂停、查看、实际进入、纠正；所有引用均按 owner 校验，开始使用 Core 既有命令和版本约束。界面只在用户点击后进入/暂停，不自动改正式计划。choose_next 的空 action 只有在用户确认新安排后才绑定，表示用户确认的下一行动；实际进入与正式 action completion 关联回原卡，允许跨中断会话延续，不把结束会话计为完成。`POST /api/learning/sessions/{id}/room/entered` 记录实际界面进入。
+- 初始化保存 AI 草案的内容指纹、采纳来源和是否修改；首个非空自写产出才形成 first_artifact，单独参考材料不算。指纹不保存草案正文。指标 v3 的产品值为 observed/no_sample；时间只用于七天观察窗口，因果先后使用事件提交顺序。无推荐关联的历史会话不推测为成功。
+- 回放比较涵盖事实投影及 claim/review/batch/replacement/follow-up/state/history/revisit 的数量、关系和状态；JSON 规范化。历史行的重建随机 ID，以及 revisit 的运行时 created/updated/due 时间不参与摘要，复核截止时间仍在 follow-up 投影中比较。外键和单一 running 约束另验。修复损坏投影的 digest 差异如实记 matched=false；校验拒绝不会伪记比较通过。不是任意数据库字节一致性证明。
+- 同一委托恢复可选取其原有对话，保留最初会话关联；其他委托和其他 owner 不得重挂同一对话。单库丢失的主库对话降级为无对话。
+- 025 增加执行 provenance，已有不明来源的当前支持缓存降为 insufficient；历史事件/历史状态保留。读 API 与回放再次核实参与主张，不能让旧来源声明重新成为当前支持。026 只存重建比较元数据。027 只存返回推荐与用户行为关联。既有迁移和 approved v1 均未修改。
+- 普通产出与验证产出的新证据私文均进入可清除 store；恢复检查同时拒绝原文、私密 store 和当前证据摘录复活。既有普通备份不自动擦除，缺少当前 tombstone 或手工绕过恢复工具的情形没有防复活保证。
+
+上述均为隔离工程验证结果。历史 schema v1 私文的单独迁移、双库协调恢复、生产升级仍需另行授权；当前没有全系统副本彻底删除承诺。
+
+
 | 项目 | 内容 |
 | --- | --- |
 | 产品 | 学海无涯（Nautilus） |
@@ -185,3 +283,20 @@ AI 调用分为保存链路和分析链路。保存链路不依赖 AI 成功；�
 4. 隔离迁移、备份恢复、跨身份越权和回放失败均有可重复验证记录。
 5. 成功指标按 `CAP-MEASURE-001` 的固定口径记录；无样本明确标为未测，不冒充通过。
 6. `git diff --check` 通过，开发状态文档记录实际改动、测试、已知问题和下一任务。
+
+
+## 2026-09-23 验证回看与题目讨论边界（本轮实施契约）
+
+本人验证详情独立鉴权，按 submission/evaluation 版本回看；不将本人作答或参考解法扩散到通用列表，不开放隐藏评分依据。新评估可有 question_id 对应的反馈、面向用户的参考解法、可选追问与未满足的既定要求；存在后者时不能判断通过。旧反馈保持原样。
+
+题目讨论归学习库：以验证/提交/题目引用建立轻量对话，逐轮保存用户问题、AI 回复、运行状态和实际检索来源 ID。主库教学对话只按本人同委托的既有归属只读检索，正文只在当次请求内使用；不把验证正文复制进主库聊天或 context_snapshot，以免新增无法同事务删除的副本。界面仍在学习区打开新讨论，用户无需理解存储边界。
+
+讨论实际检索仅在模型选择本地关键词后由服务执行，最多一次、有限条数，不支持任意工具或外部联网；结果引用仅由实际返回项生成。搜索同委托教学对话与未清除的题目讨论，跨身份/委托拒绝，已删对话不再返回。来源 ID 而非检索正文用于保存追溯关系。
+
+学习库新增的题目讨论/轮次及来源依赖与验证删除同属一个 SQLite 事务：清除某提交时清除其讨论及通过检索引用它的衍生讨论正文；保留最小 ID/状态审计，不改写学习完成事实。界面在清除前显示影响数量并说明关联讨论也会清除。迟到回复必须核对讨论与来源仍有效；不得恢复已清除正文。受控备份恢复继续拒绝复活被清除讨论。外部 Provider 和用户手工复制仍不属于数据库清除保证。
+
+本方案复用既有 Provider 和学习室展示，题目讨论暂不使用主库聊天运行表，避免跨库私文副本；这不是通用新 Agent/后台执行系统。新迁移仅隔离演练，不自动升级试用库。
+
+实施补充（2026-09-23）：028 已完成隔离 027 升级、保留原答案、清除传播及恢复保护测试。每轮模型先选择一个不超过 80 字符的本地检索词，服务实际查询最多返回 6 段、每段最多 1600 字符；继续回答使用最近 8 轮，不能声称读取全部历史。Provider 快照只含模型/配置版本/提示版本/是否检索，不保存检索词或正文。题目讨论暂为整段回复，失败保留用户问题、允许幂等重试，服务重启把未完成轮次标为中断。后台权限、外部副本清除和通用全文索引未增加。
+
+运行更新（2026-09-23）：用户后续明确授权后，独立试用学习库已执行 027 → 028，升级前/后备份、原有各表数量保持、完整性/FK 检查通过。此为一次受控启用，不修改上述删除、外部副本或跨库恢复保证；禁止把本次授权扩展为以后自动迁移真实数据库。

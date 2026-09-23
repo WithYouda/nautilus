@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .learning_domain import CriterionRecipe, DomainError, Principal
+from .learning_domain import CriterionRecipe, DomainError, Principal, trusted_claim_method
 from .learning_service import LearningService
 
 _SOURCE_TO_METHOD = {
@@ -54,7 +54,7 @@ class StateDerivationService:
             dict(row)
             for row in self.database.fetchall(
                 """SELECT c.id, c.dimension_id, c.stance, c.status, c.source,
-                          c.evidence_condition, c.artifact_id, c.content_version,
+                          c.evidence_condition, c.verification_method, c.provenance_json, c.artifact_id, c.content_version,
                           current_artifact.content_version AS current_content_version,
                           current_artifact.visibility AS artifact_visibility,
                           current_artifact.evidence_status AS artifact_evidence_status
@@ -106,10 +106,9 @@ class StateDerivationService:
                 continue
 
             has_current_adopted = True
-            method = _SOURCE_TO_METHOD[claim["source"]]
+            method = trusted_claim_method(claim)
             matches_requirement = any(
                 requirement.method == method
-                and requirement.condition == claim["evidence_condition"]
                 for requirement in dimension.requirements
             )
             if not matches_requirement:
@@ -137,7 +136,7 @@ class StateDerivationService:
                     and claim["status"] == "adopted"
                     and claim["dimension_id"] == dimension.id
                     and claim["stance"] == "supports"
-                    and _SOURCE_TO_METHOD[claim["source"]] == requirement.method
+                    and trusted_claim_method(claim) == requirement.method
                     and claim["evidence_condition"] == requirement.condition
                 ):
                     count += 1
@@ -148,11 +147,15 @@ class StateDerivationService:
             status = "contradicted"
             reason = "contradictory_evidence"
         elif all(met):
-            status = "supported"
-            reason = "requirements_met"
+            semantic_only = all(claim["source"] == "ai_analysis" for claim in claims if claim["id"] in participating)
+            status = "partially_supported" if semantic_only else "supported"
+            reason = "ai_observation_only" if semantic_only else "requirements_met"
         elif any(met):
             status = "partially_supported"
             reason = "requirements_partially_met"
+        elif participating and any(claim["stance"] == "supports" for claim in claims if claim["id"] in participating):
+            status = "partially_supported"
+            reason = "independence_unverified"
         elif has_insufficient:
             status = "insufficient_evidence"
             reason = "insufficient_adopted_evidence"
@@ -415,7 +418,11 @@ class StateDerivationService:
         criterion_id: str | None = None,
         connection=None,
     ) -> list[dict[str, Any]]:
-        principal = Principal.user(identity["id"]) if connection is not None else self._principal(identity)
+        if connection is None:
+            self._principal(identity)
+            with self.database.transaction(immediate=True) as transaction:
+                return self.derive(identity, criterion_id, connection=transaction)
+        principal = Principal.user(identity["id"])
         if criterion_id is not None:
             criterion_ids = [criterion_id]
         else:
@@ -446,8 +453,8 @@ class StateDerivationService:
     ) -> list[dict[str, Any]]:
         return self.derive(identity, criterion_id)
 
-    def states(self, identity: dict[str, Any]) -> list[dict[str, Any]]:
-        principal = self._principal(identity)
+    def states(self, identity: dict[str, Any], *, connection=None) -> list[dict[str, Any]]:
+        principal = Principal.user(identity['id']) if connection is not None else self._principal(identity)
         rows = self.database.fetchall(
             """SELECT id, owner_id, outcome_id, criterion_id, dimension_id, status,
                       reason_code, standard_version, calculation_version,
@@ -464,6 +471,18 @@ class StateDerivationService:
             item["participating_claim_ids"] = json.loads(item.pop("participating_claim_ids_json"))
             item["excluded_claim_ids"] = json.loads(item.pop("excluded_claim_ids_json"))
             item["excluded_claim_reasons"] = json.loads(item.pop("excluded_claim_reasons_json"))
+            if item['status'] in {'supported', 'partially_supported', 'contradicted'} or item['reason_code']=='execution_provenance_unverified':
+                unverified = []
+                for claim_id in item['participating_claim_ids']:
+                    claim = self.database.fetchone('SELECT * FROM learning_evidence_claim WHERE owner_id=? AND id=?', (principal.owner_id, claim_id))
+                    if claim is None or trusted_claim_method(dict(claim)) is None:
+                        unverified.append(claim_id)
+                if unverified:
+                    item['status'] = 'insufficient_evidence'
+                    item['reason_code'] = 'execution_provenance_unverified'
+                    item['participating_claim_ids'] = [key for key in item['participating_claim_ids'] if key not in unverified]
+                    item['excluded_claim_ids'] = sorted(set(item['excluded_claim_ids']) | set(unverified))
+                    item['excluded_claim_reasons'].extend({'claim_id':key, 'reason':'execution_provenance_unverified'} for key in unverified)
             result.append(item)
         return result
 

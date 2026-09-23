@@ -31,9 +31,6 @@ def make_client(tmp_path, calls: list[str]) -> TestClient:
             "dimension_id": "syntax_semantics",
             "stance": "supports",
             "statement": "语义分析确认产出说明了正则表达式的匹配语义。",
-            "source": "ai_analysis",
-            "verification_method": "semantic_analysis",
-            "evidence_condition": "independent",
             "scope": "artifact",
         }
         return httpx.Response(
@@ -321,9 +318,6 @@ def test_provider_timeout_has_no_automatic_retry_and_manual_retry_is_idempotent(
             "dimension_id": "syntax_semantics",
             "stance": "supports",
             "statement": "重试后的语义分析确认产出说明了匹配语义。",
-            "source": "ai_analysis",
-            "verification_method": "semantic_analysis",
-            "evidence_condition": "independent",
             "scope": "artifact",
         }
         return httpx.Response(

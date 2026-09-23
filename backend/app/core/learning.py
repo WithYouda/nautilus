@@ -245,12 +245,14 @@ class LearningCore:
             ).fetchone():
                 raise DomainError("verification_submission_immutable")
             artifact = connection.execute(
-                """SELECT artifact_id, session_id FROM learning_raw_artifact
+                """SELECT artifact_id, session_id, purged_at FROM learning_raw_artifact
                    WHERE owner_id=? AND artifact_id=? ORDER BY content_version DESC LIMIT 1""",
                 (principal.owner_id, command.artifact_id),
             ).fetchone()
             if artifact is None:
                 raise DomainError("not_found", 404)
+            if artifact["purged_at"] is not None:
+                raise DomainError("artifact_not_eligible")
             session = repository.session(artifact["session_id"])
             aggregate_type = "action"
             aggregate_id = repository.delegation(session["delegation_id"])["action_id"]
@@ -305,7 +307,14 @@ class LearningCore:
                 event_type = "artifact.withdrawn"
             else:
                 if artifact["purged_at"] is not None:
-                    raise DomainError("artifact_already_purged", 409)
+                    previous = connection.execute(
+                        "SELECT event_id, aggregate_version FROM learning_event WHERE owner_id=? AND event_type='artifact.purged' AND json_extract(payload_json, '$.artifact_id')=? ORDER BY position DESC LIMIT 1",
+                        (principal.owner_id, command.artifact_id),
+                    ).fetchone()
+                    if previous is None:
+                        raise DomainError("event_integrity_failed")
+                    return {"id": command.artifact_id, "aggregate_id": aggregate_id,
+                            "version": previous["aggregate_version"], "event_id": previous["event_id"]}
                 payload["confirmation"] = command.confirmation
                 event_type = "artifact.purged"
         else:
@@ -470,15 +479,17 @@ class LearningCore:
         self._require_owner(principal)
         try:
             self._require_owner_user(principal)
-            rows = [
-                dict(row)
-                for row in self.database.fetchall(
-                    "SELECT * FROM learning_event WHERE owner_id=? ORDER BY position",
-                    (principal.owner_id,),
-                )
-            ]
-            chains = self._validate_event_stream(rows)
+            from ..replay_check import projection_snapshot, record_comparison
             with self.database.transaction(immediate=True) as connection:
+                before = projection_snapshot(connection, principal.owner_id, PROJECTION_TABLES)
+                rows = [
+                    dict(row)
+                    for row in self.database.fetchall(
+                        "SELECT * FROM learning_event WHERE owner_id=? ORDER BY position",
+                        (principal.owner_id,),
+                    )
+                ]
+                chains = self._validate_event_stream(rows)
                 connection.execute("PRAGMA defer_foreign_keys=ON")
                 for table in PROJECTION_TABLES:
                     if table == "learning_outcome":
@@ -515,9 +526,12 @@ class LearningCore:
                     if position is None or position["aggregate_version"] != version or position["last_event_id"] != event_id:
                         raise DomainError("projection_rebuild_incomplete")
 
+                after = projection_snapshot(connection, principal.owner_id, PROJECTION_TABLES)
+                comparison = record_comparison(connection, principal.owner_id, "fact", max((row["position"] for row in rows), default=0), before, after)
                 self._audit(connection, principal, "Replay", "succeeded")
                 return {
                     "status": "succeeded",
+                    "comparison": comparison,
                     "event_count": len(rows),
                     "aggregate_count": len(chains),
                     "projection_digest": digest(

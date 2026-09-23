@@ -424,15 +424,16 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
         ).fetchone()
         if raw is None:
             raise DomainError("event_scope_invalid")
-        if raw["purged_at"] is None:
-            changed = connection.execute(
-                """UPDATE learning_raw_artifact
-                   SET purged_at=?, content=NULL, content_hash=NULL
-                   WHERE owner_id=? AND artifact_id=?""",
-                (occurred_at, owner, payload["artifact_id"]),
-            ).rowcount
-            if changed != 1:
-                raise DomainError("event_scope_invalid")
+        connection.execute(
+            """UPDATE learning_raw_artifact SET purged_at=?, content=NULL, content_hash=NULL
+               WHERE owner_id=? AND artifact_id=? AND purged_at IS NULL""",
+            (occurred_at, owner, payload["artifact_id"]),
+        )
+        if connection.execute(
+            "SELECT COUNT(*) FROM learning_raw_artifact WHERE owner_id=? AND artifact_id=? AND (content IS NOT NULL OR content_hash IS NOT NULL)",
+            (owner, payload["artifact_id"]),
+        ).fetchone()[0]:
+            raise DomainError("event_scope_invalid")
         changed = connection.execute(
             """UPDATE learning_artifact
                SET visibility='purged', evidence_status='invalidated', version=?
@@ -539,4 +540,10 @@ def append_event(
     )
     apply_event(connection, event)
     upsert_stream_head(connection, event)
+    if event_type in {'artifact.created', 'verification.artifact_recorded'}:
+        from ..continuity import record_usage
+        from ..verification_content import learner_content
+        if event_type == 'artifact.created' or learner_content(json.loads(private_content or '{}')):
+            record_usage(connection, principal.owner_id, 'first_artifact', 'first-artifact',
+                         action_id=aggregate_id, session_id=payload.get('session_id'))
     return event

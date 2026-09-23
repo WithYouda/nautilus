@@ -237,13 +237,16 @@ class LearningService:
                 """SELECT id, artifact_id, content_version, fact_event_id, criterion_id,
                           dimension_id, stance, status, source, statement,
                           verification_method, evidence_condition, scope,
-                          analysis_run_id, created_at
+                          analysis_run_id, created_at, provenance_json
                    FROM learning_evidence_claim
                    WHERE owner_id=?
                    ORDER BY created_at DESC, id""",
                 (owner,),
             )
         ]
+        from .learning_domain import trusted_claim_method
+        for claim in evidence_claims:
+            claim['source_trusted'] = bool(trusted_claim_method(claim))
         evidence_follow_ups = [
             dict(row)
             for row in self.database.fetchall(
@@ -255,21 +258,8 @@ class LearningService:
                 (owner,),
             )
         ]
-        derived_states = []
-        for row in self.database.fetchall(
-                """SELECT id, outcome_id, criterion_id, dimension_id, status, reason_code,
-                          standard_version, calculation_version, participating_claim_ids_json,
-                          excluded_claim_ids_json, excluded_claim_reasons_json, calculated_at
-                   FROM learning_derived_state
-                   WHERE owner_id=?
-                   ORDER BY criterion_id, dimension_id""",
-                (owner,),
-        ):
-            item = dict(row)
-            item["participating_claim_ids"] = json.loads(item.pop("participating_claim_ids_json"))
-            item["excluded_claim_ids"] = json.loads(item.pop("excluded_claim_ids_json"))
-            item["excluded_claim_reasons"] = json.loads(item.pop("excluded_claim_reasons_json"))
-            derived_states.append(item)
+        from .state_derivation import StateDerivationService
+        derived_states = StateDerivationService(self).states(identity)
         review_actions = [
             dict(row)
             for row in self.database.fetchall(
@@ -371,7 +361,10 @@ class LearningService:
         state = StateDerivationService(self, EvidenceEventService(self.database))
         try:
             with self.database.transaction(immediate=True) as connection:
+                already_purged = connection.execute("SELECT visibility FROM learning_artifact WHERE owner_id=? AND id=?", (principal.owner_id, payload["artifact_id"])).fetchone()
                 result = self.core.execute_in_transaction(connection, principal, PurgeArtifact(**payload), key)
+                if already_purged and already_purged[0] == "purged":
+                    return result
                 for criterion in connection.execute(
                     "SELECT DISTINCT criterion_id FROM learning_evidence_claim WHERE owner_id=? AND artifact_id=?",
                     (principal.owner_id, payload["artifact_id"]),

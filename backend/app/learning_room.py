@@ -33,8 +33,9 @@ class LearningRoomService:
             raise DomainError("not_found", 404)
         conversations = []
         for link in self.learning.database.fetchall(
-            "SELECT conversation_id FROM learning_room_conversation WHERE owner_id=? AND session_id=? ORDER BY selected_at DESC, conversation_id",
-            (principal.owner_id, session_id),
+            """SELECT r.conversation_id FROM learning_room_conversation r JOIN learning_session s ON s.owner_id=r.owner_id AND s.id=r.session_id
+               WHERE r.owner_id=? AND s.delegation_id=? ORDER BY r.selected_at DESC, r.conversation_id""",
+            (principal.owner_id, delegation["id"]),
         ):
             try:
                 self.conversations.owned_conversation(principal.owner_id, link["conversation_id"])
@@ -56,7 +57,7 @@ class LearningRoomService:
 
     def select(self, identity, session_id, conversation_id):
         principal = self.learning.principal(identity)
-        LearningRepository(self.learning.database, principal).session(session_id)
+        session = LearningRepository(self.learning.database, principal).session(session_id)
         try:
             conversation = self.conversations.owned_conversation(principal.owner_id, conversation_id)
         except ConversationError as exc:
@@ -69,7 +70,9 @@ class LearningRoomService:
                 (principal.owner_id, conversation_id),
             ).fetchone()
             if existing and existing["session_id"] != session_id:
-                raise DomainError("verification_scope_invalid")
+                previous = connection.execute("SELECT delegation_id FROM learning_session WHERE owner_id=? AND id=?", (principal.owner_id, existing["session_id"])).fetchone()
+                if previous is None or previous[0] != session["delegation_id"]:
+                    raise DomainError("verification_scope_invalid")
             connection.execute(
                 """INSERT INTO learning_room_conversation VALUES (?, ?, ?, ?)
                    ON CONFLICT(owner_id, conversation_id) DO UPDATE SET selected_at=excluded.selected_at""",

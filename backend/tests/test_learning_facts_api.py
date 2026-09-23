@@ -120,6 +120,13 @@ def test_learning_database_is_independent_from_legacy_database(client):
         "020_evidence_event_schema_version",
         "021_learning_guided_setup",
         "022_learning_verifications",
+        "023_verification_submissions",
+        "024_verification_evidence",
+        "025_evidence_provenance",
+        "026_replay_checks",
+        "027_learning_continuity",
+        "028_verification_discussions",
+        "029_discussion_reasoning",
     ]
 
 

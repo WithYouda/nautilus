@@ -132,6 +132,7 @@ export default function Workspace({
   const [layoutDialogOpen, setLayoutDialogOpen] = useState(false);
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [companionDrawerOpen, setCompanionDrawerOpen] = useState(false);
+  const [companionExpanded, setCompanionExpanded] = useState(false);
   const [calendarPlanId, setCalendarPlanId] = useState<string | null>(() => restoredCalendarPlanFilter());
   const [v6Layout, setV6Layout] = useState<V6Layout>(() => restoredV6Layout());
   const v6LayoutRef = useRef(v6Layout);
@@ -251,6 +252,9 @@ export default function Workspace({
   function chooseView(next: WorkspaceView) {
     setView(next);
     setMode("manage");
+    if (window.matchMedia("(max-width: 760px)").matches) {
+      persistV6Layout({ ...v6Layout, collapsed: false });
+    }
     setCalendarPlanId(null);
     const url = new URL(window.location.href);
     url.searchParams.set("view", next);
@@ -408,6 +412,7 @@ export default function Workspace({
       // Learning room remains usable without browser storage.
     }
     setMode("manage");
+    if (aiEntry.learningBrief) chooseView("facts");
   }
 
   const workspaceStyle = {
@@ -416,7 +421,7 @@ export default function Workspace({
   } as CSSProperties;
 
   return (
-    <main className={`app-shell v6-workspace${v6Layout.collapsed ? " is-rail-collapsed" : ""}${mode === "ai" ? " is-ai-mode" : ""}${timer ? " has-active-timer" : ""}`} style={workspaceStyle}>
+    <main className={`app-shell v6-workspace${v6Layout.collapsed ? " is-rail-collapsed" : ""}${!companionExpanded ? " is-companion-collapsed" : ""}${mode === "ai" ? " is-ai-mode" : ""}${timer ? " has-active-timer" : ""}`} style={workspaceStyle}>
       {mode === "manage" && <aside className="v6-rail">
         <button
           className="v6-rail-toggle"
@@ -460,6 +465,7 @@ export default function Workspace({
         </div>
         <div className="workspace-actions">
           {mode === "manage" && <span className="service-badge"><span className="status-dot" />{health?.status === "ok" ? "服务在线" : "检查中"}</span>}
+          {mode === "manage" && <button className="icon-button v6-companion-toggle" type="button" onClick={() => setCompanionExpanded((expanded) => !expanded)} aria-expanded={companionExpanded} aria-label={companionExpanded ? "收起 AI 学习伙伴" : "打开 AI 学习伙伴"} title={companionExpanded ? "收起 AI 学习伙伴" : "打开 AI 学习伙伴"}><Bot size={17} /></button>}
           {mode === "manage" && <button className="icon-button v6-compact-companion-trigger" type="button" onClick={() => setCompanionDrawerOpen(true)} aria-label="打开 AI 学习伙伴" title="AI 学习伙伴"><Bot size={17} /></button>}
           {mode === "manage" && <button className="icon-button" onClick={() => setLayoutDialogOpen(true)} title="首页布局" aria-label="首页布局"><Settings2 size={18} /></button>}
           <button className="icon-button" onClick={onLogout} title="退出会话" aria-label="退出会话"><LogOut size={18} /></button>
@@ -484,9 +490,8 @@ export default function Workspace({
         <>
           <PerspectiveBar view={view} onChange={chooseView} />
           <FactWorkspace
-            existingTasks={allTasks}
-            onOpenTaskLearning={openAiLearning}
-            onStartTaskTimer={handleTaskTimerStart}
+            hasLegacyTasks={allTasks.length > 0}
+            onOpenLegacyPlans={() => chooseView("plans")}
             onOpenLearningRoom={(initialDraft, learningBrief) => openAiEntry({ scope: "independent", targetId: null, initialDraft, learningBrief })}
           />
         </>
@@ -602,7 +607,7 @@ function PerspectiveBar({ view, onChange }: { view: WorkspaceView; onChange: (vi
         <button className={view === "today" ? "is-active" : ""} onClick={() => onChange("today")}>今日</button>
         <button className={view === "tasks" ? "is-active" : ""} onClick={() => onChange("tasks")}>任务</button>
           <button className={view === "facts" ? "is-active" : ""} onClick={() => onChange("facts")}>开始学习</button>
-        <button className={view === "plans" ? "is-active" : ""} onClick={() => onChange("plans")}>计划</button>
+        <button className={view === "plans" ? "is-active" : ""} onClick={() => onChange("plans")}>历史计划</button>
         <button className={view === "calendar" ? "is-active" : ""} onClick={() => onChange("calendar")}>日历</button>
         <button disabled title="甘特图开发中">甘特图</button>
       </nav>

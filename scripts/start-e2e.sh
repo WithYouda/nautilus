@@ -69,7 +69,15 @@ if ! "$PYTHON_BIN" -c "import fastapi, uvicorn, cryptography" >/dev/null 2>&1; t
   exit 1
 fi
 
-if [[ ! -f "$ROOT_DIR/frontend/dist/index.html" ]]; then
+E2E_BUILD_DIR="$ROOT_DIR/frontend/dist"
+if [[ -n "${NAUTILUS_E2E_BUILD_DIR:-}" ]]; then
+  E2E_BUILD_DIR="$(realpath -m -- "$NAUTILUS_E2E_BUILD_DIR")"
+  if [[ "$(dirname -- "$E2E_BUILD_DIR")" != /tmp ]] || [[ "$(basename -- "$E2E_BUILD_DIR")" != nautilus-* ]]; then
+    printf '%s\n' "隔离测试构建必须在 /tmp/nautilus-*，拒绝启动。" >&2
+    exit 1
+  fi
+fi
+if [[ ! -f "$E2E_BUILD_DIR/index.html" ]]; then
   printf '%s\n' "Playwright 需要现有生产构建，请先运行 npm --prefix frontend run build。" >&2
   exit 1
 fi
@@ -145,6 +153,7 @@ fi
 (cd "$ROOT_DIR/frontend" && \
   NAUTILUS_API_TARGET="http://127.0.0.1:$BACKEND_PORT" \
   exec "$ROOT_DIR/frontend/node_modules/.bin/vite" preview \
+    --outDir "$E2E_BUILD_DIR" \
     --host 0.0.0.0 \
     --port "$FRONTEND_PORT" \
     --strictPort \

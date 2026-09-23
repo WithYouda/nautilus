@@ -869,6 +869,14 @@
 .fact-metrics__excluded {
   grid-column: 1 / -1;
 }
+/* The learning room occupies a fixed-height grid; verification needs its own scroll area. */
+.verification-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
 .verification-page {
   max-width: 900px;
   margin: 0 auto;
@@ -908,9 +916,9 @@
 
 .verification-panel__intro p,
 .verification-instructions,
-.verification-result p,
-.verification-result span,
-.verification-result small {
+.verification-result > div > p,
+.verification-result > div > span,
+.verification-result > div > small {
   display: block;
   margin: 6px 0 0;
   color: var(--muted, #64748b);
@@ -1037,3 +1045,52 @@
     flex-direction: column;
   }
 }
+
+.return-review { width: 100%; min-width: 0; padding: 24px; background: var(--paper); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 6px; overflow-wrap: anywhere; line-height: 1.65; }
+.return-review h2 { margin: 4px 0 16px; font-size: clamp(21px, 3vw, 28px); }
+.return-review h3 { margin: 6px 0; font-size: 16px; }
+.return-review p { margin: 8px 0; font-size: 14px; }
+.return-review__route { color: var(--muted); }
+.return-review__next { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; margin: 18px 0 12px; }
+.return-review__next > span { color: var(--muted); font-size: 12px; }
+.return-review__actions, .return-room-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.return-review__actions .button { min-height: 44px; }
+.return-review__evidence { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; }
+.return-review summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.return-review__details, .return-review__alternatives { padding-top: 14px; }
+.return-review__details article { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.return-review__alternatives { display: flex; flex-direction: column; align-items: start; gap: 8px; }
+.return-review__alternatives button { white-space: normal; text-align: left; }
+.ai-room:has(.return-room-actions) { grid-template-rows: auto auto auto minmax(0, 1fr); }
+@media (max-width: 620px) {
+  .return-review { padding: 16px; }
+  .return-review__evidence { grid-template-columns: minmax(0,1fr); gap: 12px; }
+  .return-review__actions { gap: 5px; }
+  .return-review__actions .button { padding-inline: 12px; }
+  .fact-header h1 { font-size: 25px; }
+  .fact-workspace { padding: 16px 12px 28px; gap: 16px; }
+}
+
+/* The return journey also works below 320 CSS pixels after browser zoom. */
+html:has(.return-review), body:has(.return-review) { min-width: 0; }
+.v6-workspace:has(.return-review) .brand-lockup { min-width: 0; }
+.v6-workspace:has(.return-review) .v6-coordinate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Long formulas scroll within their own line, including narrow verification pages. */
+.ai-markdown { min-width: 0; overflow-wrap: anywhere; }
+.ai-markdown .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-block: .3rem; }
+.ai-markdown .katex { font-size: 1.08em; overflow-wrap: normal; white-space: nowrap; }
+.ai-markdown p:has(.katex) { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-block: .2em; }
+.verification-result > div { min-width: 0; }
+
+.verification-review { display: grid; gap: 18px; min-width: 0; }
+.review-question-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.review-answer { padding: 12px; border-left: 3px solid var(--accent); background: var(--paper); }
+.review-actions { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); }
+.learning-records { max-width: 1000px; margin: 0 auto; padding: 24px; min-width: 0; }
+.learning-records-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; margin-block: 20px; }
+.learning-records-list button { text-align: left; color: inherit; cursor: pointer; }
+.learning-records-list span, .learning-records-list small { display: block; margin-top: 8px; }
+.learning-records-list [aria-pressed="true"] { border-color: var(--accent); }
+.record-verification-list { display: flex; flex-wrap: wrap; gap: 10px; margin-block: 18px; }
+@media (max-width: 680px) { .learning-records { padding: 16px 14px; } }

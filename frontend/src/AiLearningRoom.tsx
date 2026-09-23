@@ -1,8 +1,11 @@
+import { LearningChatPanel, LearningComposer, LearningMessage, ReasoningBlock } from "./LearningRoomLayout";
+import QuestionDiscussion from "./QuestionDiscussion";
+import { setReviewLocation } from "./LearningRecords";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
-import { ArrowLeft, Bot, Check, CircleAlert, History, MapPin, Pencil, Plus, RefreshCw, RotateCcw, Send, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, UserRound, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ArrowLeft, Bot, Check, CircleAlert, History, MapPin, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
+import LearningMarkdown from "./LearningMarkdown";
 import {
+  recordLearningRoomEntry,
   cancelAiRun,
   clearAiConversationConfig,
   createAiConversation,
@@ -11,6 +14,8 @@ import {
   getAiConversationConfig,
   getAiContextPreview,
   getLearningRoom,
+  getReturnReview,
+  chooseReturnReview,
   selectLearningRoomConversation,
   regenerateAiConversationTitle,
   listAiProviders,
@@ -98,6 +103,7 @@ function readSession(): RoomSession | null {
             clientMessageId: typeof parsed.pending.clientMessageId === "string" ? parsed.pending.clientMessageId : "",
           }
         : undefined,
+      learningBrief: parsed.learningBrief,
       draftConfig: parsed.draftConfig && typeof parsed.draftConfig === "object"
         && typeof parsed.draftConfig.providerProfileId === "string"
         && typeof parsed.draftConfig.providerModelId === "string"
@@ -250,8 +256,9 @@ export default function AiLearningRoom({
   const [draftConfig, setDraftConfig] = useState<DraftConfig | null>(readSession()?.draftConfig ?? null);
   const [configBusy, setConfigBusy] = useState(false);
   const [openLayer, setOpenLayer] = useState<"history" | "config" | "context" | null>(null);
-  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationOpen, setVerificationOpen] = useState(learningBrief?.open_verification === true);
   const [verificationCompleted, setVerificationCompleted] = useState(false);
+  const [discussionId, setDiscussionId] = useState<string | null>(() => new URLSearchParams(window.location.search).get("discussion"));
   const [titleBusy, setTitleBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -289,6 +296,7 @@ export default function AiLearningRoom({
   }
 
   function persistSession(extra: Partial<RoomSession> = {}) {
+    if (!mountedRef.current) return;
     const current = sessionContext();
     const previous = readSession();
     writeSession({
@@ -485,6 +493,10 @@ export default function AiLearningRoom({
         learningBrief?.session_id ? getLearningRoom(learningBrief.session_id) : Promise.resolve(null),
       ]);
       if (!mountedRef.current) return;
+      if (room && learningBrief?.session_id && !learningBrief.history_only) await recordLearningRoomEntry(learningBrief.session_id);
+      if (room && learningBrief?.continuity_review_id && learningBrief.session_id && !learningBrief.history_only) {
+        await chooseReturnReview(learningBrief.continuity_review_id, "entered", `entered:${learningBrief.continuity_review_id}:${learningBrief.session_id}`, undefined, learningBrief.session_id);
+      }
       setContext(entryContext);
       setProviders(providerList);
       setConversations(room ? conversationItems.filter((item) => room.conversation_ids.includes(item.id)) : conversationItems);
@@ -549,13 +561,6 @@ export default function AiLearningRoom({
     return () => window.clearTimeout(timer);
   }, [detail, initialDraft, provider, providers, status]);
 
-  useEffect(() => {
-    const textarea = composerRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    const viewportCap = Math.max(52, Math.min(112, window.innerHeight * 0.22));
-    textarea.style.height = `${Math.min(textarea.scrollHeight, viewportCap)}px`;
-  }, [draft]);
 
   useEffect(() => {
     if (openLayer === "history") return;
@@ -894,14 +899,16 @@ export default function AiLearningRoom({
 
   return (
     <>
-      {learningBrief?.action_id && learningBrief.delegation_id && <div hidden={!verificationOpen}>
+      {learningBrief?.action_id && learningBrief.delegation_id && <div className="verification-scroll" hidden={!verificationOpen || Boolean(discussionId)}>
       <LearningVerification
         brief={learningBrief}
         onBack={() => setVerificationOpen(false)}
-        onCompleted={() => setVerificationCompleted(true)}
+        onDiscuss={id => { setDiscussionId(id); setReviewLocation("discussion", id); }}
+        onCompleted={() => { setVerificationCompleted(true); onBack(); }}
       />
       </div>}
-    <div className="ai-room" style={verificationOpen ? { display: "none" } : undefined}>
+    {discussionId && <QuestionDiscussion id={discussionId} onBack={() => { setDiscussionId(null); setReviewLocation("discussion", null); setVerificationOpen(true); }} />}
+    <div className="ai-room" style={verificationOpen || discussionId ? { display: "none" } : undefined}>
       <header className="ai-room-header">
         <div className="ai-room-heading">
           <button className="button button--quiet button--compact button--with-icon" onClick={onBack} aria-label="返回工作区">
@@ -1034,22 +1041,28 @@ export default function AiLearningRoom({
           <button className="button button--quiet button--compact button--with-icon" onClick={onProviderOpen} aria-label="AI 提供方设置" title="AI 提供方设置">
             <SlidersHorizontal size={15} /><span>AI 提供方设置</span>
           </button>
-              {learningBrief?.action_id && learningBrief.delegation_id && <button className="button button--accent button--compact button--with-icon" type="button" onClick={() => setVerificationOpen(true)}>
+              {learningBrief?.action_id && learningBrief.delegation_id && <button className="button button--accent button--compact button--with-icon" type="button" aria-label={verificationCompleted ? "查看验证结果" : "进入验证"} onClick={() => setVerificationOpen(true)}>
             <ShieldCheck size={15} /><span>{verificationCompleted ? "查看验证结果" : "进入验证"}</span>
           </button>}
           <button className="icon-button icon-button--bordered" onClick={handleNewConversation} title="新建对话" aria-label="新建对话"><Plus size={16} /></button>
         </div>
       </header>
 
-      {learningBrief && <LearningRoomBriefCard brief={learningBrief} />}
+      {learningBrief && <><LearningRoomBriefCard brief={learningBrief} /><div className="return-room-actions">
+        <button className="button button--quiet" onClick={async () => { try { const card = await getReturnReview(); if (card) await chooseReturnReview(card.id, "stop_for_now", `room-stop:${card.id}`); onBack(); } catch (reason) { setError(reason instanceof Error ? reason.message : "暂停未保存"); } }}>今天先停</button>
+        {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}
+      </div></>}
 
-      <section className="ai-room-chat tool-panel">
-          <div className="ai-chat-titlebar">
-            <div className="ai-chat-title-copy">
-              <h2>{conversationTitle}</h2>
-            </div>
-          </div>
-          <div className="ai-message-list" aria-live="off">
+      <LearningChatPanel title={conversationTitle} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
+          {error && <div className="ai-room-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div>}
+          {status === "failed" && detail?.messages.some((message) => message.role === "user") && (
+            <button className="button button--quiet ai-retry-button button--with-icon" onClick={() => void handleRetry()}><RefreshCw size={15} />重新发送上一问</button>
+          )}
+      </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
+        value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
+        placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
+        disabled={!canSend} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+      />}>
             {detail?.messages.length ? detail.messages.map((message) => <MessageBubble key={message.id} message={message} />) : (
               <div className="ai-empty-chat">
                 <Bot size={24} />
@@ -1057,33 +1070,7 @@ export default function AiLearningRoom({
                 <p>{emptyRoomCopy(effectiveScope)}</p>
               </div>
             )}
-          </div>
-          {error && <div className="ai-room-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div>}
-          {status === "failed" && detail?.messages.some((message) => message.role === "user") && (
-            <button className="button button--quiet ai-retry-button button--with-icon" onClick={() => void handleRetry()}><RefreshCw size={15} />重新发送上一问</button>
-          )}
-          <form className="ai-composer" onSubmit={handleSend}>
-            <label htmlFor="ai-learning-question">输入学习问题</label>
-            <textarea
-              ref={composerRef}
-              id="ai-learning-question"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleComposerKeyDown}
-              placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-              rows={1}
-              maxLength={8000}
-              disabled={!canSend}
-            />
-            <div className="ai-composer-actions">
-              <span>Enter 发送 · Shift+Enter 换行 · {draft.length}/8000</span>
-              <div>
-                {detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
-                <button className="button button--accent button--with-icon" type="submit" disabled={!canSend || !draft.trim()}><Send size={14} />发送问题</button>
-              </div>
-            </div>
-          </form>
-      </section>
+      </LearningChatPanel>
       {deleteTarget && <ConversationDeleteDialog
         conversation={deleteTarget}
         busy={historyActionBusy === deleteTarget.id}
@@ -1199,40 +1186,17 @@ function ConversationDeleteDialog({
 function MessageBubble({ message }: { message: AiMessage }) {
   const isUser = message.role === "user";
   return (
-    <article className={`ai-message${isUser ? " ai-message--user" : " ai-message--assistant"}${message.status !== "complete" ? ` ai-message--${message.status}` : ""}`}>
-      <div className="ai-message-meta">{isUser ? <UserRound size={14} /> : <Bot size={14} />}<span>{isUser ? "我" : "AI 学习伙伴"}</span>{message.status !== "complete" && <small>{message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消"}</small>}</div>
+    <LearningMessage role={isUser ? "user" : "assistant"} state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
       {!isUser && message.reasoning_content && <ReasoningBlock content={message.reasoning_content} streaming={message.status === "streaming"} />}
       {isUser ? (
         <div className="ai-message-content">{message.content}</div>
       ) : (
         <div className="ai-message-content ai-markdown">
           {message.content ? (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
+            <LearningMarkdown>{message.content}</LearningMarkdown>
           ) : message.status === "streaming" ? "…" : ""}
         </div>
       )}
-    </article>
-  );
-}
-
-function ReasoningBlock({ content, streaming }: { content: string; streaming: boolean }) {
-  const [open, setOpen] = useState(streaming);
-
-  useEffect(() => {
-    setOpen(streaming);
-  }, [streaming]);
-
-  return (
-    <details className="ai-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>{streaming ? "思考中" : "已思考 · 点击展开"}</summary>
-      <pre>{content}</pre>
-    </details>
+    </LearningMessage>
   );
 }
