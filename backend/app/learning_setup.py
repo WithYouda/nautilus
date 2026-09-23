@@ -148,7 +148,6 @@ class LearningSetupService:
         payload = dict(payload)
         draft_id = payload.pop('draft_id', None)
         review_id = payload.pop('review_id', None)
-        command = ConfirmLearningSetup(**payload)
         with self.learning.database.transaction(immediate=True) as connection:
             review = None
             if review_id:
@@ -156,6 +155,18 @@ class LearningSetupService:
                 accepted = connection.execute("SELECT 1 FROM learning_usage_event WHERE owner_id=? AND review_id=? AND kind='continue'", (principal.owner_id, review_id)).fetchone()
                 if review is None or accepted is None:
                     raise DomainError('not_found', 404)
+                position = connection.execute(
+                    """SELECT l.plan_id FROM learning_session s
+                       JOIN learning_delegation d ON d.owner_id=s.owner_id AND d.id=s.delegation_id
+                       JOIN learning_action_link l ON l.owner_id=d.owner_id AND l.action_id=d.action_id
+                       WHERE s.owner_id=? AND s.id=?""",
+                    (principal.owner_id, review['position_session_id']),
+                ).fetchone()
+                if position:
+                    if payload.get('plan_id') not in (None, position['plan_id']):
+                        raise DomainError('verification_scope_invalid')
+                    payload['plan_id'] = position['plan_id']
+            command = ConfirmLearningSetup(**payload)
             draft = connection.execute("SELECT request_key FROM learning_usage_event WHERE owner_id=? AND kind='setup_ai' AND request_key LIKE ?",
                 (principal.owner_id, f'draft:{draft_id}:%')).fetchone() if draft_id else None
             if draft_id and not draft:
@@ -170,7 +181,7 @@ class LearningSetupService:
             record_usage(connection, principal.owner_id, 'setup_ai' if draft else 'setup_manual', f'setup:{key}',
                          review_id=review_id, action_id=result['action_id'], delegation_id=result['delegation_id'])
             comparison = {name: value.strip() if isinstance(value, str) else value
-                          for name, value in command.model_dump(exclude={'original_intent', 'outcome_id'}).items()}
+                          for name, value in command.model_dump(exclude={'original_intent', 'outcome_id', 'plan_id'}).items()}
             if draft and draft['request_key'].rsplit(':',1)[1] != digest(comparison):
                 record_usage(connection, principal.owner_id, 'setup_modified', f'modified:{key}',
                              action_id=result['action_id'], delegation_id=result['delegation_id'])

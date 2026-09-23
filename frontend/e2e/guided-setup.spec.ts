@@ -3,12 +3,13 @@ import { authorize } from "./fact-helpers";
 
 test("manual guided setup turns a natural-language goal into a learning session", async ({ page }) => {
   await authorize(page);
-  const factButton = page.getByRole("button", { name: "开始学习" }).first();
+  const factButton = page.getByRole("button", { name: "学习首页" }).first();
   if (!(await factButton.isVisible())) {
     await page.getByRole("button", { name: "打开导航" }).click();
   }
   await factButton.click();
-  await expect(page.getByRole("heading", { name: "开始一次学习" })).toBeVisible();
+  if (await page.getByRole("button", {name:"创建",exact:true}).isVisible()) await page.getByRole("button", {name:"创建",exact:true}).click();
+  await expect(page.getByRole("heading", { name: "你想学会什么？" })).toBeVisible();
 
   const setup = page.getByRole("region", { name: "从学习意图开始" });
   const intent = "我想学会用 Python 正则处理日志，并能独立写出一个小脚本。";
@@ -20,6 +21,7 @@ test("manual guided setup turns a natural-language goal into a learning session"
   await setup.getByRole("button", { name: "我想自己安排" }).click();
 
   await expect(setup.getByText("等待确认")).toBeVisible();
+  await setup.getByText("调整安排详情", {exact:true}).click();
   await expect(setup.getByLabel("目标", { exact: true })).toHaveValue(intent);
   await expect(setup.getByLabel("这次任务")).toHaveValue("完成一次最小练习并说明自己的理解");
 
@@ -62,7 +64,7 @@ test("manual guided setup turns a natural-language goal into a learning session"
     stop_conditions: stopConditions,
   });
 
-  await setup.getByRole("button", { name: "开始这项任务" }).click();
+  await setup.getByRole("button", { name: "进入学习室并开始这项任务" }).click();
 
   await expect(page.getByRole("heading", { name: "AI 学习室" })).toBeVisible();
   await expect(page.getByRole("region", { name: "本次学习安排" })).toContainText(actionTitle);
@@ -74,9 +76,9 @@ test("manual guided setup turns a natural-language goal into a learning session"
   await expect(page.getByRole("heading", { name: "AI 学习室" })).toBeVisible();
   await expect(page.getByRole("region", { name: "本次学习安排" })).toContainText(actionTitle);
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await expect(page.getByRole("heading", { name: "开始学习" })).toBeVisible();
-  const session = page.getByRole("region", { name: "当前学习会话" });
-  await expect(session.getByText("状态：running", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "学习首页" })).toBeVisible();
+  const session = page.getByRole("region", { name: "当前学习" });
+  await expect(session.getByText("正在学习", { exact: true })).toBeVisible();
 
   const runningStateResponse = await page.request.get("/api/learning/state");
   expect(runningStateResponse.ok()).toBeTruthy();
@@ -90,6 +92,6 @@ test("manual guided setup turns a natural-language goal into a learning session"
     ]),
   );
 
-  await session.getByRole("button", { name: "结束学习记录" }).click();
-  await expect(page.getByText("学习会话已结束")).toBeVisible();
+  await session.getByRole("button", { name: "暂停学习" }).click();
+  await expect(session).toContainText("学习位置已保存");
 });

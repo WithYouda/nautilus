@@ -105,7 +105,11 @@ class LearningCore:
         self._require_owner_user(principal)
         if not idempotency_key.strip() or len(idempotency_key) > 200:
             raise DomainError("invalid_idempotency_key", 422)
-        request_hash = digest({"command": operation, "payload": command.model_dump(mode="json")})
+        payload = command.model_dump(mode="json")
+        # Preserve idempotency hashes issued before plan continuation existed.
+        if isinstance(command, ConfirmLearningSetup) and command.plan_id is None:
+            payload.pop("plan_id")
+        request_hash = digest({"command": operation, "payload": payload})
         previous = connection.execute(
             """SELECT request_hash, result_json FROM learning_command
                WHERE owner_id=? AND actor_id=? AND idempotency_key=?""",
@@ -335,6 +339,12 @@ class LearningCore:
         }
 
     def _dispatch_setup(self, connection, principal, command, command_id, key, now, repository):
+        existing_plan = existing_goal = None
+        if command.plan_id:
+            existing_plan = repository._owned("learning_plan", command.plan_id)
+            if existing_plan["status"] != "active":
+                raise DomainError("plan_not_active")
+            existing_goal = repository._owned("learning_goal", existing_plan["goal_id"])
         if command.criterion_id and not command.outcome_id:
             raise DomainError("criterion_outcome_required")
         if command.outcome_id:
@@ -395,23 +405,24 @@ class LearningCore:
             }, now=now,
         )
         setup_id = str(uuid4())
-        goal_id = str(uuid4())
-        plan_id = str(uuid4())
+        goal_id = existing_goal["id"] if existing_goal else str(uuid4())
+        plan_id = existing_plan["id"] if existing_plan else str(uuid4())
         event = append_event(
             connection, principal, command_id=command_id, key=key,
             aggregate_type="setup", aggregate_id=setup_id, expected_version=0,
-            event_type="setup.confirmed",
+            event_type="plan.step_added" if existing_plan else "setup.confirmed",
             payload={
                 "id": setup_id,
                 "goal": {
                     "id": goal_id,
-                    "original_intent": command.original_intent,
-                    "title": command.goal_title,
-                    "description": command.goal_description,
+                    "original_intent": existing_goal["original_intent"] if existing_goal else command.original_intent,
+                    "title": existing_goal["title"] if existing_goal else command.goal_title,
+                    "description": existing_goal["description"] if existing_goal else command.goal_description,
                 },
-                "plan": {"id": plan_id, "title": command.plan_title, "description": command.plan_description},
+                "plan": {"id": plan_id, "title": existing_plan["title"] if existing_plan else command.plan_title, "description": existing_plan["description"] if existing_plan else command.plan_description},
                 "action_link": {"action_id": action_id, "plan_id": plan_id, "module_id": None},
                 "setup": {
+                    "original_intent": command.original_intent,
                     "id": setup_id,
                     "action_id": action_id,
                     "outcome_id": outcome_id,

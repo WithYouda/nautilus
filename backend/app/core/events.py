@@ -11,6 +11,7 @@ PROJECTION_VERSION = 1
 SUPPORTED_EVENT_VERSIONS = frozenset({1})
 SUPPORTED_EVENT_TYPES = frozenset({
     "setup.confirmed",
+    "plan.step_added",
     "action.created",
     "outcome.created",
     "delegation.created",
@@ -140,7 +141,7 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
     occurred_at = event["occurred_at"]
     event_type = event["event_type"]
 
-    if event_type == "setup.confirmed":
+    if event_type in ("setup.confirmed", "plan.step_added"):
         if event["aggregate_type"] != "setup" or payload.get("id") != event["aggregate_id"]:
             raise DomainError("event_scope_invalid")
         goal = payload.get("goal")
@@ -183,18 +184,26 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
             or delegation["outcome_id"] != setup["outcome_id"]
         ):
             raise DomainError("event_scope_invalid")
-        connection.execute(
-            """INSERT INTO learning_goal
-               (id, owner_id, original_intent, title, description, status, version, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'hypothesis', 1, ?, ?)""",
-            (goal["id"], owner, goal["original_intent"], goal["title"], goal["description"], occurred_at, occurred_at),
-        )
-        connection.execute(
-            """INSERT INTO learning_plan
-               (id, owner_id, goal_id, title, description, status, version, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'active', 1, ?, ?)""",
-            (plan["id"], owner, goal["id"], plan["title"], plan["description"], occurred_at, occurred_at),
-        )
+        if event_type == "plan.step_added":
+            existing = connection.execute(
+                "SELECT goal_id, status FROM learning_plan WHERE owner_id=? AND id=?",
+                (owner, plan["id"]),
+            ).fetchone()
+            if existing is None or existing["goal_id"] != goal["id"] or existing["status"] != "active":
+                raise DomainError("event_scope_invalid")
+        else:
+            connection.execute(
+                """INSERT INTO learning_goal
+                   (id, owner_id, original_intent, title, description, status, version, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 'hypothesis', 1, ?, ?)""",
+                (goal["id"], owner, goal["original_intent"], goal["title"], goal["description"], occurred_at, occurred_at),
+            )
+            connection.execute(
+                """INSERT INTO learning_plan
+                   (id, owner_id, goal_id, title, description, status, version, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 'active', 1, ?, ?)""",
+                (plan["id"], owner, goal["id"], plan["title"], plan["description"], occurred_at, occurred_at),
+            )
         connection.execute(
             """INSERT INTO learning_action_link
                (owner_id, action_id, plan_id, module_id, created_at)
@@ -208,7 +217,7 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 1, ?)""",
             (
                 setup["id"], owner, goal["id"], plan["id"], link["action_id"],
-                setup["outcome_id"], setup["delegation_id"], goal["original_intent"], occurred_at,
+                setup["outcome_id"], setup["delegation_id"], setup.get("original_intent", goal["original_intent"]), occurred_at,
             ),
         )
     elif event_type == "action.created":

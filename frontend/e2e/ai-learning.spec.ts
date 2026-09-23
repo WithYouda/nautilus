@@ -7,11 +7,13 @@ const fakeApiKey = "sk-playwright-fake-key-only";
 test.beforeEach(async ({ page }) => {
   await authorize(page);
   await resetMockProvider(page.context().request);
+  const conversations = await (await page.request.get('/api/ai/conversations')).json();
+  for (const conversation of conversations) expect((await page.request.delete(`/api/ai/conversations/${conversation.id}`)).ok()).toBeTruthy();
 });
 
 test("provider connection distinguishes an unreachable local API from an upstream error", async ({ page }) => {
   await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
-  await page.getByRole("button", { name: "提供方设置" }).click();
+  await page.getByRole("button", { name: "提供方设置" }).first().click();
   await page.route("**/api/ai/provider/models", (route) => route.abort("failed"));
   await page.route("**/api/ai/provider/test", (route) => route.abort("failed"));
   await page.getByLabel("Base URL").fill("https://api.deepseek.com/v1");
@@ -28,7 +30,7 @@ test("provider connection distinguishes an unreachable local API from an upstrea
 
 test("model discovery keeps structured upstream errors actionable and allows manual models", async ({ page }) => {
   await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
-  await page.getByRole("button", { name: "提供方设置" }).click();
+  await page.getByRole("button", { name: "提供方设置" }).first().click();
   await page.route("**/api/ai/provider/models", (route) => route.fulfill({
     status: 404,
     contentType: "application/json",
@@ -47,10 +49,9 @@ test("model discovery keeps structured upstream errors actionable and allows man
 });
 
 test("AI learning streams a normal reply and persists one message pair", async ({ page }) => {
-  const task = await createTask(page.context().request, "正常流");
   await configureProvider(page.context().request, "mock-success");
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
 
   await expect(page.getByRole("heading", { name: "AI 学习室" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "新的学习对话" })).toBeVisible();
@@ -120,8 +121,8 @@ test("AI learning streams a normal reply and persists one message pair", async (
   }
   await contextButton.click();
   await expect(contextButton).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator(".ai-context-panel").getByText(task.title, { exact: true })).toBeVisible();
-  await expect(page.getByText("进度", { exact: true })).toBeVisible();
+  await expect(page.locator(".ai-context-panel")).toContainText("独立对话");
+  await expect(page.locator(".ai-context-panel")).toContainText("本次对话不自动注入计划数据");
   await page.locator(".ai-message-list").click({ position: { x: 20, y: 20 } });
   await expect(contextButton).toHaveAttribute("aria-expanded", "false");
 
@@ -156,15 +157,15 @@ test("AI learning streams a normal reply and persists one message pair", async (
   expect(runId).toBeTruthy();
 });
 
-test("task conversations persist across new conversation, workspace return, refresh, and history switching", async ({ page }) => {
-  const task = await createTask(page.context().request, "任务关联恢复");
+test("independent conversations persist across new conversation, workspace return, refresh, and history switching", async ({ page }) => {
   const configuredProvider = await configureProvider(page.context().request, "mock-success");
   const independentResponse = await page.context().request.post("/api/ai/conversations", { data: {} });
   expect(independentResponse.status()).toBe(201);
   const independentId = (await independentResponse.json()).conversation.id as string;
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
 
+  await page.getByRole("button", { name: "新建对话" }).click();
   const firstSent = waitForSentRun(page);
   await page.getByLabel("输入学习问题").fill("第一段任务对话");
   await page.getByRole("button", { name: "发送问题" }).click();
@@ -185,25 +186,25 @@ test("task conversations persist across new conversation, workspace return, refr
   const second = await secondSent;
   await expect.poll(async () => (await getConversation(page.request, second.conversationId)).active_run).toBeNull();
 
-  expect((await getConversation(page.request, first.conversationId)).context.task_id).toBe(task.id);
-  expect((await getConversation(page.request, second.conversationId)).context.task_id).toBe(task.id);
+  expect((await getConversation(page.request, first.conversationId)).context).toBeNull();
+  expect((await getConversation(page.request, second.conversationId)).context).toBeNull();
   expect((await getConversation(page.request, independentId)).context).toBeNull();
 
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
   await expect(page.getByText("第二段任务对话", { exact: true })).toBeVisible();
-  await expect(page.locator(".ai-context-trigger")).toContainText(task.title);
+  await expect(page.locator(".ai-context-trigger")).toContainText("独立对话");
 
   await page.reload();
   await expect(page.getByText("第二段任务对话", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "对话历史" }).click();
   const history = page.getByLabel("对话列表");
   expect(await history.locator(".ai-history-item").count()).toBeGreaterThanOrEqual(3);
-  await expect(history.getByText("当前任务", { exact: true })).toHaveCount(2);
-  await expect(history.getByText("独立对话", { exact: true })).toHaveCount(1);
+  await expect(history.getByText("当前任务", { exact: true })).toHaveCount(0);
+  expect(await history.getByText("独立对话", { exact: true }).count()).toBeGreaterThanOrEqual(3);
   await history.locator(`[data-conversation-id="${first.conversationId}"]`).click();
   await expect(page.getByText("第一段任务对话", { exact: true })).toBeVisible();
-  await expect(page.locator(".ai-context-trigger")).toContainText(task.title);
+  await expect(page.locator(".ai-context-trigger")).toContainText("独立对话");
   await page.getByRole("button", { name: "对话配置" }).click();
   await expect(page.getByLabel("对话引擎选择")).toHaveValue(`${configuredProvider.id}::${configuredProvider.default_model.id}`);
   await page.keyboard.press("Escape");
@@ -215,59 +216,12 @@ test("task conversations persist across new conversation, workspace return, refr
   expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem("nautilus.ai.learning-room") ?? "{}").conversationId)).toBe(independentId);
 });
 
-test("global plan and task entries persist distinct AI context scopes", async ({ page }) => {
-  const task = await createTask(page.request, "分级上下文");
-  await configureProvider(page.request, "mock-success");
-  await page.reload();
-
-  await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
-  const companion = page.getByRole("complementary", { name: "AI 学习伙伴" });
-  await expect(companion.getByText("全局上下文", { exact: true })).toBeVisible();
-  await companion.getByRole("button", { name: "进入学习室" }).click();
-  await expect(page.getByRole("button", { name: "当前对话信息" })).toContainText("全局学习工作区");
-  let sent = waitForSentRun(page);
-  await page.getByLabel("输入学习问题").fill("请从全局安排学习顺序");
-  await page.getByRole("button", { name: "发送问题" }).click();
-  const globalRun = await sent;
-  await expect.poll(async () => (await getConversation(page.request, globalRun.conversationId)).active_run).toBeNull();
-  const globalConversation = await getConversation(page.request, globalRun.conversationId);
-  expect(globalConversation.conversation.context_scope).toBe("global");
-  expect(globalConversation.context.scope_kind).toBe("global");
-
-  await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "历史计划", exact: true }).click();
-  await page.getByRole("heading", { name: task.goalTitle }).click();
-  await expect(page.getByRole("complementary", { name: "AI 学习伙伴" }).getByText("计划级上下文", { exact: true })).toBeVisible();
-  await page.getByRole("complementary", { name: "AI 学习伙伴" }).getByRole("button", { name: "进入学习室" }).click();
-  await expect(page.getByRole("button", { name: "当前对话信息" })).toContainText(task.goalTitle);
-  sent = waitForSentRun(page);
-  await page.getByLabel("输入学习问题").fill("检查这个计划的进度");
-  await page.getByRole("button", { name: "发送问题" }).click();
-  const planRun = await sent;
-  await expect.poll(async () => (await getConversation(page.request, planRun.conversationId)).active_run).toBeNull();
-  const planConversation = await getConversation(page.request, planRun.conversationId);
-  expect(planConversation.conversation.context_scope).toBe("plan");
-  expect(planConversation.context.goal_id).toBe(task.goalId);
-
-  await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "今日", exact: true }).click();
-  await openLearningRoom(page, task.title);
-  sent = waitForSentRun(page);
-  await page.getByLabel("输入学习问题").fill("只讲解当前任务");
-  await page.getByRole("button", { name: "发送问题" }).click();
-  const taskRun = await sent;
-  const taskConversation = await getConversation(page.request, taskRun.conversationId);
-  expect(taskConversation.conversation.context_scope).toBe("task");
-  expect(taskConversation.context.task_id).toBe(task.id);
-});
-
 test("conversation history supports inline rename and confirmed soft delete", async ({ page }) => {
-  const task = await createTask(page.context().request, "历史管理");
   const firstResponse = await page.request.post("/api/ai/conversations", {
-    data: { task_id: task.id, title: "待修改标题" },
+    data: { title: "待修改标题" },
   });
   const secondResponse = await page.request.post("/api/ai/conversations", {
-    data: { task_id: task.id, title: "准备删除的对话" },
+    data: { title: "准备删除的对话" },
   });
   expect(firstResponse.status()).toBe(201);
   expect(secondResponse.status()).toBe(201);
@@ -275,7 +229,7 @@ test("conversation history supports inline rename and confirmed soft delete", as
   const secondId = (await secondResponse.json()).conversation.id as string;
 
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
   await expect(page.getByRole("heading", { name: "准备删除的对话" })).toBeVisible();
   await page.getByRole("button", { name: "对话历史" }).click();
 
@@ -310,8 +264,7 @@ test("conversation history supports inline rename and confirmed soft delete", as
   await expect(page.getByRole("heading", { name: "手动整理后的标题" })).toBeVisible();
 });
 
-test("explicit task entry ignores a stale independent conversation id", async ({ page }) => {
-  const task = await createTask(page.context().request, "隔离独立会话");
+test("new room entry clears a retired task scope and opens independent chat", async ({ page }) => {
   const independentResponse = await page.context().request.post("/api/ai/conversations", { data: {} });
   expect(independentResponse.status()).toBe(201);
   const independentId = (await independentResponse.json()).conversation.id as string;
@@ -322,21 +275,20 @@ test("explicit task entry ignores a stale independent conversation id", async ({
       runId: null,
       open: false,
     }));
-  }, { taskId: task.id, conversationId: independentId });
+  }, { taskId: "retired-task", conversationId: independentId });
 
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
   await expect(page.getByRole("heading", { name: "新的学习对话" })).toBeVisible();
-  await expect(page.locator(".ai-context-trigger")).toContainText(task.title);
-  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem("nautilus.ai.learning-room") ?? "{}").conversationId)).toBeNull();
+  await expect(page.locator(".ai-context-trigger")).toContainText("独立对话");
+  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem("nautilus.ai.learning-room") ?? "{}").contextScope)).toBe("independent");
 });
 
 test("AI learning room stays within the viewport at desktop, compact, and mobile sizes", async ({ page }) => {
-  const task = await createTask(page.context().request, "三档视口稳定");
   await configureProvider(page.context().request, "mock-success");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
 
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 1024, height: 640 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
@@ -362,10 +314,9 @@ test("AI learning room stays within the viewport at desktop, compact, and mobile
 });
 
 test("provider settings discover and cache models, then choose a model for connection test", async ({ page }) => {
-  const task = await createTask(page.context().request, "模型发现");
   await configureProvider(page.context().request, "mock-success");
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
   await page.getByRole("button", { name: "AI 提供方设置" }).click();
 
   const modelInput = page.getByRole("combobox", { name: "模型" });
@@ -394,10 +345,9 @@ test("provider settings discover and cache models, then choose a model for conne
 });
 
 test("reasoning returned by provider is visible while streaming and folded after completion", async ({ page }) => {
-  const task = await createTask(page.context().request, "推理展示");
   await configureProvider(page.context().request, "mock-reasoning");
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
 
   const sent = waitForSentRun(page);
   await page.getByLabel("输入学习问题").fill("请展示推理与答案。");
@@ -417,10 +367,9 @@ test("reasoning returned by provider is visible while streaming and folded after
 });
 
 test("AI learning cancel stops a slow stream and keeps partial text", async ({ page }) => {
-  const task = await createTask(page.context().request, "取消流");
   await configureProvider(page.context().request, "mock-slow");
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
 
   const sent = waitForSentRun(page);
   await page.getByLabel("输入学习问题").fill("请持续讲解，稍后我会取消。");
@@ -441,10 +390,9 @@ test("AI learning cancel stops a slow stream and keeps partial text", async ({ p
 });
 
 test("AI learning reports provider errors without duplicating messages", async ({ page }) => {
-  const task = await createTask(page.context().request, "错误流");
   await configureProvider(page.context().request, "mock-error");
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
 
   const sent = waitForSentRun(page);
   await page.getByLabel("输入学习问题").fill("触发测试提供方错误。");
@@ -463,10 +411,9 @@ test("AI learning reports provider errors without duplicating messages", async (
 });
 
 test("refresh and repeated submission reuse the same run without appending messages", async ({ page }) => {
-  const task = await createTask(page.context().request, "刷新流");
   await configureProvider(page.context().request, "mock-refresh");
   await page.reload();
-  await openLearningRoom(page, task.title);
+  await openLearningRoom(page);
 
   const sentRequest = page.waitForRequest((request) =>
     request.url().includes("/api/ai/conversations/") &&
@@ -512,12 +459,11 @@ async function authorize(page: Page) {
   await expect(page.getByRole("heading", { name: "授权此设备，继续学习。" })).toBeVisible();
   await page.getByRole("button", { name: "填入当前授权码" }).click();
   await page.getByRole("button", { name: "进入工作区" }).click();
-  await expect(page.getByRole("navigation", { name: "当前视角" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "学习首页" })).toBeVisible();
 }
 
-async function openLearningRoom(page: Page, taskTitle: string) {
-  await page.getByRole("button", { name: `选择任务：${taskTitle}` }).click();
-  await page.getByRole("button", { name: new RegExp(`与 AI 学习.*${escapeRegex(taskTitle)}`) }).click();
+async function openLearningRoom(page: Page, _title?: string) {
+  await page.getByRole("button", { name: "学习室", exact: true }).click();
 }
 
 async function waitForSentRun(page: Page) {
@@ -547,39 +493,6 @@ async function configureProvider(request: APIRequestContext, model: string) {
   });
   expect(response.ok()).toBeTruthy();
   return (await response.json()).provider;
-}
-
-async function createTask(request: APIRequestContext, suffix: string) {
-  const now = new Date();
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 30);
-  const title = `Playwright AI ${suffix}`;
-  const response = await request.post("/api/plans/manual", {
-    data: {
-      goal_title: `Playwright AI 计划 ${suffix}`,
-      description: "仅存放在隔离临时数据库中的自动化测试数据",
-      start_date: localDateKey(now),
-      end_date: localDateKey(end),
-      subject_title: "自动化测试",
-      topic_title: "AI 学习纵切片",
-      task_title: title,
-      task_type: "study",
-      schedule_mode: "flexible",
-      task_start_date: localDateKey(now),
-      task_due_date: localDateKey(now),
-      estimate_minutes: 30,
-      timer_mode: "pomodoro_25_5",
-      work_minutes: 25,
-      break_minutes: 5,
-    },
-  });
-  expect(response.ok()).toBeTruthy();
-  const plan = await response.json();
-  return {
-    goalId: plan.id as string,
-    goalTitle: plan.title as string,
-    id: plan.subjects[0].topics[0].tasks[0].id as string,
-    title,
-  };
 }
 
 async function getConversation(request: APIRequestContext, conversationId: string) {

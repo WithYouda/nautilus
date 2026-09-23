@@ -1,0 +1,50 @@
+/* Shared page structure; business components supply content and actions. */
+.learning-page { width: 100%; min-width: 0; max-width: 1200px; margin: 0 auto; padding: clamp(18px, 3vw, 40px); }
+.learning-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
+.learning-page-header h1 { margin: 0 0 10px; font-size: clamp(25px, 3vw, 34px); letter-spacing: -.04em; }
+.learning-page-header .lead { margin: 0; max-width: 660px; font-size: 14px; line-height: 1.8; }
+.learning-page-header__actions, .learning-action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.learning-page-header__actions { flex-shrink: 0; }
+.learning-state-label { display: inline-flex; width: fit-content; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; color: var(--v6-navy, #263a43); background: #e9eeec; white-space: nowrap; }
+.learning-state-label--complete { color: #36664e; background: #e8f0e8; }
+.learning-state-label--active { color: #2d536a; background: #e8eff2; }
+.learning-page .return-review { margin: 0 0 24px; padding: clamp(22px, 3vw, 34px); }
+.learning-page .return-review h2 { margin: 18px 0 12px; font-size: clamp(22px, 2.8vw, 30px); line-height: 1.4; overflow-wrap: anywhere; }
+.return-review__fact { margin: 22px 0; line-height: 1.8; }
+.learning-observations-toggle { margin-top: 26px; }
+.learning-page .return-review__details { margin-top: 18px; border-top: 1px solid var(--v6-rule, #d8dedb); padding-top: 16px; }
+.learning-empty { padding: 36px; border: 1px solid var(--v6-rule, #d8dedb); background: var(--v6-paper-hi, #fafbf9); }
+.learning-empty h2 { margin-top: 0; }
+.learning-empty p { line-height: 1.8; }
+.learning-plans__layout { display: grid; grid-template-columns: minmax(200px, .8fr) minmax(0, 2fr); gap: 28px; align-items: start; }
+.learning-plans__list { display: grid; gap: 10px; }
+.learning-plans__list button { display: grid; gap: 9px; width: 100%; padding: 18px; border: 1px solid var(--v6-rule, #d8dedb); background: transparent; text-align: left; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.learning-plans__list button[aria-pressed="true"] { border-color: var(--v6-navy, #263a43); background: var(--v6-paper-hi, #fafbf9); box-shadow: inset 3px 0 var(--v6-navy, #263a43); }
+.learning-plans__list span, .learning-plans__list small { font-size: 12px; color: var(--v6-muted, #65716e); line-height: 1.6; }
+.learning-plan-detail { min-width: 0; }
+.learning-plan-detail header { padding-bottom: 22px; border-bottom: 1px solid var(--v6-rule, #d8dedb); }
+.learning-plan-detail h2 { margin: 9px 0; font-size: 24px; overflow-wrap: anywhere; }
+.learning-plan-detail p { line-height: 1.8; overflow-wrap: anywhere; }
+.learning-plan-detail__route { margin-bottom: 0; font-size: 13px; color: var(--v6-muted, #65716e); }
+.learning-plan-detail__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 0; }
+.learning-plan-detail__heading h3 { margin: 0; font-size: 16px; }
+.learning-plan-task { border: 1px solid var(--v6-rule, #d8dedb); background: var(--v6-paper-hi, #fafbf9); margin-bottom: 14px; padding: 20px; }
+.learning-plan-task__title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.learning-plan-task__number { font-size: 12px; color: var(--v6-muted, #65716e); }
+.learning-plan-task h4 { flex: 1; min-width: 120px; margin: 0; font-size: 16px; line-height: 1.6; overflow-wrap: anywhere; }
+.learning-plan-task__body p { font-size: 13px; color: var(--v6-muted, #65716e); }
+.learning-plans button:focus-visible { outline: 2px solid var(--v6-navy, #263a43); outline-offset: 3px; }
+@media (max-width: 760px) {
+  .learning-page-header { gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+  .learning-plans__layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .learning-page .return-review { padding: 20px; }
+  .learning-page .return-review__actions { gap: 10px; }
+  .learning-plan-task { padding: 16px; }
+}
+.learning-records-list { max-height: 300px; overflow-y: auto; }
+@media (max-width: 760px) {
+  .v6-workspace .v6-rail { visibility: hidden; }
+  .v6-workspace.is-rail-collapsed .v6-rail { visibility: visible; }
+  .learning-plans__list { max-height: 230px; overflow-y: auto; }
+  .learning-plans__list button { padding: 12px 16px; gap: 5px; }
+}

@@ -11,23 +11,21 @@ test('one start flow, streamed math, actionable verification retry and math ques
   expect(provider.ok()).toBeTruthy();
   await page.reload();
   const existing = await (await page.request.get('/api/learning/return-review')).json();
-  const legacyTasks = await (await page.request.get('/api/tasks')).json();
-  const open = page.getByRole('button', { name: '开始学习', exact: true }).first();
+  const open = page.getByRole('button', { name: '学习首页', exact: true }).first();
   if (!(await open.isVisible())) await page.getByRole('button', { name: '打开导航' }).click();
   await open.click();
   const closeNav = page.getByRole('button', { name: '关闭导航' });
   if (await closeNav.isVisible()) await closeNav.click();
   if (existing) {
-    const card = page.getByRole('region', { name: '继续学习复核卡' });
+    const card = page.getByRole('region', { name: '当前学习' });
     await expect(card).toBeVisible();
-    await card.getByRole('button', { name: '换一个', exact: true }).click();
-    await card.getByRole('button', { name: '不继续这个方向，安排新的第一步' }).click();
+    await page.getByRole('button', { name: '创建', exact: true }).click();
   }
   await expect(page.getByRole('heading', { name: '你想学会什么？' })).toBeVisible();
   await expect(page.getByText('旧计划管理入口', { exact: true })).toHaveCount(0);
   await expect(page.getByText('我想从学习目标开始', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: '按计划开始' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '查看历史计划' })).toHaveCount(legacyTasks.length ? 1 : 0);
+  await expect(page.getByRole('button', { name: '查看历史计划' })).toHaveCount(0);
   await page.screenshot({ path: '/tmp/nautilus-feedback-start-390.png', fullPage: true });
   await page.getByLabel('学习目标', { exact: true }).fill('合成目标：解释简单代数式');
   await page.getByRole('button', { name: '我想自己安排' }).click();
@@ -120,5 +118,5 @@ test('one start flow, streamed math, actionable verification retry and math ques
   await expect(page.locator('.verification-result .mord.mathnormal').first()).toHaveCSS('display', 'inline');
   await page.getByRole('checkbox', { name: /我已核对结果/ }).check();
   await page.getByRole('button', { name: '确认完成本次委托' }).click();
-  await expect(page.getByRole('region', { name: '继续学习复核卡' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '当前学习' })).toBeVisible();
 });

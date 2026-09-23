@@ -298,3 +298,7 @@ AI 调用分为保存链路和分析链路。保存链路不依赖 AI 成功；�
 前端共用LearningChatPanel、LearningMessage、LearningComposer、ReasoningBlock。Provider思考生成时展开、结束后折叠；刷新重连不重复调用。服务重启后运行轮次标记中断供重试，不承诺跨重启自动继续生成。独立异步任务不是新增常驻Agent或任务队列。
 
 运行事实和当前限制见[开发状态](../../progress/nautilus-development-status.md)。外部Provider、导出与取证副本不属于当前库清除保证；真实新迁移仍遵循已确认授权边界。
+
+### 原计划追加任务（2026-09-24）
+
+`ConfirmLearningSetup` 接受可选 `plan_id`：未传时创建目标/计划，传入时校验本人活动计划并只追加任务、成果、委托与安排。`plan.step_added` 和普通事实事件在同一事务提交，回放保持父目标/计划及原始意图不变，步骤意图单独保留在setup。首页完成后的确认通过原会话锁定计划，不能用review关联另一计划；不新增schema迁移。未传plan_id的既有幂等哈希保持不变。前端计划页直接读取学习域，不读取旧规划或引入双写。

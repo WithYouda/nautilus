@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   analyzeLearningArtifact,
   confirmLearningSetup,
+  chooseReturnReview,
   approveAgentPermissionRequest,
   batchReviewEvidenceClaims,
   createAgentPermissionRequest,
@@ -54,7 +55,7 @@ import {
 } from "./api";
 
 import ReturnReviewCard from "./ReturnReviewCard";
-import LearningRecords from "./LearningRecords";
+import LearningPageHeader from "./LearningPageHeader";
 
 type FactOperation =
   | "action"
@@ -136,7 +137,7 @@ function manualSetupDraft(intent: string): LearningSetupDraft {
   return {
     goal_title: subject,
     goal_description: intent.trim(),
-    plan_title: `${subject}：第一步`,
+    plan_title: `${subject}：学习计划`,
     plan_description: "先完成一个可检查的小步骤，再根据真实产出调整路线。",
     action_title: "完成一次最小练习并说明自己的理解",
     context_key: "guided",
@@ -152,19 +153,16 @@ function manualSetupDraft(intent: string): LearningSetupDraft {
 }
 
 type FactWorkspaceProps = {
-  hasLegacyTasks?: boolean;
-  onOpenLegacyPlans?: () => void;
+  creation?: { planId?: string } | null;
+  onOpenPlans: (id?: string) => void;
+  onOpenRecord: (id: string, verificationId?: string | null) => void;
   onOpenLearningRoom?: (initialDraft: string, brief: LearningRoomBrief) => void;
 };
 
-export default function FactWorkspace({
-  hasLegacyTasks = false,
-  onOpenLegacyPlans,
-  onOpenLearningRoom,
-}: FactWorkspaceProps) {
-  const [recordsOpen, setRecordsOpen] = useState(() => new URLSearchParams(window.location.search).has('record'));
+export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onOpenLearningRoom }: FactWorkspaceProps) {
   const [returnCard, setReturnCard] = useState<ReturnReview | null>(null);
-  const [newSetup, setNewSetup] = useState(false);
+  const [newSetup, setNewSetup] = useState(Boolean(creation));
+  const [setupPlanId, setSetupPlanId] = useState<string | undefined>(creation?.planId);
   const [setupReviewId, setSetupReviewId] = useState<string>();
   const [state, setState] = useState<LearningState | null>(null);
   const [metrics, setMetrics] = useState<LearningMeasurementReport | null>(null);
@@ -277,7 +275,7 @@ export default function FactWorkspace({
 
   useEffect(() => {
     const runningSession = state?.sessions.find((session) => session.status === "running");
-    if (runningSession) setSelectedDelegationId(runningSession.delegation_id);
+    if (runningSession) setSelectedDelegationId(current => current ?? runningSession.delegation_id);
   }, [state]);
 
   const loadAgentRequests = useCallback(async () => {
@@ -458,6 +456,15 @@ export default function FactWorkspace({
     });
   }
 
+  const setupPlan = state?.plans.find(plan => plan.id === setupPlanId);
+  const setupGoal = state?.goals.find(goal => goal.id === setupPlan?.goal_id);
+  function beginSetup(reviewId?: string, planId?: string) {
+    setSetupReviewId(reviewId); setSetupPlanId(planId); setNewSetup(true);
+    setSetupDraft(null); setSetupConfirmed(false); setSetupIntent(''); setNotice('');
+  }
+  function bindDraft(draft: LearningSetupDraft): LearningSetupDraft {
+    return setupPlan && setupGoal ? { ...draft, goal_title: setupGoal.title, goal_description: setupGoal.description, plan_title: setupPlan.title, plan_description: setupPlan.description } : draft;
+  }
   async function handleSetupDraft() {
     const intent = setupIntent.trim();
     if (!intent || busy) {
@@ -468,8 +475,8 @@ export default function FactWorkspace({
     setError("");
     setNotice("");
     try {
-      const draft = await createLearningSetupDraft(intent);
-      setSetupDraft(draft);
+      const draft = await createLearningSetupDraft(setupPlan && setupGoal ? `在已有目标“${setupGoal.title}”的计划“${setupPlan.title}”中添加下一项任务。下一步想做：${intent}` : intent);
+      setSetupDraft(bindDraft(draft));
       setSetupCriterionId(draft.recommended_criterion_id ?? "");
       setSetupConfirmed(false);
       setNotice("AI 已整理出第一步学习安排，请确认或修改");
@@ -486,7 +493,7 @@ export default function FactWorkspace({
       setError("先说说你想学会什么");
       return;
     }
-    setSetupDraft(manualSetupDraft(intent));
+    setSetupDraft(bindDraft(manualSetupDraft(intent)));
     setSetupCriterionId("");
     setSetupConfirmed(false);
     setError("");
@@ -499,6 +506,7 @@ export default function FactWorkspace({
     const payload = {
       draft_id: setupDraft.draft_id,
       review_id: setupReviewId,
+      plan_id: setupPlanId,
       original_intent: setupIntent.trim(),
       goal_title: setupDraft.goal_title.trim(),
       goal_description: setupDraft.goal_description.trim(),
@@ -538,21 +546,35 @@ export default function FactWorkspace({
   }
 
   async function handleStartGuidedSession() {
+    const draft = setupDraft
+      ? [
+          "我正在执行下面这次学习安排。当前阶段只做资料整理、教学和答疑，不进入验证。",
+          "请先基于可核验的权威资料组织教学内容，给出用户可以打开的来源链接和阅读顺序；如果当前运行环境不能联网，请明确说明，不要编造来源或链接。",
+          "可以根据这些资料直接为我讲解，但本轮不要出验证题、练习题、判断题、填空题或标准答案，等我明确点击“开始验证”后再进入验证阶段。",
+          `学习目标：${setupIntent.trim()}`,
+          `本次任务：${setupDraft.action_title.trim()}`,
+          `希望形成的能力：${setupDraft.outcome_object.trim()}；${setupDraft.outcome_behavior.trim()}`,
+          `学习边界：${setupDraft.boundaries.trim()}`,
+          `停止条件：${setupDraft.stop_conditions.trim()}`,
+        ].filter(Boolean).join("\n")
+      : undefined;
+    const running = state?.sessions.find(item => item.status === 'running' && item.delegation_id !== selectedDelegation?.id);
+    if (running && selectedDelegation) {
+      setBusy(true); setError('');
+      try {
+        const card = await getReturnReview();
+        if (!card) throw new Error('学习状态已改变，请刷新后重试。');
+        const result = await chooseReturnReview(card.id, 'choose_other', `${card.id}:setup:${selectedDelegation.id}`, selectedDelegation.id);
+        if (!result.session_id) throw new Error('无法开始学习，请重试。');
+        const room = await getLearningRoom(result.session_id);
+        onOpenLearningRoom?.(draft ?? '', { ...room.brief, continuity_review_id: card.id });
+      } catch (reason) { setError(reason instanceof Error ? reason.message : '无法开始学习'); }
+      finally { setBusy(false); }
+      return;
+    }
     const session = await handleStartSession();
     if (!session) return;
     if (onOpenLearningRoom) {
-      const draft = setupDraft
-        ? [
-            "我正在执行下面这次学习安排。当前阶段只做资料整理、教学和答疑，不进入验证。",
-            "请先基于可核验的权威资料组织教学内容，给出用户可以打开的来源链接和阅读顺序；如果当前运行环境不能联网，请明确说明，不要编造来源或链接。",
-            "可以根据这些资料直接为我讲解，但本轮不要出验证题、练习题、判断题、填空题或标准答案，等我明确点击“开始验证”后再进入验证阶段。",
-            `学习目标：${setupIntent.trim()}`,
-            `本次任务：${setupDraft.action_title.trim()}`,
-            `希望形成的能力：${setupDraft.outcome_object.trim()}；${setupDraft.outcome_behavior.trim()}`,
-            `学习边界：${setupDraft.boundaries.trim()}`,
-            `停止条件：${setupDraft.stop_conditions.trim()}`,
-          ].filter(Boolean).join("\n")
-        : undefined;
       onOpenLearningRoom(draft ?? "", {
         action_id: selectedAction?.id,
         delegation_id: selectedDelegation?.id,
@@ -977,48 +999,29 @@ export default function FactWorkspace({
   const canAnalyzeArtifact = Boolean(selectedArtifact && selectedDelegation?.criterion_id != null);
   const selectedSetupStandard = state?.standards.find((item) => item.id === setupCriterionId) ?? null;
 
-  if (recordsOpen) return <LearningRecords onClose={() => setRecordsOpen(false)} onLearning={brief => onOpenLearningRoom?.("", brief)} />;
-
   return (
-    <section className="fact-workspace" aria-label="开始学习">
-      <header className="fact-header">
-        <div>
-          <p className="eyebrow">LEARNING START</p>
-          <h1>开始学习</h1>
-          <p className="lead">继续上次的学习，或告诉我你想学会什么。</p>
-        </div>
-        <div className="fact-header__actions">
-          <button className="button button--quiet" type="button" onClick={() => setRecordsOpen(true)}>学习记录</button>
-          {hasLegacyTasks && <button className="button button--quiet" type="button" onClick={onOpenLegacyPlans}>查看历史计划</button>}
-          <button className="button button--quiet" type="button" onClick={() => void loadState()} disabled={busy || loading}>
-            刷新状态
-          </button>
-
-        </div>
-      </header>
+    <section className="fact-workspace learning-page" aria-label="学习首页">
+      <LearningPageHeader title="学习首页" description="接着上次学习，或创建一个新的学习计划。">
+        {returnCard && !newSetup && <button className="button button--accent" type="button" onClick={() => beginSetup()}>创建</button>}
+        {newSetup && <button className="button button--quiet" type="button" disabled={busy} onClick={() => { setNewSetup(false); setSetupPlanId(undefined); setSetupDraft(null); setSetupReviewId(undefined); setNotice(''); }}>返回首页</button>}
+      </LearningPageHeader>
 
       {error && <div className="workspace-alert" role="alert">{error}</div>}
       {notice && <div className="fact-notice" role="status">{notice}</div>}
-      {loading && <div className="workspace-loading"><div className="signal-loader" /><span>正在加载学习事实</span></div>}
+      {loading && <div className="workspace-loading"><div className="signal-loader" /><span>正在加载学习进度</span></div>}
 
       {!loading && state && (
         <>
-          {returnCard && !newSetup && <ReturnReviewCard card={returnCard} onChanged={loadState} onSetup={(reviewId) => { setSetupReviewId(reviewId); setNewSetup(true); }} onContinue={(brief) => onOpenLearningRoom?.("", brief)} />}
+          {returnCard && !newSetup && <ReturnReviewCard card={returnCard} onChanged={loadState} onSetup={beginSetup} onOpenRecord={onOpenRecord} onOpenPlan={onOpenPlans} onContinue={(brief) => onOpenLearningRoom?.("", brief)} />}
           {(!returnCard || newSetup) && <>
-          {noStandard && selectedDelegation && (
-            <div className="fact-warning" role="status">
-              <strong>未绑定合格标准</strong>
-              <span>学习产出和事实事件仍会保存，但不会生成证据主张或学习状态。</span>
-            </div>
-          )}
-
           <section className="fact-card guided-setup" aria-label="从学习意图开始">
             <div className="fact-card__header">
-              <p className="eyebrow">START HERE</p>
-              <h2>你想学会什么？</h2>
+              <p className="eyebrow">{setupPlanId ? "添加下一步" : "创建"}</p>
+              <h2>{setupPlanId ? "接下来学什么？" : "你想学会什么？"}</h2>
+              {setupPlan && <p>学习目标：{setupGoal?.title}<br />所属计划：{setupPlan.title}</p>}
             </div>
             <label className="field">
-              <span>学习目标</span>
+              <span>{setupPlanId ? "下一步想做什么" : "学习目标"}</span>
               <textarea
                 value={setupIntent}
                 onChange={(event) => setSetupIntent(event.target.value)}
@@ -1030,7 +1033,7 @@ export default function FactWorkspace({
             </label>
             <div className="guided-setup__actions">
               <button className="button button--accent" type="button" onClick={() => void handleSetupDraft()} disabled={busy || !setupIntent.trim()}>
-                让 AI 帮我整理第一步
+                {setupPlanId ? "让 AI 帮我整理下一步" : "让 AI 帮我整理第一步"}
               </button>
               <button className="button button--quiet" type="button" onClick={handleManualSetup} disabled={busy || !setupIntent.trim()}>
                 我想自己安排
@@ -1047,18 +1050,18 @@ export default function FactWorkspace({
                   <span>{setupConfirmed ? "已确认" : "等待确认"}</span>
                 </div>
                 <p className="guided-setup__rationale">{setupDraft.rationale}</p>
-                <label className="field"><span>你的目标</span><input value={setupDraft.goal_title} disabled={setupConfirmed} onChange={(event) => setSetupDraft({ ...setupDraft, goal_title: event.target.value })} /></label>
+                <label className="field"><span>你的目标</span><input value={setupDraft.goal_title} disabled={setupConfirmed || Boolean(setupPlanId)} onChange={(event) => setSetupDraft({ ...setupDraft, goal_title: event.target.value })} /></label>
                 <label className="field"><span>现在先做什么</span><input value={setupDraft.action_title} disabled={setupConfirmed} onChange={(event) => setSetupDraft({ ...setupDraft, action_title: event.target.value })} /></label>
                 <label className="field"><span>做到什么程度先停</span><textarea value={setupDraft.stop_conditions} disabled={setupConfirmed} onChange={(event) => setSetupDraft({ ...setupDraft, stop_conditions: event.target.value })} rows={2} /></label>
                 <details><summary>调整安排详情</summary>
                 <div className="field-grid field-grid--two">
                   <label className="field">
                     <span>目标</span>
-                    <input value={setupDraft.goal_title} onChange={(event) => setSetupDraft({ ...setupDraft, goal_title: event.target.value })} disabled={setupConfirmed} />
+                    <input value={setupDraft.goal_title} onChange={(event) => setSetupDraft({ ...setupDraft, goal_title: event.target.value })} disabled={setupConfirmed || Boolean(setupPlanId)} />
                   </label>
                   <label className="field">
                     <span>学习安排名称</span>
-                    <input value={setupDraft.plan_title} onChange={(event) => setSetupDraft({ ...setupDraft, plan_title: event.target.value })} disabled={setupConfirmed} />
+                    <input value={setupDraft.plan_title} onChange={(event) => setSetupDraft({ ...setupDraft, plan_title: event.target.value })} disabled={setupConfirmed || Boolean(setupPlanId)} />
                   </label>
                 </div>
                 <label className="field">
@@ -1120,7 +1123,7 @@ export default function FactWorkspace({
                   </div>
                 ) : (
                   <div className="guided-setup__next">
-                    <span>安排已保存，现在可以开始第一步。</span>
+                    <span>安排已保存，现在可以开始这项任务。</span>
                     <button className="button button--dark" type="button" onClick={() => void handleStartGuidedSession()} disabled={busy || !selectedDelegation}>
                       进入学习室并开始这项任务
                     </button>
@@ -1153,6 +1156,7 @@ export default function FactWorkspace({
           <details className="advanced-facts">
             <summary>高级：记录与复核工具</summary>
             <p className="advanced-facts__intro">这些工具用于查看事实、产出和证据状态，不是开始学习的必填步骤。</p>
+            <button className="button button--quiet" type="button" disabled={busy || loading} onClick={() => void loadState()}>刷新状态</button>
           <section className="fact-card fact-card--provider" aria-label="证据分析 Provider 设置">
             <div className="fact-card__header">
               <p className="eyebrow">EVIDENCE PROVIDER</p>

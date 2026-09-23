@@ -337,6 +337,7 @@ class LearningSetupDraftRequest(BaseModel):
 
 
 class LearningSetupConfirmRequest(BaseModel):
+    plan_id: str | None = Field(default=None, min_length=1, max_length=100)
     review_id: str | None = Field(default=None, max_length=100)
     draft_id: str | None = Field(default=None, pattern=r'^[0-9a-f-]{36}$')
     original_intent: str = Field(min_length=1, max_length=4000)

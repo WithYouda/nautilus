@@ -3,7 +3,7 @@ import { authorize } from './fact-helpers';
 
 async function openLearning(page: Page) {
   await expect(page.getByRole('button', {name:'退出会话'})).toBeVisible();
-  const button = page.getByRole('button', { name: '开始学习', exact: true }).first();
+  const button = page.getByRole('button', { name: '学习首页', exact: true }).first();
   if (!(await button.isVisible())) await page.getByRole('button', { name: '打开导航' }).click();
   await button.click();
   const close = page.getByRole('button', { name: '关闭导航' });
@@ -19,11 +19,10 @@ async function provider(page: Page) {
 async function setup(page: Page, title: string) {
   const existing = await (await page.request.get('/api/learning/return-review')).json();
   await openLearning(page);
-  const card = page.getByRole('region', { name: '继续学习复核卡' });
+  const card = page.getByRole('region', { name: '当前学习' });
   if (existing) {
     await expect(card).toBeVisible();
-    await card.getByRole('button', { name: '换一个', exact: true }).click();
-    await card.getByRole('button', { name: '不继续这个方向，安排新的第一步' }).click();
+    await page.getByRole('button', { name: '创建', exact: true }).click();
   }
   await page.getByLabel('学习目标', { exact: true }).fill('合成目标：解释编号匹配及未知情况');
   await page.getByRole('button', { name: '让 AI 帮我整理第一步' }).click();
@@ -44,20 +43,27 @@ test('new learning → saved verification → confirmed completion → return ca
   await expect(page.getByText('作答已保存。', { exact: false })).toBeVisible();
   await page.getByRole('checkbox', { name: /我已核对结果/ }).check();
   await page.getByRole('button', { name: '确认完成本次委托' }).click();
-  const card = page.getByRole('region', { name: '继续学习复核卡' });
+  const card = page.getByRole('region', { name: '当前学习' });
   await expect(card).toBeVisible();
-  await expect(card).toContainText('你已确认本次委托完成');
-  await expect(card.getByRole('heading', { name: '已有依据' })).toBeVisible();
-  await expect(card.getByRole('heading', { name: '仍然未知' })).toBeVisible();
+  await expect(card).toContainText('本次学习已完成');
+  const firstState = await (await page.request.get('/api/learning/state')).json();
+  const firstPlan = firstState.plans[0].id;
+  await expect(card.getByText('已完成', {exact:true})).toBeVisible();
+  await expect(card.getByRole('heading', {name:'已有依据'})).toHaveCount(0);
   await page.reload();
   await openLearning(page);
   await expect(card).toContainText('合成完成旅程');
-  await card.getByRole('button', { name: '继续', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '你想学会什么？' })).toBeVisible();
-  await page.getByLabel('学习目标', {exact:true}).fill('合成目标：观察另一个输入');
+  await card.getByRole('button', { name: '添加下一步', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '接下来学什么？' })).toBeVisible();
+  await page.getByLabel('下一步想做什么', {exact:true}).fill('合成目标：观察另一个输入');
   await page.getByRole('button', {name:'我想自己安排',exact:true}).click();
   await page.getByLabel('现在先做什么', {exact:true}).fill('复核后确认的下一步');
   await page.getByRole('button', {name:'确认这份学习安排'}).click();
+  const secondState = await (await page.request.get('/api/learning/state')).json();
+  expect(secondState.plans).toHaveLength(firstState.plans.length);
+  expect(secondState.goals).toHaveLength(firstState.goals.length);
+  const step = secondState.actions.find(item => item.title === '复核后确认的下一步');
+  expect(secondState.action_links.find(item => item.action_id === step.id).plan_id).toBe(firstPlan);
   await page.getByRole('button', {name:'进入学习室并开始这项任务'}).click();
   await page.getByRole('button', {name:'进入验证',exact:true}).click();
   await page.getByRole('button', {name:'开始验证',exact:true}).click();
@@ -82,15 +88,15 @@ test('interruption → reopened return card → same delegation and conversation
   const oldRoom = await (await page.request.get(`/api/learning/sessions/${before.position.last_session}/room`)).json();
   expect(oldRoom.conversation_id).toBeTruthy();
   await page.getByRole('button', { name: '今天先停', exact: true }).click();
-  await expect(page.getByRole('heading', {name:'你上次在这里中断'})).toBeVisible();
+  await expect(page.getByRole('region', { name: '当前学习' })).toContainText('学习位置已保存');
   await page.reload();
   await openLearning(page);
-  const card = page.getByRole('region', { name: '继续学习复核卡' });
-  await expect(card.getByRole('heading', { name: '你上次在这里中断' })).toBeVisible();
+  const card = page.getByRole('region', { name: '当前学习' });
+  await expect(card.getByText('正在学习', {exact:true})).toBeVisible();
   for (const viewport of [{width:390,height:844},{width:1024,height:640},{width:1440,height:1000}]) {
     await page.setViewportSize(viewport);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    const button = await card.getByRole('button', { name: '继续', exact: true }).boundingBox();
+    const button = await card.getByRole('button', { name: '继续学习', exact: true }).boundingBox();
     expect(button!.y).toBeLessThan(viewport.height);
     await page.screenshot({path: `/tmp/nautilus-return-${viewport.width}.png`, fullPage: true});
   }
@@ -98,7 +104,7 @@ test('interruption → reopened return card → same delegation and conversation
   await page.evaluate(() => { document.documentElement.style.zoom='1.25'; });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await page.evaluate(() => { document.documentElement.style.zoom='1'; });
-  await card.getByRole('button', { name: '继续', exact: true }).click();
+  await card.getByRole('button', { name: '继续学习', exact: true }).click();
   await expect(page.getByRole('region', { name: '本次学习安排' })).toContainText('合成恢复旅程');
   await expect(page.getByText('合成消息：请保留这次编号练习的上下文', {exact:true})).toBeVisible();
   const after = await (await page.request.get('/api/learning/return-review')).json();

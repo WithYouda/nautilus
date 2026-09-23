@@ -131,8 +131,10 @@ async def test_pending_review_and_failed_saved_attempt_recommendations(learning_
     version=learning_database.fetchone('SELECT version FROM learning_action')[0]
     service.learning.core.execute(USER,EndSession(session_id=saved['session_id'],disposition='ended',expected_version=version),'end')
     card=continuity.get(IDENTITY)
-    assert card['recommendation']['kind']=='review'
-    assert continuity.decide(IDENTITY,card['id'],'continue','review')['destination']=='evidence'
+    assert card['recommendation']['kind']=='supplemental_verification'
+    assert card['what_happened']['has_saved_answer'] is True
+    assert card['evidence_details']  # Observations remain available without blocking saved feedback.
+    assert continuity.decide(IDENTITY,card['id'],'continue','review')['destination']=='verification'
     from app.review import ReviewService
     from app.state_derivation import StateDerivationService
     review=ReviewService(service.learning,StateDerivationService(service.learning))
@@ -188,3 +190,35 @@ def test_choosing_new_direction_pauses_running_session_and_retry_does_not_stop_n
     assert kinds.count('choose_other') == 1
     assert kinds.count('switched') == 1
     assert 'stop_for_now' not in kinds
+
+
+def test_saved_next_step_replaces_old_position_after_clock_moves_back(learning_database, monkeypatch):
+    from app.continuity import ContinuityService
+    from app.core.learning import LearningCore
+    from app.core import learning as core_module
+    from test_learning_setup import setup_command
+    learning = LearningService(learning_database)
+    core = LearningCore(learning_database)
+    first = core.execute(USER, setup_command(), 'first-plan')
+    session = core.execute(USER, StartSession(delegation_id=first['delegation_id'], expected_version=2), 'first-session')
+    core.execute(USER, EndSession(session_id=session['id'], disposition='interrupted', expected_version=3), 'end-first')
+    monkeypatch.setattr(core_module, 'utc_timestamp', lambda: '2020-01-01T00:00:00Z')
+    second = core.execute(USER, setup_command(plan_id=first['plan_id'], action_title='下一步'), 'second-step')
+    card = ContinuityService(learning).get(IDENTITY)
+    assert card['position']['plan_id'] == first['plan_id']
+    assert card['position']['delegation_id'] == second['delegation_id']
+    assert card['position']['last_session'] is None
+    assert card['what_happened']['session_status'] is None
+    assert card['what_happened']['has_saved_answer'] is False
+    assert card['recommendation']['delegation_id'] == second['delegation_id']
+
+
+def test_setup_continuation_retains_parent_intent_and_stores_step_intent(learning_database):
+    from app.core.learning import LearningCore
+    from test_learning_setup import setup_command
+    core = LearningCore(learning_database)
+    first = core.execute(USER, setup_command(), 'parent')
+    core.execute(USER, setup_command(plan_id=first['plan_id'], original_intent='下一步的具体想法'), 'step')
+    assert core.replay(USER)['status'] == 'succeeded'
+    assert learning_database.fetchone('SELECT original_intent FROM learning_goal')[0] == setup_command().original_intent
+    assert learning_database.fetchone("SELECT COUNT(*) FROM learning_setup WHERE original_intent='下一步的具体想法'")[0] == 1

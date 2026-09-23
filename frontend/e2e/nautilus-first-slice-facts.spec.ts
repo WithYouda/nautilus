@@ -28,7 +28,7 @@ test("fact gate saves, corrects, replays, and survives refresh without a standar
   await page.getByRole("button", { name: "创建任务" }).click();
   await expect(page.getByText("任务已保存")).toBeVisible();
 
-  await page.getByLabel("对象").fill("Playwright 可验证成果");
+  await page.getByLabel("对象", {exact:true}).fill("Playwright 可验证成果");
   await page.getByLabel("行为").fill("能独立完成事实链说明");
   await page.getByLabel("上下文").nth(1).fill("playwright-context");
   await page.getByRole("button", { name: "创建可验证成果" }).click();
@@ -37,6 +37,8 @@ test("fact gate saves, corrects, replays, and survives refresh without a standar
   await page.getByLabel("停止条件").fill("保存一份文本产出");
   await page.getByRole("button", { name: "创建学习委托" }).click();
   await expect(page.getByText("学习委托已保存")).toBeVisible();
+  await page.getByRole("button", {name:"学习判断详情",exact:true}).click();
+  await page.getByText("判断范围与待观察内容", {exact:true}).click();
   await expect(page.getByText("尚无已审核标准，本次反馈不派生成果状态。")).toBeVisible();
 
   await page.getByRole("button", { name: "开始学习会话" }).click();
@@ -217,7 +219,7 @@ test("approved regex standard creates semantic and deterministic candidate claim
   await expect(page.locator(".fact-claim")).toHaveCount(2);
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "开始学习" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "学习首页" })).toBeVisible();
   await expect(page.locator(".fact-claim")).toHaveCount(2);
   await expect(page.locator(".fact-follow-up")).toHaveCount(2);
 });

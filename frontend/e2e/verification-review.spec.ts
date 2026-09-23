@@ -10,15 +10,14 @@ test('saved answers → per-question discussion with local sources → completed
   }})).ok()).toBeTruthy();
   await page.reload();
   const existing = await (await page.request.get('/api/learning/return-review')).json();
-  const start = page.getByRole('button', { name: '开始学习', exact: true }).first();
+  const start = page.getByRole('button', { name: '学习首页', exact: true }).first();
   if (!(await start.isVisible())) await page.getByRole('button', { name: '打开导航' }).click();
   await start.click();
   if (await page.getByRole('button', { name: '关闭导航' }).isVisible()) await page.getByRole('button', { name: '关闭导航' }).click();
-  const card = page.getByRole('region', { name: '继续学习复核卡' });
+  const card = page.getByRole('region', { name: '当前学习' });
   if (existing) {
     await expect(card).toBeVisible();
-    await card.getByRole('button', { name: '换一个', exact: true }).click();
-    await card.getByRole('button', { name: '不继续这个方向，安排新的第一步' }).click();
+    await page.getByRole('button', { name: '创建', exact: true }).click();
   }
   await page.getByLabel('学习目标', { exact: true }).fill('合成目标：验证回看与追问');
   await page.getByRole('button', { name: '我想自己安排' }).click();
@@ -137,7 +136,7 @@ test('saved answers → per-question discussion with local sources → completed
   await page.getByRole('checkbox', { name: /我已核对结果/ }).check();
   await page.getByRole('button', { name: '确认完成本次委托' }).click();
   await expect(card).toBeVisible();
-  await page.getByRole('button', { name: '学习记录', exact: true }).click();
+  await card.getByRole('button', { name: '查看验证记录' }).click();
   await page.getByRole('button', { name: /合成验证回看旅程.*已完成/ }).click();
   await page.getByRole('button', { name: /验证 1 · AI 出题/ }).click();
   await expect(review.getByText('合成原始答案：先找编号，再检查字符边界。空输入仍未知。', { exact: true })).toBeVisible();
@@ -170,5 +169,5 @@ test('saved answers → per-question discussion with local sources → completed
   page.once('dialog', dialog => dialog.accept());
   await review.getByRole('button', { name: '彻底删除本次验证内容' }).click();
   await expect(review.getByText('本次作答内容已彻底删除。完成事实仍保留。')).toBeVisible();
-  await expect(page.getByRole('region', { name: '委托历史' })).toContainText('委托状态：已完成');
+  await expect(page.getByRole('region', { name: '委托历史' })).toContainText('任务状态：已完成');
 });

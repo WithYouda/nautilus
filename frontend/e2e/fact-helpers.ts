@@ -8,12 +8,12 @@ export async function authorize(page: Page) {
 }
 
 export async function openFactWorkspace(page: Page) {
-  const factButton = page.getByRole("button", { name: "开始学习" }).first();
+  const factButton = page.getByRole("button", { name: "学习首页" }).first();
   if (!(await factButton.isVisible())) {
     await page.getByRole("button", { name: "打开导航" }).click();
   }
   await factButton.click();
-  await expect(page.getByRole("heading", { name: "开始学习" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "学习首页" })).toBeVisible();
   const closeNavigation = page.getByRole("button", { name: "关闭导航" });
   if (await closeNavigation.isVisible()) await closeNavigation.click();
   const advancedTools = page.locator("details.advanced-facts > summary");

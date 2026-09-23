@@ -19,6 +19,7 @@ class CreateOutcome(Command):
 
 
 class ConfirmLearningSetup(Command):
+    plan_id: str | None = Field(default=None, min_length=1, max_length=100)
     original_intent: str = Field(min_length=1, max_length=4000)
     goal_title: str = Field(min_length=1, max_length=200)
     goal_description: str = Field(default="", max_length=1000)

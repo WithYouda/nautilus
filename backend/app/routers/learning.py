@@ -98,6 +98,7 @@ def _raise_learning_error(error: DomainError) -> None:
         "criterion_out_of_scope": "达成标准不适用于当前成果",
         "criterion_unavailable": "达成标准已失效",
         "criterion_invalid_recipe": "达成标准配方不合法",
+        "plan_not_active": "这个计划当前不可添加任务，请选择活动计划。",
         "action_not_open": "学习行动不在待执行状态",
         "delegation_not_startable": "学习委托当前不能开始新的学习会话",
         "command_unsupported": "不支持的学习命令",

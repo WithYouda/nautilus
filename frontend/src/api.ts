@@ -1395,6 +1395,7 @@ export function createLearningSetupDraft(intent: string): Promise<LearningSetupD
 }
 
 export function confirmLearningSetup(payload: {
+  plan_id?: string;
   review_id?: string;
   draft_id?: string;
   original_intent: string;
@@ -1876,8 +1877,8 @@ export function getAgentContext(targetId?: string): Promise<AgentContext> {
 
 export type ReturnReview = {
   id: string;
-  position: { goal: string; plan: string; action: string; action_id: string; delegation_id: string; last_session: string | null; last_activity_at: string | null };
-  what_happened: { summary: string; action_status: string; delegation_status: string; verification_status: string | null };
+  position: { goal: string; plan: string; plan_id: string | null; action: string; action_id: string; delegation_id: string; last_session: string | null; last_activity_at: string | null };
+  what_happened: { summary: string; action_status: string; delegation_status: string; verification_status: string | null; verification_id: string | null; has_saved_answer: boolean; session_status: string | null };
   supported: Array<{ claim_id: string; label: string; basis_kind: string; scope: string; user_facing_explanation: string }>;
   unknowns: Array<{ reason_code: string; label: string }>;
   recommendation: { kind: string; action_id: string | null; delegation_id: string | null; label: string; reason_code: string; explanation: string; verification_id: string | null };

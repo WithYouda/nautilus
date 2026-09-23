@@ -315,3 +315,41 @@ def test_confirm_setup_failure_rolls_back_all_events_and_projections(domain_rows
         "SELECT COUNT(*) FROM learning_audit WHERE operation='ConfirmLearningSetup' AND result='rejected'"
     )[0] == 1
     assert not domain_rows.connection.in_transaction
+
+
+def test_add_step_keeps_goal_and_plan_and_replays_idempotently(domain_rows):
+    core = LearningCore(domain_rows)
+    first = core.execute(OWNER, setup_command(), "initial-plan")
+    goal_before = dict(domain_rows.fetchone("SELECT * FROM learning_goal"))
+    plan_before = dict(domain_rows.fetchone("SELECT * FROM learning_plan"))
+    command = setup_command(plan_id=first["plan_id"], action_title="第二步", goal_title="不应覆盖目标", plan_title="不应重命名计划")
+    second = core.execute(OWNER, command, "next-step")
+    assert core.execute(OWNER, command, "next-step") == second
+    assert second["plan_id"] == first["plan_id"]
+    assert second["goal_id"] == first["goal_id"]
+    assert second["action_id"] != first["action_id"]
+    assert dict(domain_rows.fetchone("SELECT * FROM learning_goal")) == goal_before
+    assert dict(domain_rows.fetchone("SELECT * FROM learning_plan")) == plan_before
+    assert domain_rows.fetchone("SELECT COUNT(*) FROM learning_setup")[0] == 2
+    assert domain_rows.fetchone("SELECT COUNT(*) FROM learning_action_link WHERE plan_id=?", (first["plan_id"],))[0] == 2
+    before = [dict(row) for row in domain_rows.fetchall("SELECT * FROM learning_setup ORDER BY id")]
+    assert core.replay(OWNER)["status"] == "succeeded"
+    assert [dict(row) for row in domain_rows.fetchall("SELECT * FROM learning_setup ORDER BY id")] == before
+    assert dict(domain_rows.fetchone("SELECT * FROM learning_goal")) == goal_before
+    assert dict(domain_rows.fetchone("SELECT * FROM learning_plan")) == plan_before
+
+
+@pytest.mark.parametrize("case", ["missing", "foreign", "inactive"])
+def test_add_step_rejects_inaccessible_plan_atomically(domain_rows, case):
+    core = LearningCore(domain_rows)
+    first = core.execute(OWNER, setup_command(), "initial-plan")
+    principal = Principal.user("owner-b") if case == "foreign" else OWNER
+    plan_id = "missing" if case == "missing" else first["plan_id"]
+    if case == "inactive":
+        with domain_rows.transaction() as connection:
+            connection.execute("UPDATE learning_plan SET status='archived' WHERE id=?", (plan_id,))
+    tables = ["learning_goal", "learning_plan", "learning_setup", "learning_event", "learning_action", "learning_outcome", "learning_delegation"]
+    before = {name: domain_rows.fetchone(f"SELECT COUNT(*) FROM {name}")[0] for name in tables}
+    with pytest.raises(DomainError):
+        core.execute(principal, setup_command(plan_id=plan_id), "invalid-step")
+    assert {name: domain_rows.fetchone(f"SELECT COUNT(*) FROM {name}")[0] for name in tables} == before

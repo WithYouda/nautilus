@@ -28,15 +28,17 @@ class ContinuityService:
     def _card(self, connection, principal):
         owner = principal.owner_id
         sessions = [dict(row) for row in connection.execute(
-            """SELECT s.* FROM learning_session s LEFT JOIN learning_event e
+            """SELECT s.*, COALESCE(e.rowid,0) AS started_position FROM learning_session s LEFT JOIN learning_event e
                ON e.owner_id=s.owner_id AND e.event_type='session.started' AND json_extract(e.payload_json,'$.id')=s.id
                WHERE s.owner_id=? ORDER BY (s.status='running') DESC, COALESCE(e.rowid,0) DESC, s.rowid DESC""", (owner,))]
         delegations = [dict(row) for row in connection.execute(
-            "SELECT d.*, a.title, a.status AS action_status, a.version AS action_version FROM learning_delegation d JOIN learning_action a ON a.owner_id=d.owner_id AND a.id=d.action_id WHERE d.owner_id=? ORDER BY d.created_at DESC, d.rowid DESC", (owner,))]
+            "SELECT d.*, a.title, a.status AS action_status, a.version AS action_version, COALESCE(e.rowid,0) AS created_position FROM learning_delegation d JOIN learning_action a ON a.owner_id=d.owner_id AND a.id=d.action_id LEFT JOIN learning_event e ON e.owner_id=d.owner_id AND e.event_type='delegation.created' AND json_extract(e.payload_json,'$.id')=d.id WHERE d.owner_id=? ORDER BY COALESCE(e.rowid,0) DESC, d.rowid DESC", (owner,))]
         if not delegations:
             return None
         session = sessions[0] if sessions else None
         current = next((d for d in delegations if session and d['id'] == session['delegation_id']), delegations[0])
+        if session and session['status'] != 'running' and delegations[0]['status'] == 'ready' and delegations[0]['created_position'] > session['started_position']:
+            current, session = delegations[0], None
         open_items = [d for d in delegations if d['status'] in ('ready', 'active') and d['action_status'] == 'open']
         verification = connection.execute(
             'SELECT * FROM learning_verification WHERE owner_id=? AND delegation_id=? AND purged_at IS NULL ORDER BY created_at DESC, rowid DESC LIMIT 1', (owner, current['id']),
@@ -55,13 +57,13 @@ class ContinuityService:
             kind, reason, explanation = 'resume', 'running', '这次学习尚在进行，先接着当前任务。'
         elif session and session['status'] == 'interrupted' and current in open_items:
             kind, reason, explanation = 'resume', 'interrupted', '你上次在这里中断，继续原来的任务可以保留学习上下文。'
-        elif pending:
-            kind, reason, explanation = 'review', 'candidate_evidence', '已有候选依据尚未复核，先核对它实际能说明什么。'
-            target = current
         elif verification and verification['status'] in ('failed','submitted','ready') and verification['latest_submission_id']:
             kind, reason, explanation = 'supplemental_verification', 'saved_verification', '作答已保存，继续查看或重试本次验证。'
             target = current
             verification_id = verification['id']
+        elif current['status'] == 'completed':
+            kind, reason, explanation = 'choose_next', 'completed', '本次学习已完成，可以在原计划中添加下一步。'
+            target = None
         elif target:
             kind, reason, explanation = 'practice', 'open_delegation', '还有已经确认的开放任务，可以继续推进。'
         else:
@@ -70,7 +72,7 @@ class ContinuityService:
         if verification and verification['status'] != 'passed' and verification['latest_submission_id'] and reason in ('running','interrupted'):
             verification_id = verification['id']
         position = connection.execute(
-            """SELECT g.title AS goal, p.title AS plan FROM learning_action_link l
+            """SELECT g.title AS goal, p.title AS plan, p.id AS plan_id FROM learning_action_link l
                LEFT JOIN learning_plan p ON p.owner_id=l.owner_id AND p.id=l.plan_id
                LEFT JOIN learning_goal g ON g.owner_id=p.owner_id AND g.id=p.goal_id
                WHERE l.owner_id=? AND l.action_id=?""", (owner, current['action_id']),
@@ -108,10 +110,14 @@ class ContinuityService:
                 (review_id, owner, fingerprint, session['id'] if session else None, target['action_id'] if target else None,
                  target['id'] if target else None, verification_id, kind, reason, utc_timestamp()))
         return dict(id=review_id, position=dict(goal=position['goal'] if position else '', plan=position['plan'] if position else '',
+            plan_id=position['plan_id'] if position else None,
             action=current['title'], action_id=current['action_id'], delegation_id=current['id'],
             last_session=session['id'] if session else None, last_activity_at=(session['ended_at'] or session['started_at']) if session else current['created_at']),
             what_happened=dict(summary=happened, action_status=current['action_status'], delegation_status=current['status'],
-                verification_status=verification['status'] if verification else None),
+                verification_status=verification['status'] if verification else None,
+                verification_id=verification['id'] if verification else None,
+                has_saved_answer=bool(verification and verification['latest_submission_id']),
+                session_status=session['status'] if session else None),
             supported=supported[:4], unknowns=unknowns,
             recommendation=dict(kind=kind, action_id=target['action_id'] if target else None, delegation_id=target['id'] if target else None,
                 label='复核本次依据' if kind=='review' else '继续已保存验证' if verification_id else target['title'] if target else '确认下一小步',

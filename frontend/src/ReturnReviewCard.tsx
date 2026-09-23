@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { chooseReturnReview, getLearningRoom, reviewEvidenceClaim, type LearningRoomBrief, type ReturnReview } from './api';
 
-export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged }: {
-  card: ReturnReview; onContinue: (brief: LearningRoomBrief) => void; onSetup: (reviewId?: string) => void; onChanged: () => Promise<void>;
+export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged, onOpenRecord, onOpenPlan }: {
+  card: ReturnReview; onContinue: (brief: LearningRoomBrief) => void; onSetup: (reviewId?: string, planId?: string) => void; onChanged: () => Promise<void>;
+  onOpenRecord: (id: string, verificationId?: string | null) => void; onOpenPlan: (id?: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [details, setDetails] = useState(false);
-  const [alternatives, setAlternatives] = useState(false);
   const [stopped, setStopped] = useState(false);
   useEffect(() => {
     setStopped(false);
@@ -18,10 +18,9 @@ export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged 
     setBusy(true); setError('');
     try {
       const result = await chooseReturnReview(card.id, kind, `${card.id}:${kind}:${delegationId ?? ''}`, delegationId);
-      if (result.destination === 'choose') setAlternatives(true);
-      else if (result.destination === 'stopped') { await onChanged(); setStopped(true); }
+      if (result.destination === 'stopped') { await onChanged(); setStopped(true); }
       else if (result.destination === 'evidence') setDetails(true);
-      else if (result.destination === 'setup') { if (kind === 'choose_new') await onChanged(); onSetup(kind === 'choose_new' ? undefined : card.id); }
+      else if (result.destination === 'setup') { if (kind === 'choose_new') await onChanged(); onSetup(kind === 'choose_new' ? undefined : card.id, kind === 'choose_new' ? undefined : card.position.plan_id ?? undefined); }
       else if (result.session_id) {
         const room = await getLearningRoom(result.session_id);
         onContinue({ ...room.brief, continuity_review_id: card.id, open_verification: result.destination === 'verification' });
@@ -35,35 +34,33 @@ export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged 
     catch (reason) { setError(reason instanceof Error ? reason.message : '复核未保存。'); }
     finally { setBusy(false); }
   }
-  return <section className="return-review" aria-label="继续学习复核卡">
-    <p className="eyebrow">继续你的学习</p>
-    <h2>{card.recommendation.reason_code === 'interrupted' ? '你上次在这里中断' : '从上次的位置继续'}</h2>
-    <p className="return-review__position">上次你在：<strong>{card.position.action}</strong></p>
-    {card.position.goal && <p className="return-review__route">{card.position.goal} · {card.position.plan}</p>}
-    <p>{card.what_happened.summary}</p>
-    <div className="return-review__next"><span>推荐下一步</span><h3>{card.recommendation.label}</h3><p>原因：{card.recommendation.explanation}</p></div>
+  const completed = card.what_happened.delegation_status === 'completed';
+  const saved = !completed && card.what_happened.has_saved_answer;
+  const started = card.what_happened.session_status !== null;
+  const status = completed ? '已完成' : saved || !started ? '已保存' : '正在学习';
+  return <section className="return-review" aria-label="当前学习">
+    <span className={`learning-state-label learning-state-label--${completed ? 'complete' : 'active'}`}>{status}</span>
+    <h2>{card.position.action}</h2>
+    {card.position.goal && <p className="return-review__route">{card.position.goal}{card.position.plan && ` · ${card.position.plan}`}</p>}
+    <p className="return-review__fact">{completed ? card.what_happened.verification_id ? '本次学习已完成，作答和验证反馈已保存。' : '本次学习已完成，学习记录已保留。' : saved ? '作答已保存，可以查看反馈并继续验证。' : card.what_happened.session_status === 'interrupted' ? '学习位置已保存，可以接着上次的内容继续。' : started ? '接着当前任务学习，对话和验证记录会保留。' : '学习安排已保存，可以开始这项任务。'}</p>
     <div className="return-review__actions">
-      <button className="button button--accent" disabled={busy} onClick={() => void choose('continue')}>继续</button>
-      <button className="button button--quiet" disabled={busy} onClick={() => void choose('choose_other')}>换一个</button>
-      <button className="button button--quiet" disabled={busy} onClick={() => void choose('stop_for_now')}>今天先停</button>
+      {completed ? <>
+        <button className="button button--accent" onClick={() => onOpenRecord(card.position.delegation_id, card.what_happened.verification_id)}>{card.what_happened.verification_id ? '查看验证记录' : '查看记录'}</button>
+        {card.position.plan_id && <button className="button button--quiet" disabled={busy} onClick={() => card.recommendation.kind === 'choose_next' ? void choose('continue') : onSetup(undefined, card.position.plan_id!)}>添加下一步</button>}
+      </> : <>
+        <button className="button button--accent" disabled={busy} onClick={() => void choose('continue')}>{saved ? '继续验证' : started ? '继续学习' : '开始学习'}</button>
+        {saved && <button className="button button--quiet" onClick={() => onOpenRecord(card.position.delegation_id, card.what_happened.verification_id)}>查看作答与反馈</button>}
+        {card.what_happened.session_status === 'running' && <button className="text-button" disabled={busy} onClick={() => void choose('stop_for_now')}>暂停学习</button>}
+      </>}
+      {card.position.plan_id && <button className="text-button" onClick={() => onOpenPlan(card.position.plan_id!)}>查看计划</button>}
     </div>
-    {stopped && <p role="status">今天先到这里。学习位置已保留，下次回来可以继续。</p>}
+    {stopped && <p role="status">学习位置已保存。</p>}
     {error && <p role="alert" className="workspace-alert">{error}</p>}
-    {alternatives && <div className="return-review__alternatives"><h3>选择已有任务</h3>
-      {card.alternatives.map(item => <button className="button button--quiet" key={item.delegation_id} disabled={busy} onClick={() => void choose('choose_other', item.delegation_id)}>{item.label}</button>)}
-      <p>若有正在进行的学习，会先暂停；已保存记录仍保留。</p>
-      <button className="button button--quiet" disabled={busy} onClick={() => void choose('choose_new')}>不继续这个方向，安排新的第一步</button>
-    </div>}
-    <div className="return-review__evidence"><div><h3>已有依据</h3>
-      {card.supported.length ? card.supported.map(item => <p key={item.claim_id}><strong>{item.label}</strong><br />{item.user_facing_explanation}</p>) : <p>尚无经复核的可靠依据。保存或验证通过的记录仍然保留。</p>}
-    </div><div><h3>仍然未知</h3><p>{card.unknowns[0]?.label}</p>
-      {card.unknowns.length > 1 && <details><summary>其余 {card.unknowns.length - 1} 项待观察</summary>{card.unknowns.slice(1).map(item => <p key={item.reason_code}>{item.label}</p>)}</details>}
-    </div></div>
-    <button className="text-button" onClick={() => { setDetails(!details); if (!details) void chooseReturnReview(card.id, 'evidence_viewed', `evidence:${card.id}`).catch(() => setError('查看记录未保存。')); }}>查看依据</button>
-    {details && <div className="return-review__details"><p>采纳表示保留这条观察，不等于独立验证或稳定掌握。</p>
+    <button className="text-button learning-observations-toggle" aria-expanded={details} onClick={() => { setDetails(!details); if (!details) void chooseReturnReview(card.id, 'evidence_viewed', `evidence:${card.id}`).catch(() => setError('查看记录未保存。')); }}>学习判断详情{card.evidence_details.filter(item => item.status === 'candidate').length ? ' · 有待复核观察' : ''}</button>
+    {details && <div className="return-review__details"><h3>对掌握情况的观察</h3><p>这里单独说明学习记录能支持哪些能力判断。</p><p>采纳表示保留这条观察，不等于稳定掌握。</p>{card.supported.map(item => <p key={item.claim_id}>{item.user_facing_explanation}</p>)}<details><summary>判断范围与待观察内容</summary>{card.unknowns.map(item => <p key={item.reason_code}>{item.label}</p>)}</details>
       {card.evidence_details.length ? card.evidence_details.map(item => <article key={item.id}><p>{item.statement}</p><small>{item.status === 'candidate' ? '待你复核' : item.status === 'adopted' ? '已采纳观察' : '已提出疑问'} · {!item.source_trusted ? '来源待核实' : item.source === 'deterministic_check' ? '当前样例检查' : 'AI 观察'}</small>
         {item.status === 'candidate' && <div className="return-review__actions"><button className="button button--quiet" disabled={busy} onClick={() => void review(item.id, 'adopt')}>保留这条观察</button><button className="button button--quiet" disabled={busy} onClick={() => void review(item.id, 'question')}>提出疑问</button></div>}
-      </article>) : <p>当前没有可复核的成果依据。</p>}
+      </article>) : <p>当前没有额外的能力观察需要复核。</p>}
     </div>}
   </section>;
 }
