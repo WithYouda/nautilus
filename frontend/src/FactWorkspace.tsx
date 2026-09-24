@@ -359,7 +359,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
 
   const selectedAction = useMemo<LearningAction | null>(() => {
     if (!state) return null;
-    return state.actions.find((action) => action.id === selectedActionId) ?? state.actions[0] ?? null;
+    return selectedActionId ? state.actions.find((action) => action.id === selectedActionId) ?? null : state.actions[0] ?? null;
   }, [state, selectedActionId]);
 
   const selectedOutcome = useMemo<LearningOutcome | null>(() => {
@@ -369,6 +369,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
 
   const selectedDelegation = useMemo<LearningDelegation | null>(() => {
     if (!state) return null;
+    if (selectedDelegationId) return state.delegations.find((delegation) => delegation.id === selectedDelegationId) ?? null;
     return (
       state.delegations.find((delegation) => delegation.id === selectedDelegationId) ??
       state.delegations.find((delegation) => delegation.action_id === selectedAction?.id) ??
@@ -546,6 +547,10 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
   }
 
   async function handleStartGuidedSession() {
+    if (busy || !selectedDelegation || !selectedAction || selectedDelegation.action_id !== selectedAction.id) {
+      setError('当前任务尚未加载完成，请刷新后重试。');
+      return;
+    }
     const draft = setupDraft
       ? [
           "请陪我一步一步学习下面的任务，先从一个关键小点和一个简短例子开始，不要一次讲完整个任务。",
@@ -568,6 +573,9 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
         const result = await chooseReturnReview(card.id, 'choose_other', `${card.id}:setup:${selectedDelegation.id}`, selectedDelegation.id);
         if (!result.session_id) throw new Error('无法开始学习，请重试。');
         const room = await getLearningRoom(result.session_id);
+        if (room.brief.delegation_id !== selectedDelegation.id || room.brief.action_id !== selectedAction.id) {
+          throw new Error('学习室与当前任务不一致，已停止跳转，请刷新后重试。');
+        }
         onOpenLearningRoom?.(draft ?? '', { ...room.brief, continuity_review_id: card.id });
       } catch (reason) { setError(reason instanceof Error ? reason.message : '无法开始学习'); }
       finally { setBusy(false); }

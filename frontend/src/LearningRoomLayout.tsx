@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from 'react';
-import { Bot, Send, UserRound } from 'lucide-react';
+import { Bot, Copy, GitBranch, RefreshCw, Send, UserRound } from 'lucide-react';
 
 // Presentation only: both teaching and question discussions own their data and actions.
 export function LearningChatPanel({ title, children, notice, composer, messagesRef, autoFollow = true, followToken }: {
@@ -26,6 +26,43 @@ export function LearningMessage({ role, status, state, children }: { role: 'user
     <div className="ai-message-meta">{role === 'user' ? <UserRound size={14} /> : <Bot size={14} />}<span>{role === 'user' ? '我' : 'AI 学习伙伴'}</span>{status && <small>{status}</small>}</div>
     {children}
   </article>;
+}
+
+export function LearningReplyActions({ content, onRetry, retryDisabled }: {
+  content: string; onRetry?: () => void; retryDisabled?: boolean;
+}) {
+  const [copyState, setCopyState] = useState('');
+  useEffect(() => {
+    if (!copyState) return;
+    const timer = window.setTimeout(() => setCopyState(''), 2500);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+  async function copy() {
+    try {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
+        await navigator.clipboard.writeText(content);
+      } catch {
+        // WSL's HTTP IP address is not a secure context; keep copy usable there.
+        const previous = document.activeElement as HTMLElement | null;
+        const input = document.createElement('textarea');
+        input.value = content;
+        input.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+        document.body.appendChild(input);
+        try {
+          input.select();
+          if (!document.execCommand('copy')) throw new Error('Copy rejected');
+        } finally { input.remove(); previous?.focus({ preventScroll: true }); }
+      }
+      setCopyState('已复制');
+    } catch { setCopyState('复制失败，请手动选择正文复制'); }
+  }
+  return <div className="ai-reply-actions" role="group" aria-label="回复操作">
+    <button className="text-button" type="button" disabled={!content} onClick={() => void copy()} title="复制回答正文（Markdown）"><Copy size={13} />复制</button>
+    <button className="text-button" type="button" disabled={retryDisabled || !onRetry} onClick={onRetry} title="重新发送对应问题，保留已有回答"><RefreshCw size={13} />重试</button>
+    <button className="text-button" type="button" disabled title="对话分支尚未实现"><GitBranch size={13} />分支（尚未实现）</button>
+    {copyState && <span role="status">{copyState}</span>}
+  </div>;
 }
 
 export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, actions, sendLabel = '发送问题' }: {

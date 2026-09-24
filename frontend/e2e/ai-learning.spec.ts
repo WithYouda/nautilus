@@ -48,6 +48,59 @@ test("model discovery keeps structured upstream errors actionable and allows man
   await expect(page.getByRole("combobox", { name: "模型" })).toHaveValue("deepseek-chat");
 });
 
+test('reply actions copy the body, retry the selected question, preserve drafts and reserve branches', async ({ page, context }) => {
+  await configureProvider(page.context().request, 'mock-reasoning');
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.reload();
+  await openLearningRoom(page);
+  const composer = page.getByLabel('输入学习问题');
+  const answers = page.locator('.ai-message--assistant');
+  await composer.fill('合成第一问：解释匹配');
+  const firstRun = waitForSentRun(page);
+  await composer.press('Enter');
+  const { conversationId } = await firstRun;
+  await expect(answers.first()).toContainText('完成');
+  await expect(page.getByRole('button', {name:'取消生成',exact:true})).toHaveCount(0);
+  const original = await (await page.request.get(`/api/ai/conversations/${conversationId}`)).json();
+  await answers.first().getByRole('button', {name:'复制',exact:true}).click();
+  await expect(answers.first().getByRole('status')).toHaveText('已复制');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(original.messages[1].content);
+  // Exercise the fallback used on the actual WSL HTTP address.
+  await page.evaluate(() => { Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: () => Promise.reject(new Error('Synthetic HTTP fallback')) }); });
+  await answers.first().getByRole('button', {name:'复制',exact:true}).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(original.messages[1].content);
+  await expect(answers.first().getByRole('button', {name:'分支（尚未实现）',exact:true})).toBeDisabled();
+  await composer.fill('合成第二问：换一个例子');
+  await composer.press('Enter');
+  await expect(answers).toHaveCount(2);
+  await expect(answers.last()).toContainText('完成');
+  await expect(page.getByRole('button', {name:'取消生成',exact:true})).toHaveCount(0);
+  await composer.fill('未发送的草稿');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const requests: {content:string}[] = [];
+  await page.route(`**/api/ai/conversations/${conversationId}/messages`, async route => {
+    requests.push(route.request().postDataJSON()); await gate; await route.continue();
+  });
+  await answers.first().getByRole('button', {name:'重试',exact:true}).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].content).toBe('合成第一问：解释匹配');
+  await expect(answers.first().getByRole('button', {name:'重试',exact:true})).toBeDisabled();
+  await expect(composer).toHaveValue('未发送的草稿');
+  release();
+  await expect(answers).toHaveCount(3);
+  await expect(answers.last()).toContainText('完成');
+  await expect(page.getByRole('button', {name:'取消生成',exact:true})).toHaveCount(0);
+  await expect(composer).toHaveValue('未发送的草稿');
+  expect(requests).toHaveLength(1);
+  const saved = await (await page.request.get(`/api/ai/conversations/${conversationId}`)).json();
+  expect(saved.messages).toHaveLength(6);
+  expect(saved.messages.slice(0,2)).toEqual(original.messages);
+  await page.reload();
+  await expect(answers).toHaveCount(3);
+  await expect(page.getByRole('group', {name:'回复操作'})).toHaveCount(3);
+});
+
 test("AI learning streams a normal reply and persists one message pair", async ({ page }) => {
   await configureProvider(page.context().request, "mock-success");
   await page.reload();

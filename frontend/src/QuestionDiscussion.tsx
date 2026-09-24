@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Bot, Square } from 'lucide-react';
-import { LearningChatPanel, LearningComposer, LearningMessage, ReasoningBlock } from './LearningRoomLayout';
+import { LearningChatPanel, LearningComposer, LearningMessage, LearningReplyActions, ReasoningBlock } from './LearningRoomLayout';
 import DiscussionSources from './DiscussionSources';
 import QuestionFeedbackContent from './QuestionFeedbackContent';
 import LearningMarkdown from './LearningMarkdown';
@@ -62,11 +62,11 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
     return () => controller.abort();
   }, [id, runningTurn?.id, reconnect]);
 
-  async function send(text = content, requestKey = key.current, retry = false) {
+  async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false) {
     if (!text.trim() || sending.current || running) return;
     const currentGeneration = generation.current;
     sending.current = true; setBusy(true); setError('');
-    if (!retry) { setPending({ content: text, key: requestKey, failed: false }); setContent(''); }
+    if (!retry) { setPending({ content: text, key: requestKey, failed: false }); if (!preserveDraft) setContent(''); }
     try {
       const saved = await sendDiscussionMessage(id, text, requestKey, retry);
       if (generation.current !== currentGeneration) return;
@@ -130,10 +130,12 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
             <LearningMessage role="assistant" state={turn.status === 'running' ? 'streaming' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? 'canceled' : 'failed') : undefined} status={turn.status === 'running' ? '生成中' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? '已取消' : '失败') : undefined}>
               {turn.reasoning_content && <ReasoningBlock content={turn.reasoning_content} streaming={turn.status === 'running'} />}
               {turn.assistant_content && <div className="ai-message-content ai-markdown"><LearningMarkdown>{turn.assistant_content}</LearningMarkdown></div>}
-              {turn.status === 'failed' && <div role="status"><p>{turn.reason === 'cancelled' ? '已取消生成，已收到的内容保留。' : '这次回复未完成，问题和已收到的内容已保存。'}</p><button className="button button--quiet" type="button" disabled={busy || running} onClick={() => void send(turn.user_content ?? '', turn.request_key, true)}>重试这条问题</button></div>}
+              {turn.status === 'failed' && <div role="status"><p>{turn.reason === 'cancelled' ? '已取消生成，已收到的内容保留。' : '这次回复未完成，问题和已收到的内容已保存。'}</p></div>}
               {turn.status === 'running' && !turn.assistant_content && <p className="ai-message-content" role="status">…</p>}
               {turn.status === 'succeeded' && turn.sources.length === 0 && <p className="form-hint">{turn.history_searched ? '本轮检索没有找到匹配的历史记录。' : '本轮依据这道题和当前讨论回答，未检索其他历史。'}</p>}
               {turn.sources.length > 0 && <DiscussionSources sources={turn.sources} />}
+              <LearningReplyActions content={turn.assistant_content ?? ''} retryDisabled={busy || running || Boolean(pending) || !turn.user_content}
+                onRetry={() => void send(turn.user_content ?? '', requestId(), false, true)} />
             </LearningMessage>
           </>}
         </div>)}

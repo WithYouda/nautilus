@@ -1,4 +1,4 @@
-import { LearningChatPanel, LearningComposer, LearningMessage, ReasoningBlock } from "./LearningRoomLayout";
+import { LearningChatPanel, LearningComposer, LearningMessage, LearningReplyActions, ReasoningBlock } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
 import { setReviewLocation } from "./LearningRecords";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
@@ -241,6 +241,7 @@ export default function AiLearningRoom({
   const [detail, setDetail] = useState<AiConversationDetail | null>(null);
   const [context, setContext] = useState<AiLearningContext | null>(null);
   const [status, setStatus] = useState<RoomStatus>("loading");
+  const [entryReady, setEntryReady] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<AiProvider[]>([]);
@@ -281,6 +282,7 @@ export default function AiLearningRoom({
   const pendingSubmissionRef = useRef<PendingSubmission | null>(readSession()?.pending ?? null);
   const pendingContentRef = useRef<string | null>(null);
   const initialDraftSentRef = useRef<string | null>(null);
+  const sendingRef = useRef(false);
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
   useDismissibleLayer(openLayer === "config", [configLayerRef], dismissLayer);
@@ -475,6 +477,7 @@ export default function AiLearningRoom({
   }, [effectiveScope, effectiveTargetId, pollTitle, learningBrief?.session_id]);
 
   const loadRoom = useCallback(async () => {
+    setEntryReady(false);
     setStatus("loading");
     setError("");
     setHistoryLoading(true);
@@ -494,6 +497,9 @@ export default function AiLearningRoom({
         learningBrief?.session_id ? getLearningRoom(learningBrief.session_id) : Promise.resolve(null),
       ]);
       if (!mountedRef.current) return;
+      if (room && (room.brief.delegation_id !== learningBrief?.delegation_id || room.brief.action_id !== learningBrief?.action_id)) {
+        throw new Error('学习室与当前任务不一致，已停止恢复，请返回后重新进入。');
+      }
       if (room && learningBrief?.session_id && !learningBrief.history_only) await recordLearningRoomEntry(learningBrief.session_id);
       if (room && learningBrief?.continuity_review_id && learningBrief.session_id && !learningBrief.history_only) {
         await chooseReturnReview(learningBrief.continuity_review_id, "entered", `entered:${learningBrief.continuity_review_id}:${learningBrief.session_id}`, undefined, learningBrief.session_id);
@@ -533,6 +539,7 @@ export default function AiLearningRoom({
         setDraft("");
         setStatus("idle");
       }
+      if (mountedRef.current) setEntryReady(true);
     } catch (reason: unknown) {
       if (!mountedRef.current) return;
       setHistoryLoading(false);
@@ -666,14 +673,15 @@ export default function AiLearningRoom({
     await submitMessage(draft.trim());
   }
 
-  async function submitMessage(content: string) {
-    if (!content || status === "submitting" || status === "streaming" || status === "reconnecting") return;
+  async function submitMessage(content: string, preserveDraft = false) {
+    if (!entryReady || !content || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return;
     if (!activeProvider?.has_api_key || !activeProvider.enabled) {
       setError("请先配置并启用 AI 提供方");
       return;
     }
     setError("");
     setStatus("submitting");
+    sendingRef.current = true;
     let conversation: AiConversationDetail;
     try {
       conversation = await ensureConversation();
@@ -691,7 +699,7 @@ export default function AiLearningRoom({
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
-      setDraft("");
+      if (!preserveDraft) setDraft("");
       const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId);
       if (!mountedRef.current) return;
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
@@ -725,9 +733,11 @@ export default function AiLearningRoom({
       void subscribe(result.run);
     } catch (reason: unknown) {
       if (!mountedRef.current) return;
-      setDraft(content);
+      if (!preserveDraft) setDraft(content);
       setStatus("failed");
       setError(reason instanceof Error ? reason.message : "消息发送失败");
+    } finally {
+      sendingRef.current = false;
     }
   }
 
@@ -897,7 +907,7 @@ export default function AiLearningRoom({
   const activeModel = activeProvider?.models?.find((item) => item.id === selectedModelId) ?? activeProvider?.default_model ?? null;
   const selectedConfigValue = selectedProviderId && selectedModelId ? `${selectedProviderId}::${selectedModelId}` : "";
   const conversationTitle = detail?.conversation.title ?? "新的学习对话";
-  const canSend = Boolean(
+  const canSend = entryReady && Boolean(
     activeProvider?.has_api_key && activeProvider.enabled && (!selectedModelId || (activeModel?.enabled && activeModel.discovery_status !== "unavailable")),
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
 
@@ -1068,6 +1078,11 @@ export default function AiLearningRoom({
         disabled={!canSend} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {detail?.messages.length ? detail.messages.map((message, index) => <MessageBubble key={message.id} message={message}
+              retryDisabled={!canSend}
+              onRetry={message.role === 'assistant' ? () => {
+                const question = detail.messages.slice(0, index).reverse().find(item => item.role === 'user');
+                if (question) void submitMessage(question.content, true);
+              } : undefined}
               automatic={message.role === "user" && (Boolean(message.client_message_id?.startsWith(LEARNING_PROMPT_ID_PREFIX))
                 || Boolean(learningBrief && index === 0 && message.content.startsWith("我正在执行下面这次学习安排。当前阶段只做资料整理、教学和答疑，不进入验证。")
                   && ["学习目标：", "本次任务：", "希望形成的能力：", "学习边界：", "停止条件："].every(label => message.content.includes(label))))} />) : (
@@ -1189,7 +1204,7 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message, automatic = false }: { message: AiMessage; automatic?: boolean }) {
+function MessageBubble({ message, automatic = false, onRetry, retryDisabled }: { message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean }) {
   const isUser = message.role === "user";
   if (automatic) return <details className="ai-learning-prompt">
     <summary>自动发送的学习提示</summary>
@@ -1207,6 +1222,7 @@ function MessageBubble({ message, automatic = false }: { message: AiMessage; aut
           ) : message.status === "streaming" ? "…" : ""}
         </div>
       )}
+      {!isUser && <LearningReplyActions content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} />}
     </LearningMessage>
   );
 }

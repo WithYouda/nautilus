@@ -34,6 +34,9 @@
 .ai-room-brief details[open] summary { margin-bottom: 8px; }
 .ai-learning-prompt { min-width: 0; padding: 8px 0; }
 .ai-learning-prompt[open] .ai-message-content { margin-top: 8px; }
+.ai-reply-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px; color: var(--muted); font-size: 11px; }
+.ai-reply-actions button { display: inline-flex; align-items: center; gap: 4px; }
+.ai-reply-actions button:disabled { opacity: .5; cursor: not-allowed; }
 .ai-room-brief__heading { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
 .ai-room-brief__heading span { color: var(--accent-dark); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .ai-room-brief__heading strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

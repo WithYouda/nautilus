@@ -141,7 +141,8 @@ class ContinuityService:
             if kind == 'entered':
                 if previous is None or previous['session_id'] != session_id:
                     raise DomainError('verification_scope_invalid')
-                record('entered', session=session_id)
+                entered_target = connection.execute('SELECT id, action_id FROM learning_delegation WHERE owner_id=? AND id=?', (owner, previous['delegation_id'])).fetchone()
+                record('entered', target=entered_target, session=session_id)
                 return dict(destination='room', session_id=session_id)
             if kind in ('review_card_shown','evidence_viewed','corrected'):
                 record(kind)
@@ -169,22 +170,33 @@ class ContinuityService:
                 return dict(destination='stopped')
             if kind not in ('continue','choose_other'):
                 raise DomainError('command_unsupported',422)
+            target_id = delegation_id if kind=='choose_other' else review['delegation_id']
+            # Resuming A and choosing B are different operations on the same card.
+            previous = connection.execute(
+                "SELECT * FROM learning_usage_event WHERE owner_id=? AND review_id=? AND kind='started' AND delegation_id=? ORDER BY rowid DESC LIMIT 1",
+                (owner, review_id, target_id),
+            ).fetchone()
+            request_start = connection.execute(
+                "SELECT review_id, delegation_id FROM learning_usage_event WHERE owner_id=? AND request_key=? AND kind='started'",
+                (owner, f'{request_key}:started'),
+            ).fetchone()
+            if request_start and (request_start['review_id'] != review_id or request_start['delegation_id'] != target_id):
+                raise DomainError('idempotency_conflict')
             if previous:
-                return dict(destination='verification' if review['verification_id'] else 'room', session_id=previous['session_id'], review_id=review_id)
+                return dict(destination='verification' if review['verification_id'] and kind=='continue' else 'room', session_id=previous['session_id'], review_id=review_id)
             card = self._card(connection, principal)
             if not card or card['id'] != review_id:
                 raise DomainError('version_conflict')
             record(kind)
             if kind=='continue' and review['kind'] in ('review','choose_next'):
                 return dict(destination='evidence' if review['kind']=='review' else 'setup')
-            target_id = delegation_id if kind=='choose_other' else review['delegation_id']
             target = connection.execute("SELECT d.*, a.version AS action_version FROM learning_delegation d JOIN learning_action a ON a.owner_id=d.owner_id AND a.id=d.action_id WHERE d.owner_id=? AND d.id=? AND a.status='open' AND d.status IN ('ready','active')", (owner,target_id)).fetchone()
             if target is None:
                 raise DomainError('delegation_not_startable')
             running = connection.execute("SELECT * FROM learning_session WHERE owner_id=? AND status='running'", (owner,)).fetchone()
             if running and running['delegation_id'] != target_id:
                 version = connection.execute('SELECT a.version FROM learning_action a JOIN learning_delegation d ON d.owner_id=a.owner_id AND d.action_id=a.id WHERE d.owner_id=? AND d.id=?',(owner,running['delegation_id'])).fetchone()[0]
-                self.learning.core.execute_in_transaction(connection, principal, EndSession(session_id=running['id'], disposition='interrupted', expected_version=version), f'continuity-switch:{review_id}')
+                self.learning.core.execute_in_transaction(connection, principal, EndSession(session_id=running['id'], disposition='interrupted', expected_version=version), f'continuity-switch:{review_id}:{target_id}')
                 running = None
                 record('switched', target)
             if review['verification_id'] and kind=='continue':
@@ -195,7 +207,7 @@ class ContinuityService:
                     selected = running['id']
                 else:
                     version = connection.execute('SELECT version FROM learning_action WHERE owner_id=? AND id=?',(owner,target['action_id'])).fetchone()[0]
-                    selected = self.learning.core.execute_in_transaction(connection,principal,StartSession(delegation_id=target_id,expected_version=version),f'continuity-start:{review_id}')["id"]
+                    selected = self.learning.core.execute_in_transaction(connection,principal,StartSession(delegation_id=target_id,expected_version=version),f'continuity-start:{review_id}:{target_id}')["id"]
                 destination = 'room'
             if kind=='choose_other':
                 record('switched',target,selected)

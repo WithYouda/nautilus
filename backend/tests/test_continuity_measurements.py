@@ -46,6 +46,32 @@ from app.continuity import ContinuityService
 from app.learning_domain import DomainError
 
 
+def test_new_goal_does_not_replay_another_goals_started_session(core, running):
+    from test_learning_setup import setup_command
+    continuity = ContinuityService(LearningService(core.database))
+    card = continuity.get(IDENTITY)
+    original = continuity.decide(IDENTITY, card['id'], 'continue', 'continue-original')
+    next_goal = core.execute(USER, setup_command(goal_title='另一个合成目标'), 'new-goal')
+    # Creating another goal does not change the currently running card.
+    assert continuity.get(IDENTITY)['id'] == card['id']
+    with pytest.raises(DomainError, match='idempotency_conflict'):
+        continuity.decide(IDENTITY, card['id'], 'choose_other', 'continue-original', next_goal['delegation_id'])
+    with pytest.raises(DomainError, match='delegation_not_startable'):
+        continuity.decide(IDENTITY, card['id'], 'choose_other', 'invalid-goal', 'nonexistent')
+    switched = continuity.decide(IDENTITY, card['id'], 'choose_other', 'start-new-goal', next_goal['delegation_id'])
+    assert switched['session_id'] != original['session_id']
+    session = core.database.fetchone('SELECT * FROM learning_session WHERE id=?', (switched['session_id'],))
+    assert session['delegation_id'] == next_goal['delegation_id']
+    assert session['status'] == 'running'
+    assert core.database.fetchone('SELECT status FROM learning_session WHERE id=?', (original['session_id'],))[0] == 'interrupted'
+    assert continuity.decide(IDENTITY, card['id'], 'choose_other', 'start-new-goal', next_goal['delegation_id']) == switched
+    with pytest.raises(DomainError, match='verification_scope_invalid'):
+        continuity.decide(IDENTITY, card['id'], 'entered', 'wrong-room', session_id=original['session_id'])
+    continuity.decide(IDENTITY, card['id'], 'entered', 'entered-new-goal', session_id=switched['session_id'])
+    entered = core.database.fetchone("SELECT delegation_id, action_id FROM learning_usage_event WHERE request_key='entered-new-goal:entered'")
+    assert tuple(entered) == (next_goal['delegation_id'], next_goal['action_id'])
+
+
 def test_card_return_choices_are_owned_idempotent_and_linked(core, running):
     learning = LearningService(core.database)
     continuity = ContinuityService(learning)
