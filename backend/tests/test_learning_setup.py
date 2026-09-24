@@ -97,7 +97,7 @@ async def test_setup_draft_accepts_json_code_fence(learning_database):
 async def test_setup_draft_rejects_invalid_provider_output(learning_database):
     service = setup_service(learning_database, "不是 JSON")
 
-    with pytest.raises(DomainError, match="setup_draft_invalid"):
+    with pytest.raises(DomainError, match="setup_invalid_json"):
         await service.draft(identity_payload(), "我想学会处理日志")
 
 
@@ -353,3 +353,80 @@ def test_add_step_rejects_inaccessible_plan_atomically(domain_rows, case):
     with pytest.raises(DomainError):
         core.execute(principal, setup_command(plan_id=plan_id), "invalid-step")
     assert {name: domain_rows.fetchone(f"SELECT COUNT(*) FROM {name}")[0] for name in tables} == before
+
+
+async def test_setup_requests_complete_json_with_enough_room_for_reasoning(learning_database):
+    requests = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if payload['max_tokens'] < 8192:
+            return httpx.Response(200, json={'choices': [{'finish_reason': 'length', 'message': {'content': '{'}}]})
+        assert payload['response_format'] == {'type': 'json_object'}
+        prompt = json.loads(payload['messages'][-1]['content'])
+        schema = prompt['output_schema']
+        assert 'stop_conditions' in schema['required']
+        assert schema['properties']['time_budget_minutes']['type'] == 'integer'
+        assert schema['properties']['goal_title']['maxLength'] == 200
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps(draft_payload(None))}}]})
+
+    service = LearningSetupService(LearningService(learning_database), FakeConversations(), transport=httpx.MockTransport(handler))
+    result = await service.draft(identity_payload(), '在已有目标和计划中继续下一步')
+    assert result['action_title'] == draft_payload(None)['action_title']
+    assert len(requests) == 1
+    assert learning_database.fetchone('SELECT COUNT(*) FROM learning_setup')[0] == 0
+
+
+@pytest.mark.parametrize('scenario,expected', [
+    ('timeout', 'setup_timeout'), ('network', 'setup_network_error'),
+    (401, 'setup_auth_error'), (429, 'setup_rate_limited'), (404, 'setup_endpoint_not_found'),
+    (400, 'setup_request_error'), (503, 'setup_upstream_error'),
+    ('length', 'setup_output_truncated'), ('reasoning', 'setup_reasoning_only'),
+    ('filtered', 'setup_content_filtered'), ('empty', 'setup_protocol_error'),
+    ('json', 'setup_invalid_json'), ('fields', 'setup_draft_invalid'), ('blank', 'setup_draft_invalid'),
+])
+async def test_setup_failures_remain_distinct_without_exposing_responses(learning_database, scenario, expected):
+    from fastapi import HTTPException
+    from app.routers.learning import _raise_learning_error
+    from app.learning_setup import SETUP_FAILURE_MESSAGES
+    calls = []
+    private_marker = 'SYNTHETIC_PRIVATE_RESPONSE'
+
+    def handler(request):
+        calls.append(request)
+        if scenario == 'timeout':
+            raise httpx.ReadTimeout(private_marker, request=request)
+        if scenario == 'network':
+            raise httpx.ConnectError(private_marker, request=request)
+        if isinstance(scenario, int):
+            return httpx.Response(scenario, json={'error': {'message': private_marker}})
+        content = json.dumps(draft_payload(None))
+        choice = {'finish_reason': 'stop', 'message': {'content': content}}
+        if scenario == 'length':
+            choice['finish_reason'] = 'length'
+        elif scenario == 'reasoning':
+            choice['message'] = {'content': None, 'reasoning_content': private_marker}
+        elif scenario == 'filtered':
+            choice['finish_reason'] = 'content_filter'
+        elif scenario == 'empty':
+            choice['message']['content'] = None
+        elif scenario == 'json':
+            choice['message']['content'] = private_marker
+        elif scenario == 'fields':
+            choice['message']['content'] = json.dumps({'goal_title': private_marker})
+        elif scenario == 'blank':
+            choice['message']['content'] = json.dumps({**draft_payload(None), 'stop_conditions': '   '})
+        return httpx.Response(200, json={'choices': [choice]})
+
+    service = LearningSetupService(LearningService(learning_database), FakeConversations(), transport=httpx.MockTransport(handler))
+    with pytest.raises(DomainError) as failure:
+        await service.draft(identity_payload(), '合成下一步')
+    assert failure.value.code == expected
+    with pytest.raises(HTTPException) as response:
+        _raise_learning_error(failure.value)
+    assert response.value.detail == {'kind': expected, 'message': SETUP_FAILURE_MESSAGES[expected]}
+    assert private_marker not in str(response.value.detail)
+    assert len(calls) == 1  # Never silently incur repeated model requests.
+    assert learning_database.fetchone('SELECT COUNT(*) FROM learning_usage_event')[0] == 0
+    assert learning_database.fetchone('SELECT COUNT(*) FROM learning_setup')[0] == 0

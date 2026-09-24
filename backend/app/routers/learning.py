@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 
 from ..conversations import ConversationError
 from ..verification import VERIFICATION_FAILURE_MESSAGES
+from ..learning_setup import SETUP_FAILURE_MESSAGES
 from ..dependencies import (
     agent_runtime,
     current_identity,
@@ -104,8 +105,6 @@ def _raise_learning_error(error: DomainError) -> None:
         "command_unsupported": "不支持的学习命令",
         "criterion_outcome_required": "选择达成标准时必须使用对应的标准成果",
         "criterion_outcome_mismatch": "所选成果与达成标准不匹配",
-        "setup_provider_unavailable": "暂时无法使用 AI 初始化，请先配置可用的 AI 提供方",
-        "setup_draft_invalid": "AI 初始化结果不完整，请重试或改为手动开始",
         "verification_provider_unavailable": "当前没有可用的 AI 验证提供方",
         "verification_generation_failed": "AI 验证题目生成失败，请稍后重试",
         "verification_evaluation_failed": "AI 验证评估失败，答案已保留，请稍后重试",
@@ -123,6 +122,7 @@ def _raise_learning_error(error: DomainError) -> None:
         "verification_independent_evidence_required": "当前已审核标准要求独立作答；本次有资料或提示帮助的产出保留，但不作为独立能力证据",
     }
     messages.update(VERIFICATION_FAILURE_MESSAGES)
+    messages.update(SETUP_FAILURE_MESSAGES)
     raise HTTPException(
         status_code=error.status,
         detail={

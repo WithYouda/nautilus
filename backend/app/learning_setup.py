@@ -16,8 +16,28 @@ from .learning_service import LearningService
 from .providers import ProviderError, build_provider
 
 
+SETUP_MAX_TOKENS = 8192
+SETUP_FAILURE_MESSAGES = {
+    "setup_provider_unavailable": "当前默认 AI 提供方或模型不可用，请检查提供方设置。",
+    "setup_timeout": "生成学习安排超时，请增加提供方超时时间后重试；已完成的学习记录不受影响。",
+    "setup_auth_error": "生成学习安排时被提供方拒绝访问，请检查当前默认模型的权限与 API Key。",
+    "setup_rate_limited": "生成学习安排时遇到提供方限流或额度不足，请稍后重试或检查账户额度。",
+    "setup_network_error": "生成学习安排时无法连接提供方，请检查网络和服务地址。",
+    "setup_endpoint_not_found": "学习安排使用的接口或模型不存在，请核对默认提供方的地址和模型名称。",
+    "setup_request_error": "提供方不接受学习安排请求，请检查当前模型是否支持 JSON 输出及请求参数。",
+    "setup_upstream_error": "提供方在生成学习安排时发生服务错误，请稍后重试。",
+    "setup_output_truncated": "AI 输出达到长度上限，学习安排被截断；请缩小这一步的范围或更换模型后重试。",
+    "setup_reasoning_only": "AI 只返回了思考过程，没有最终学习安排；请重试或更换模型。",
+    "setup_content_filtered": "提供方拒绝生成本次学习安排，请调整描述或改为自己安排。",
+    "setup_protocol_error": "提供方响应缺少可用正文或格式不符合接口约定，请重试或检查模型兼容性。",
+    "setup_invalid_json": "AI 已响应，但学习安排格式无法解析；请重试或改为自己安排。",
+    "setup_draft_invalid": "AI 已响应，但学习安排缺少必要内容或字段不符合要求；请重试或改为自己安排。",
+    "setup_provider_error": "学习安排的 AI 请求失败，请重试或检查默认提供方配置。",
+}
+
+
 class LearningSetupDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     goal_title: str = Field(min_length=1, max_length=200)
     goal_description: str = Field(max_length=1000)
@@ -85,29 +105,15 @@ class LearningSetupService:
             "intent": intent,
             "available_standards": available_standards,
             "instructions": [
-                "把用户的自然语言学习意图整理成一次低承诺的第一步。",
-                "只返回 JSON，不要 Markdown。",
+                "把用户的学习意图整理成一次低承诺、可执行的学习步骤。若输入明确是已有目标和计划的下一步，沿用该目标和计划，不重新安排第一步。",
+                "只返回符合 output_schema 的 JSON 对象，不要 Markdown。所有 required 字段都要提供，遵守类型、长度与数值范围。",
+                "各字段简短表达，不要把完整教程写入草案；time_budget_minutes 必须是整数分钟。",
                 "goal_title 是用户想达成的结果，action_title 是现在要执行的任务，不能混为一谈。",
                 "boundaries 和 stop_conditions 必须具体、短小、适合一次学习会话。",
                 "recommended_criterion_id 只能填写 available_standards 中完全匹配的 id，否则填写 null。",
                 "不要声称用户已经掌握，也不要生成长期精确排期。",
             ],
-            "output_schema": {
-                "goal_title": "string",
-                "goal_description": "string",
-                "plan_title": "string",
-                "plan_description": "string",
-                "action_title": "string",
-                "context_key": "string",
-                "outcome_object": "string",
-                "outcome_behavior": "string",
-                "outcome_context_key": "string",
-                "boundaries": "string",
-                "stop_conditions": "string",
-                "time_budget_minutes": "number",
-                "recommended_criterion_id": "string|null",
-                "rationale": "string",
-            },
+            "output_schema": LearningSetupDraft.model_json_schema(),
         }
         try:
             provider = build_provider(config, transport=self.transport)
@@ -116,10 +122,21 @@ class LearningSetupService:
                     {"role": "system", "content": "你是 Nautilus 的学习初始化助手，只返回符合要求的 JSON。"},
                     {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                 ],
-                max_tokens=1200,
+                max_tokens=SETUP_MAX_TOKENS,
+                json_mode=True,
             )
-            draft = LearningSetupDraft.model_validate(json.loads(_clean_json(text)))
-        except (ProviderError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+        except ProviderError as exc:
+            code = f"setup_{exc.kind}"
+            raise DomainError(code if code in SETUP_FAILURE_MESSAGES else "setup_provider_error", 502) from exc
+        except TimeoutError as exc:
+            raise DomainError("setup_timeout", 502) from exc
+        try:
+            parsed = json.loads(_clean_json(text))
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise DomainError("setup_invalid_json", 502) from exc
+        try:
+            draft = LearningSetupDraft.model_validate(parsed)
+        except ValueError as exc:
             raise DomainError("setup_draft_invalid", 502) from exc
 
         valid_ids = {item["id"] for item in available_standards}

@@ -56,7 +56,7 @@ test('new learning → saved verification → confirmed completion → return ca
   await card.getByRole('button', { name: '添加下一步', exact: true }).click();
   await expect(page.getByRole('heading', { name: '接下来学什么？' })).toBeVisible();
   await page.getByLabel('下一步想做什么', {exact:true}).fill('合成目标：观察另一个输入');
-  await page.getByRole('button', {name:'我想自己安排',exact:true}).click();
+  await page.getByRole('button', {name:'让 AI 帮我整理下一步',exact:true}).click();
   await page.getByLabel('现在先做什么', {exact:true}).fill('复核后确认的下一步');
   await page.getByRole('button', {name:'确认这份学习安排'}).click();
   const secondState = await (await page.request.get('/api/learning/state')).json();
