@@ -29,7 +29,11 @@
 .ai-room-heading h1 { margin: 2px 0; font-family: Georgia, "Noto Serif CJK SC", serif; font-size: clamp(20px, 1.8vw, 25px); font-weight: 500; line-height: 1.08; }
 .ai-room-heading .eyebrow { display: none; }
 .ai-room-subtitle { margin: 0; max-width: min(60vw, 720px); overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.ai-room-brief { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin-bottom: 5px; padding: 8px 12px; border: 1px solid var(--line); background: var(--paper); }
+.ai-room-brief { min-width: 0; margin-bottom: 5px; padding: 8px 12px; border: 1px solid var(--line); background: var(--paper); }
+.ai-room-brief summary, .ai-learning-prompt summary { cursor: pointer; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.ai-room-brief details[open] summary { margin-bottom: 8px; }
+.ai-learning-prompt { min-width: 0; padding: 8px 0; }
+.ai-learning-prompt[open] .ai-message-content { margin-top: 8px; }
 .ai-room-brief__heading { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
 .ai-room-brief__heading span { color: var(--accent-dark); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .ai-room-brief__heading strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

@@ -1624,6 +1624,15 @@ def test_conversation_history_is_sent_to_the_provider(tmp_path):
         assert len(captured) == 2
         roles = [item["role"] for item in captured[1]["messages"]]
         assert roles == ["system", "user", "assistant", "user"]
+        # Teaching guidance reaches the provider on every turn, including resumed history.
+        for request in captured:
+            system = request["messages"][0]["content"]
+            assert "首次只讲一个" in system
+            assert "停下来等待回应" in system
+            assert "不强迫问答" in system
+            assert "不算正式验证" in system
+            assert "正文直接进入学习内容" in system
+            assert "本次调用没有联网搜索工具" in system
         # 系统提示带上了任务上下文。
         assert "复习矩阵乘法" in captured[1]["messages"][0]["content"]
         assert captured[1]["messages"][-1]["content"] == "第二个问题"

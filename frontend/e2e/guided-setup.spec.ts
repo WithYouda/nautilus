@@ -3,6 +3,11 @@ import { authorize } from "./fact-helpers";
 
 test("manual guided setup turns a natural-language goal into a learning session", async ({ page }) => {
   await authorize(page);
+  const configured = await page.request.put('/api/ai/provider', { data: {
+    display_name: 'Synthetic teaching provider', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL,
+    model: 'mock-success', api_key: 'synthetic-test-only', enabled: true, request_timeout_seconds: 15,
+  }});
+  expect(configured.ok()).toBeTruthy();
   const factButton = page.getByRole("button", { name: "学习首页" }).first();
   if (!(await factButton.isVisible())) {
     await page.getByRole("button", { name: "打开导航" }).click();
@@ -67,7 +72,24 @@ test("manual guided setup turns a natural-language goal into a learning session"
   await setup.getByRole("button", { name: "进入学习室并开始这项任务" }).click();
 
   await expect(page.getByRole("heading", { name: "AI 学习室" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "本次学习安排" })).toContainText(actionTitle);
+  const brief = page.getByRole("region", { name: "本次学习安排" });
+  await expect(brief).toContainText(actionTitle);
+  await expect(brief.locator('details')).not.toHaveAttribute('open', '');
+  await expect(brief.getByText(stopConditions, {exact:false})).not.toBeVisible();
+  await brief.locator('summary').click();
+  await expect(brief.getByText(stopConditions, {exact:false})).toBeVisible();
+  await brief.locator('summary').click();
+  const prompt = page.locator('details.ai-learning-prompt');
+  await expect(prompt).toHaveCount(1);
+  await expect(prompt).not.toHaveAttribute('open', '');
+  await expect(prompt.locator('.ai-message-content')).not.toBeVisible();
+  await expect(page.getByLabel('输入学习问题', {exact:true})).toHaveValue('');
+  await prompt.locator('summary').click();
+  await expect(prompt.locator('.ai-message-content')).toContainText('不要一次讲完整个任务');
+  await expect(prompt.locator('.ai-message-content')).toContainText(`本次任务：${actionTitle}`);
+  await prompt.locator('summary').click();
+  await expect(page.locator('.ai-message--assistant')).toContainText('完成');
+  await expect(page.getByRole('button', {name:'取消生成',exact:true})).toHaveCount(0);
   await expect(page.getByRole("button", { name: "当前对话信息" })).toContainText("独立对话");
   await page.getByRole("button", { name: "当前对话信息" }).click();
   await expect(page.getByRole("region", { name: "本次学习安排" })).toContainText(stopConditions);
@@ -75,6 +97,15 @@ test("manual guided setup turns a natural-language goal into a learning session"
   await page.reload();
   await expect(page.getByRole("heading", { name: "AI 学习室" })).toBeVisible();
   await expect(page.getByRole("region", { name: "本次学习安排" })).toContainText(actionTitle);
+  await expect(prompt).toHaveCount(1);
+  await expect(prompt).not.toHaveAttribute('open', '');
+  await expect(brief.locator('details')).not.toHaveAttribute('open', '');
+  await page.getByLabel('输入学习问题', {exact:true}).fill('这里的匹配是什么意思？请换一个例子。');
+  await page.getByRole('button', {name:'发送问题',exact:true}).click();
+  await expect(page.locator('.ai-message--user')).toHaveText(/这里的匹配是什么意思/);
+  await expect(page.locator('.ai-message--assistant')).toHaveCount(2);
+  await expect(page.getByRole('button', {name:'取消生成',exact:true})).toHaveCount(0);
+  await expect(prompt).toHaveCount(1);
   await page.getByRole("button", { name: "返回工作区" }).click();
   await expect(page.getByRole("heading", { name: "学习首页" })).toBeVisible();
   const session = page.getByRole("region", { name: "当前学习" });

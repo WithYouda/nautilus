@@ -548,10 +548,11 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
   async function handleStartGuidedSession() {
     const draft = setupDraft
       ? [
-          "我正在执行下面这次学习安排。当前阶段只做资料整理、教学和答疑，不进入验证。",
-          "请先基于可核验的权威资料组织教学内容，给出用户可以打开的来源链接和阅读顺序；如果当前运行环境不能联网，请明确说明，不要编造来源或链接。",
-          "可以根据这些资料直接为我讲解，但本轮不要出验证题、练习题、判断题、填空题或标准答案，等我明确点击“开始验证”后再进入验证阶段。",
-          `学习目标：${setupIntent.trim()}`,
+          "请陪我一步一步学习下面的任务，先从一个关键小点和一个简短例子开始，不要一次讲完整个任务。",
+          "可以用一个简短问题了解我的理解，然后等我回应，再根据我的回答继续；如果我要求完整讲解或直接答案，请按我的要求调整。",
+          "当前只做教学和答疑，理解确认不是考试，不评分、不宣布掌握；正式验证由我主动开始。",
+          "下面的安排已在界面上方折叠展示，用于帮助你把握方向，不要在正文复述本轮边界、停止条件或其他产品字段。直接讲学习内容，来源仅按需提供，不要编造链接或声称已联网查证。",
+          `学习目标：${setupDraft.goal_title.trim()}`,
           `本次任务：${setupDraft.action_title.trim()}`,
           `希望形成的能力：${setupDraft.outcome_object.trim()}；${setupDraft.outcome_behavior.trim()}`,
           `学习边界：${setupDraft.boundaries.trim()}`,

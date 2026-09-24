@@ -43,6 +43,7 @@ import LearningVerification from "./LearningVerification";
 
 const SESSION_KEY = "nautilus.ai.learning-room";
 const MAX_RECONNECT_ATTEMPTS = 3;
+const LEARNING_PROMPT_ID_PREFIX = "learning-start:";
 
 type RoomStatus = "loading" | "idle" | "submitting" | "streaming" | "reconnecting" | "succeeded" | "failed" | "canceled";
 
@@ -240,7 +241,7 @@ export default function AiLearningRoom({
   const [detail, setDetail] = useState<AiConversationDetail | null>(null);
   const [context, setContext] = useState<AiLearningContext | null>(null);
   const [status, setStatus] = useState<RoomStatus>("loading");
-  const [draft, setDraft] = useState(initialDraft ?? "");
+  const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [conversations, setConversations] = useState<AiConversation[]>([]);
@@ -529,7 +530,7 @@ export default function AiLearningRoom({
       } else {
         setDetail(null);
         setConversationConfig(null);
-        setDraft(initialDraft ?? "");
+        setDraft("");
         setStatus("idle");
       }
     } catch (reason: unknown) {
@@ -554,9 +555,8 @@ export default function AiLearningRoom({
   useEffect(() => {
     const content = initialDraft?.trim();
     if (!content || status !== "idle" || detail?.messages.some((message) => message.role === "user") || initialDraftSentRef.current === content) return;
-    setDraft(content);
     const timer = window.setTimeout(() => {
-      if (mountedRef.current) composerRef.current?.form?.requestSubmit();
+      if (mountedRef.current) void submitMessage(content);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [detail, initialDraft, provider, providers, status]);
@@ -663,7 +663,10 @@ export default function AiLearningRoom({
 
   async function handleSend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const content = draft.trim();
+    await submitMessage(draft.trim());
+  }
+
+  async function submitMessage(content: string) {
     if (!content || status === "submitting" || status === "streaming" || status === "reconnecting") return;
     if (!activeProvider?.has_api_key || !activeProvider.enabled) {
       setError("请先配置并启用 AI 提供方");
@@ -682,7 +685,8 @@ export default function AiLearningRoom({
         savedPending.conversationId === conversation.conversation.id &&
         (!pendingContentRef.current || pendingContentRef.current === content),
       );
-      const clientMessageId = canReusePending ? savedPending!.clientMessageId : makeClientMessageId();
+      const automatic = Boolean(learningBrief && initialDraft?.trim() === content);
+      const clientMessageId = canReusePending ? savedPending!.clientMessageId : `${automatic ? LEARNING_PROMPT_ID_PREFIX : ""}${makeClientMessageId()}`;
       const pending: PendingSubmission = { taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
@@ -1063,7 +1067,10 @@ export default function AiLearningRoom({
         placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
         disabled={!canSend} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
-            {detail?.messages.length ? detail.messages.map((message) => <MessageBubble key={message.id} message={message} />) : (
+            {detail?.messages.length ? detail.messages.map((message, index) => <MessageBubble key={message.id} message={message}
+              automatic={message.role === "user" && (Boolean(message.client_message_id?.startsWith(LEARNING_PROMPT_ID_PREFIX))
+                || Boolean(learningBrief && index === 0 && message.content.startsWith("我正在执行下面这次学习安排。当前阶段只做资料整理、教学和答疑，不进入验证。")
+                  && ["学习目标：", "本次任务：", "希望形成的能力：", "学习边界：", "停止条件："].every(label => message.content.includes(label))))} />) : (
               <div className="ai-empty-chat">
                 <Bot size={24} />
                 <h2>从一个学习问题开始</h2>
@@ -1110,16 +1117,15 @@ function ContextFacts({ context }: { context: AiLearningContext }) {
 function LearningRoomBriefCard({ brief }: { brief: LearningRoomBrief }) {
   return (
     <section className="ai-room-brief" aria-label="本次学习安排">
-      <div className="ai-room-brief__heading">
-        <span>本次学习</span>
-        <strong>{brief.action_title}</strong>
-      </div>
-      <div className="ai-room-brief__route">{brief.goal_title} / {brief.plan_title}</div>
-      <div className="ai-room-brief__items">
-        <span><b>成果</b>{brief.outcome_object}；{brief.outcome_behavior}</span>
-        {brief.boundaries && <span><b>边界</b>{brief.boundaries}</span>}
-        <span><b>停止</b>{brief.stop_conditions}</span>
-      </div>
+      <details>
+        <summary>学习安排 · {brief.action_title}</summary>
+        <div className="ai-room-brief__route">{brief.goal_title} / {brief.plan_title}</div>
+        <div className="ai-room-brief__items">
+          <span><b>成果</b>{brief.outcome_object}；{brief.outcome_behavior}</span>
+          {brief.boundaries && <span><b>边界</b>{brief.boundaries}</span>}
+          <span><b>停止</b>{brief.stop_conditions}</span>
+        </div>
+      </details>
     </section>
   );
 }
@@ -1183,8 +1189,12 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message }: { message: AiMessage }) {
+function MessageBubble({ message, automatic = false }: { message: AiMessage; automatic?: boolean }) {
   const isUser = message.role === "user";
+  if (automatic) return <details className="ai-learning-prompt">
+    <summary>自动发送的学习提示</summary>
+    <div className="ai-message-content">{message.content}</div>
+  </details>;
   return (
     <LearningMessage role={isUser ? "user" : "assistant"} state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
       {!isUser && message.reasoning_content && <ReasoningBlock content={message.reasoning_content} streaming={message.status === "streaming"} />}
