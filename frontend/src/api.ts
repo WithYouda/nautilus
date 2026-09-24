@@ -388,6 +388,7 @@ export type AiMessage = {
   ai_run_id: string | null;
   created_at: string;
   updated_at: string;
+  parent_message_id?: string | null;
 };
 
 export type AiRunStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
@@ -913,10 +914,11 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
+  versions: { regenerate_message_id?: string; parent_message_id?: string } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ content, client_message_id: clientMessageId }),
+    body: JSON.stringify({ content, client_message_id: clientMessageId, ...versions }),
   });
 }
 
@@ -1908,7 +1910,7 @@ export type VerificationReview = {
 export type QuestionDiscussion = {
   id: string; verification_id: string; submission_id: string; question_id: string; purged: boolean;
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
-  turns: Array<{ id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+  turns: Array<{ question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
@@ -1924,8 +1926,8 @@ export function createQuestionDiscussion(id: string, submissionId: string, quest
   return request(`/api/learning/verifications/${id}/discussions`, { method: 'POST', body: JSON.stringify({ submission_id: submissionId, question_id: questionId, request_key: requestKey, evaluation_id: evaluationId }) });
 }
 export function getQuestionDiscussion(id: string): Promise<QuestionDiscussion> { return request(`/api/learning/discussions/${id}`); }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false): Promise<QuestionDiscussion> {
-  return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry }) });
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { regenerate_turn_id?: string; parent_turn_id?: string } = {}): Promise<QuestionDiscussion> {
+  return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
 }
 
 

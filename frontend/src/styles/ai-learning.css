@@ -229,3 +229,10 @@
 .discussion-source__excerpt.is-expanded { max-height: none; overflow: visible; }
 .discussion-source__toggle { display: flex; align-items: center; gap: 4px; min-height: 32px; margin-top: 4px; padding: 0; border: 0; color: var(--accent-dark); background: transparent; font: inherit; cursor: pointer; }
 .discussion-source__toggle:focus-visible { outline: 2px solid var(--accent-dark); outline-offset: 3px; }
+
+.ai-reply-actions { gap: 3px; }
+.ai-reply-actions .icon-button { width: 30px; height: 30px; min-width: 30px; color: var(--muted); border: 0; background: transparent; }
+.ai-reply-actions .icon-button:hover { color: var(--ink); background: var(--paper); }
+.ai-reply-actions [aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.ai-reply-versions { display: inline-flex; align-items: center; gap: 2px; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.reply-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }

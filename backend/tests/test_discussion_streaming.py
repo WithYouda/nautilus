@@ -107,12 +107,15 @@ async def test_cancel_keeps_partial_and_retry_reuses_saved_question(learning_dat
     assert cancelled['turns'][0]['reasoning_content'] == turn['reasoning_content']
     assert stream.closed
     verification.transport = response_transport(['{"history_query":null}', '合成重试回复'])
-    retried = await service.send(IDENTITY, current['id'], '合成问题', 'message', retry=True)
-    assert len(retried['turns']) == 1
-    assert retried['turns'][0]['id'] == turn['id']
-    assert retried['turns'][0]['assistant_content'] == '合成重试回复'
-    assert retried['turns'][0]['status'] == 'succeeded'
-    assert retried['turns'][0]['reasoning_content'] is None
+    retried = await service.send(IDENTITY, current['id'], '合成问题', 'regeneration', regenerate_turn_id=turn['id'])
+    assert len(retried['turns']) == 2
+    assert retried['turns'][0] == cancelled['turns'][0]
+    assert retried['turns'][1]['question_id'] == turn['id']
+    assert retried['turns'][1]['assistant_content'] == '合成重试回复'
+    assert retried['turns'][1]['status'] == 'succeeded'
+    assert retried['turns'][1]['reasoning_content'] is None
+    with pytest.raises(DomainError, match='discussion_regeneration_required'):
+        service.start(IDENTITY, current['id'], '合成问题', 'message', retry=True)
 
 
 @pytest.mark.asyncio

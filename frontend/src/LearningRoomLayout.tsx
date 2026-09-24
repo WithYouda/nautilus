@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from 'react';
-import { Bot, Copy, GitBranch, RefreshCw, Send, UserRound } from 'lucide-react';
+import { Bot, Check, ChevronLeft, ChevronRight, Copy, GitBranch, RefreshCw, Send, UserRound } from 'lucide-react';
 
 // Presentation only: both teaching and question discussions own their data and actions.
 export function LearningChatPanel({ title, children, notice, composer, messagesRef, autoFollow = true, followToken }: {
@@ -28,8 +28,9 @@ export function LearningMessage({ role, status, state, children }: { role: 'user
   </article>;
 }
 
-export function LearningReplyActions({ content, onRetry, retryDisabled }: {
+export function LearningReplyActions({ content, onRetry, retryDisabled, version }: {
   content: string; onRetry?: () => void; retryDisabled?: boolean;
+  version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
 }) {
   const [copyState, setCopyState] = useState('');
   useEffect(() => {
@@ -58,10 +59,15 @@ export function LearningReplyActions({ content, onRetry, retryDisabled }: {
     } catch { setCopyState('复制失败，请手动选择正文复制'); }
   }
   return <div className="ai-reply-actions" role="group" aria-label="回复操作">
-    <button className="text-button" type="button" disabled={!content} onClick={() => void copy()} title="复制回答正文（Markdown）"><Copy size={13} />复制</button>
-    <button className="text-button" type="button" disabled={retryDisabled || !onRetry} onClick={onRetry} title="重新发送对应问题，保留已有回答"><RefreshCw size={13} />重试</button>
-    <button className="text-button" type="button" disabled title="对话分支尚未实现"><GitBranch size={13} />分支（尚未实现）</button>
-    {copyState && <span role="status">{copyState}</span>}
+    {version && version.count > 1 && <div className="ai-reply-versions" role="group" aria-label="回答版本">
+      <button type="button" className="icon-button" aria-label="上一个回答" title="上一个回答" disabled={version.disabled || version.index === 0} onClick={version.onPrevious}><ChevronLeft size={15} /></button>
+      <span aria-label={`回答 ${version.index + 1}/${version.count}`}>{version.index + 1}/{version.count}</span>
+      <button type="button" className="icon-button" aria-label="下一个回答" title="下一个回答" disabled={version.disabled || version.index === version.count - 1} onClick={version.onNext}><ChevronRight size={15} /></button>
+    </div>}
+    <button className="icon-button" type="button" aria-label="复制" disabled={!content} onClick={() => void copy()} title={copyState || '复制'}>{copyState === '已复制' ? <Check size={15} /> : <Copy size={15} />}</button>
+    <button className="icon-button" type="button" aria-label="重新生成" disabled={retryDisabled || !onRetry} onClick={onRetry} title="重新生成"><RefreshCw size={15} /></button>
+    <button className="icon-button" type="button" aria-label="分支（尚未实现）" aria-disabled="true" title="分支（尚未实现）"><GitBranch size={15} /></button>
+    {copyState && <span className={copyState === '已复制' ? 'reply-sr-only' : ''} role="status">{copyState}</span>}
   </div>;
 }
 

@@ -48,7 +48,7 @@ test("model discovery keeps structured upstream errors actionable and allows man
   await expect(page.getByRole("combobox", { name: "模型" })).toHaveValue("deepseek-chat");
 });
 
-test('reply actions copy the body, retry the selected question, preserve drafts and reserve branches', async ({ page, context }) => {
+test('reply versions regenerate in place, switch ancestry, preserve drafts and use icon actions', async ({ page, context }) => {
   await configureProvider(page.context().request, 'mock-reasoning');
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.reload();
@@ -78,27 +78,49 @@ test('reply actions copy the body, retry the selected question, preserve drafts 
   await composer.fill('未发送的草稿');
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const requests: {content:string}[] = [];
+  const requests: {content:string; regenerate_message_id:string}[] = [];
   await page.route(`**/api/ai/conversations/${conversationId}/messages`, async route => {
     requests.push(route.request().postDataJSON()); await gate; await route.continue();
   });
-  await answers.first().getByRole('button', {name:'重试',exact:true}).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+  await answers.first().getByRole('button', {name:'重新生成',exact:true}).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
   await expect.poll(() => requests.length).toBe(1);
-  expect(requests[0].content).toBe('合成第一问：解释匹配');
-  await expect(answers.first().getByRole('button', {name:'重试',exact:true})).toBeDisabled();
+  expect(requests[0].regenerate_message_id).toBe(original.messages[1].id);
+  await expect(answers.first().getByRole('button', {name:'重新生成',exact:true})).toBeDisabled();
   await expect(composer).toHaveValue('未发送的草稿');
   release();
-  await expect(answers).toHaveCount(3);
+  await expect(answers).toHaveCount(1);
   await expect(answers.last()).toContainText('完成');
   await expect(page.getByRole('button', {name:'取消生成',exact:true})).toHaveCount(0);
   await expect(composer).toHaveValue('未发送的草稿');
   expect(requests).toHaveLength(1);
   const saved = await (await page.request.get(`/api/ai/conversations/${conversationId}`)).json();
-  expect(saved.messages).toHaveLength(6);
+  expect(saved.messages).toHaveLength(5);
+  expect(saved.messages.filter(message => message.role === 'user')).toHaveLength(2);
+  await expect(page.getByLabel('回答 2/2', {exact:true})).toBeVisible();
+  await expect(answers.first().getByRole('group', {name:'回复操作',exact:true})).toHaveText('2/2');
+  await answers.first().getByRole('button', {name:'上一个回答',exact:true}).click();
+  await expect(answers).toHaveCount(2);
+  await expect(page.getByText('合成第二问：换一个例子', {exact:true})).toBeVisible();
+  await expect(page.getByLabel('回答 1/2', {exact:true})).toBeInViewport();
   expect(saved.messages.slice(0,2)).toEqual(original.messages);
   await page.reload();
-  await expect(answers).toHaveCount(3);
-  await expect(page.getByRole('group', {name:'回复操作'})).toHaveCount(3);
+  await expect(answers).toHaveCount(2);
+  await expect(page.getByLabel('回答 1/2', {exact:true})).toBeVisible();
+  await answers.first().getByRole('button', {name:'下一个回答',exact:true}).click();
+  await expect(answers).toHaveCount(1);
+  await expect(page.getByText('合成第二问：换一个例子', {exact:true})).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByLabel('回答 2/2', {exact:true})).toBeVisible();
+  await expect(page.getByRole('group', {name:'回复操作',exact:true})).toHaveCount(1);
+  expect((await page.request.put('/api/ai/provider', {data:{base_url:mockProviderBaseUrl, model:'mock-reasoning', api_key:fakeApiKey, enabled:false}})).ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel('回答 2/2', {exact:true})).toBeVisible();
+  await expect(answers.first().getByRole('button', {name:'重新生成',exact:true})).toBeDisabled();
+  await answers.first().getByRole('button', {name:'上一个回答',exact:true}).click();
+  await expect(answers).toHaveCount(2);
+  await expect(page.getByLabel('回答 1/2', {exact:true})).toBeVisible();
+  await page.screenshot({path:'/tmp/nautilus-reply-versions.png',fullPage:true});
+
 });
 
 test("AI learning streams a normal reply and persists one message pair", async ({ page }) => {

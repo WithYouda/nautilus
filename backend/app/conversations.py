@@ -1386,16 +1386,40 @@ class ConversationService:
     def list_messages(self, identity_id: str, conversation_id: str) -> list[dict[str, Any]]:
         self.owned_conversation(identity_id, conversation_id)
         rows = self.database.fetchall(
-            """
-            SELECT id, conversation_id, role, content, reasoning_content, sequence, status,
-                   client_message_id, ai_run_id, created_at, updated_at
-            FROM message
-            WHERE conversation_id = ?
-            ORDER BY sequence
-            """,
-            (conversation_id,),
+            """SELECT m.*, r.config_snapshot_json, r.request_message_id
+               FROM message m LEFT JOIN ai_run r
+               ON r.response_message_id=m.id OR r.request_message_id=m.id
+               WHERE m.conversation_id=? ORDER BY m.sequence""", (conversation_id,),
         )
-        return [dict(row) for row in rows]
+        messages = []
+        previous = None
+        for row in rows:
+            item = dict(row)
+            reply = json.loads(item.pop("config_snapshot_json") or "{}").get("reply", {})
+            request_id = item.pop("request_message_id")
+            item["parent_message_id"] = (
+                reply.get("parent_answer_id") if item["role"] == "user" and reply
+                else reply.get("question_id", request_id) if item["role"] == "assistant"
+                else previous
+            )
+            if item["role"] == "assistant" and item["parent_message_id"] is None:
+                item["parent_message_id"] = previous
+            messages.append(item)
+            previous = item["id"]
+        return messages
+
+    @staticmethod
+    def message_path(messages, leaf_id):
+        by_id = {item["id"]: item for item in messages}
+        path, seen = [], set()
+        while leaf_id is not None:
+            if leaf_id not in by_id or leaf_id in seen:
+                raise ConversationError("回答上下文不存在")
+            seen.add(leaf_id)
+            item = by_id[leaf_id]
+            path.append(item)
+            leaf_id = item["parent_message_id"]
+        return list(reversed(path))
 
     def conversation_detail(self, identity_id: str, conversation_id: str) -> dict[str, Any]:
         conversation = self.owned_conversation(identity_id, conversation_id)
@@ -1438,47 +1462,26 @@ class ConversationService:
         return dict(row)
 
     def _existing_submission(
-        self,
-        conversation_id: str,
-        client_message_id: str,
-        content: str,
-        *,
-        connection: sqlite3.Connection | None = None,
-    ) -> dict[str, Any] | None:
-        """已经收到过这个 client_message_id 时返回它对应的运行记录。"""
-        if connection is None:
-            existing = self.database.fetchone(
-                """
-                SELECT id, content FROM message
-                WHERE conversation_id = ? AND client_message_id = ?
-                """,
-                (conversation_id, client_message_id),
-            )
-        else:
-            existing = connection.execute(
-                """
-                SELECT id, content FROM message
-                WHERE conversation_id = ? AND client_message_id = ?
-                """,
-                (conversation_id, client_message_id),
-            ).fetchone()
+        self, conversation_id, client_message_id, content, *, connection=None,
+        regenerate_message_id=None, parent_message_id=None,
+    ):
+        query = connection.execute if connection is not None else self.database.connection.execute
+        existing = query("SELECT * FROM message WHERE conversation_id=? AND client_message_id=?",
+                         (conversation_id, client_message_id)).fetchone()
         if not existing:
             return None
-        if existing["content"] != content:
-            raise ConversationConflict("同一 client_message_id 已用于不同的消息内容")
-        if connection is None:
-            run_row = self.database.fetchone(
-                "SELECT * FROM ai_run WHERE request_message_id = ? ORDER BY created_at DESC LIMIT 1",
-                (existing["id"],),
-            )
-        else:
-            run_row = connection.execute(
-                "SELECT * FROM ai_run WHERE request_message_id = ? ORDER BY created_at DESC LIMIT 1",
-                (existing["id"],),
-            ).fetchone()
-        if not run_row:
+        run = query("SELECT * FROM ai_run WHERE response_message_id=? OR request_message_id=?",
+                    (existing["id"], existing["id"])).fetchone()
+        if not run:
             raise ConversationError("这条消息已提交，但缺少对应的 AI 运行记录")
-        return {"created": False, "run": dict(run_row), "history": [], "context": None}
+        reply = json.loads(run["config_snapshot_json"] or "{}").get("reply", {})
+        question = query("SELECT content FROM message WHERE id=? AND conversation_id=?",
+                         (reply.get("question_id", run["request_message_id"]), conversation_id)).fetchone()
+        if (question is None or question["content"] != content
+                or reply.get("retry_of") != regenerate_message_id
+                or reply.get("requested_parent") != parent_message_id):
+            raise ConversationConflict("同一 client_message_id 已用于不同的消息内容或回答版本")
+        return {"created": False, "run": dict(run), "history": [], "context": None}
 
     def prepare_run(
         self,
@@ -1487,6 +1490,8 @@ class ConversationService:
         *,
         content: str,
         client_message_id: str,
+        regenerate_message_id: str | None = None,
+        parent_message_id: str | None = None,
     ) -> dict[str, Any]:
         """写入用户消息、上下文快照、助手占位消息和 queued 运行记录。
 
@@ -1498,7 +1503,7 @@ class ConversationService:
         if not text:
             raise ConversationError("消息内容不能为空")
 
-        replayed = self._existing_submission(conversation_id, client_message_id, text)
+        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id)
         if replayed:
             return replayed
 
@@ -1519,7 +1524,8 @@ class ConversationService:
         try:
             with self.database.transaction() as connection:
                 replayed = self._existing_submission(
-                    conversation_id, client_message_id, text, connection=connection
+                    conversation_id, client_message_id, text, connection=connection,
+                    regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id
                 )
                 if replayed:
                     return replayed
@@ -1558,19 +1564,27 @@ class ConversationService:
                         """,
                         (_fallback_title(text), now, conversation_id),
                     )
-                history_rows = connection.execute(
-                    """
-                    SELECT role, content FROM message
-                    WHERE conversation_id = ? AND status = 'complete' AND content <> ''
-                    ORDER BY sequence DESC
-                    LIMIT ?
-                    """,
-                    (conversation_id, HISTORY_LIMIT),
-                ).fetchall()
-                history = [
-                    {"role": row["role"], "content": row["content"]}
-                    for row in reversed(history_rows)
-                ]
+                messages = self.list_messages(identity_id, conversation_id)
+                by_id = {item["id"]: item for item in messages}
+                parent_id = parent_message_id or (messages[-1]["id"] if messages else None)
+                if regenerate_message_id:
+                    answer = by_id.get(regenerate_message_id)
+                    if not answer or answer["role"] != "assistant" or answer["status"] == "streaming":
+                        raise ConversationError("要重新生成的回答不存在或尚未结束")
+                    question = by_id.get(answer["parent_message_id"])
+                    if not question or question["role"] != "user" or question["content"] != text:
+                        raise ConversationError("回答与原问题不匹配")
+                    user_message_id = question["id"]
+                    parent_id = question["parent_message_id"]
+                if parent_id and (parent_id not in by_id or by_id[parent_id]["role"] != "assistant"):
+                    raise ConversationError("回答上下文不存在")
+                history = [{"role": item["role"], "content": item["content"]}
+                           for item in self.message_path(messages, parent_id)
+                           if item["status"] == "complete" and item["content"]][-HISTORY_LIMIT:]
+                # Append-only run lineage: retries have no new user message. The
+                # original unique request-message link remains unchanged.
+                config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,
+                    parent_answer_id=parent_id, retry_of=regenerate_message_id, requested_parent=parent_message_id)
                 sequence_row = connection.execute(
                     "SELECT COALESCE(MAX(sequence), -1) + 1 AS next FROM message WHERE conversation_id = ?",
                     (conversation_id,),
@@ -1595,30 +1609,32 @@ class ConversationService:
                         now,
                     ),
                 )
+                if not regenerate_message_id:
+                    connection.execute(
+                        """
+                        INSERT INTO message
+                            (id, conversation_id, role, content, sequence, status,
+                             client_message_id, created_at, updated_at)
+                        VALUES (?, ?, 'user', ?, ?, 'complete', ?, ?, ?)
+                        """,
+                        (
+                            user_message_id,
+                            conversation_id,
+                            text,
+                            next_sequence,
+                            client_message_id,
+                            now,
+                            now,
+                        ),
+                    )
                 connection.execute(
                     """
                     INSERT INTO message
-                        (id, conversation_id, role, content, sequence, status,
-                         client_message_id, created_at, updated_at)
-                    VALUES (?, ?, 'user', ?, ?, 'complete', ?, ?, ?)
+                        (id, conversation_id, role, content, sequence, status, client_message_id, created_at, updated_at)
+                    VALUES (?, ?, 'assistant', '', ?, 'streaming', ?, ?, ?)
                     """,
-                    (
-                        user_message_id,
-                        conversation_id,
-                        text,
-                        next_sequence,
-                        client_message_id,
-                        now,
-                        now,
-                    ),
-                )
-                connection.execute(
-                    """
-                    INSERT INTO message
-                        (id, conversation_id, role, content, sequence, status, created_at, updated_at)
-                    VALUES (?, ?, 'assistant', '', ?, 'streaming', ?, ?)
-                    """,
-                    (assistant_message_id, conversation_id, next_sequence + 1, now, now),
+                    (assistant_message_id, conversation_id, next_sequence + (0 if regenerate_message_id else 1),
+                     client_message_id if regenerate_message_id else None, now, now),
                 )
                 connection.execute(
                     """
@@ -1639,7 +1655,7 @@ class ConversationService:
                         config.model,
                         profile["config_version"],
                         snapshot_id,
-                        user_message_id,
+                        None if regenerate_message_id else user_message_id,
                         assistant_message_id,
                         config_snapshot["model"]["id"],
                         json.dumps(config_snapshot, ensure_ascii=False),
@@ -1659,7 +1675,7 @@ class ConversationService:
         except sqlite3.IntegrityError as error:
             # 并发提交命中唯一索引：另一个协程已经写入了同一个 client_message_id。
             # 返回对方的运行记录，不重复追加消息，也不报错。
-            replayed = self._existing_submission(conversation_id, client_message_id, text)
+            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id)
             if replayed:
                 return replayed
             active = self.active_run(identity_id, conversation_id)

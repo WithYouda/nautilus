@@ -94,6 +94,7 @@ def _raise_learning_error(error: DomainError) -> None:
         "evidence_event_type_unsupported": "证据事件类型不受支持",
         "evidence_event_payload_invalid": "证据事件内容结构无效",
         "idempotency_conflict": "同一幂等键对应了不同请求",
+        "discussion_regeneration_required": "请刷新页面，使用回答下方的重新生成按钮。",
         "invalid_idempotency_key": "幂等键不合法",
         "criterion_not_approved": "达成标准未通过审核",
         "criterion_out_of_scope": "达成标准不适用于当前成果",

@@ -1,3 +1,4 @@
+import useReplyHistory from './useReplyHistory';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Bot, Square } from 'lucide-react';
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningReplyActions, ReasoningBlock } from './LearningRoomLayout';
@@ -28,6 +29,9 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
   }, [id]);
   const runningTurn = discussion?.turns.find(turn => turn.status === 'running');
   const running = Boolean(runningTurn);
+  const replyHistory = useReplyHistory(`discussion:${id}`, (discussion?.turns ?? []).map(turn => ({id:turn.id, parentId:turn.parent_turn_id})), runningTurn?.id);
+  const visibleTurns = replyHistory.path.map(turnId => discussion!.turns.find(turn => turn.id === turnId)!);
+
   useEffect(() => {
     if (!runningTurn) return;
     const controller = new AbortController();
@@ -62,18 +66,18 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
     return () => controller.abort();
   }, [id, runningTurn?.id, reconnect]);
 
-  async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false) {
+  async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false, regenerateTurnId?: string) {
     if (!text.trim() || sending.current || running) return;
     const currentGeneration = generation.current;
     sending.current = true; setBusy(true); setError('');
-    if (!retry) { setPending({ content: text, key: requestKey, failed: false }); if (!preserveDraft) setContent(''); }
+    if (!retry && !regenerateTurnId) { setPending({ content: text, key: requestKey, failed: false }); if (!preserveDraft) setContent(''); }
     try {
-      const saved = await sendDiscussionMessage(id, text, requestKey, retry);
+      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { regenerate_turn_id: regenerateTurnId, parent_turn_id: regenerateTurnId ? undefined : replyHistory.leaf ?? undefined });
       if (generation.current !== currentGeneration) return;
       setDiscussion(saved); setPending(null); key.current = requestId();
     } catch (reason) {
       if (generation.current !== currentGeneration) return;
-      if (!retry) setPending({ content: text, key: requestKey, failed: true });
+      if (!retry && !regenerateTurnId) setPending({ content: text, key: requestKey, failed: true });
       setError(reason instanceof Error ? reason.message : '消息发送未确认，请重试。');
     } finally {
       if (generation.current === currentGeneration) { sending.current = false; setBusy(false); }
@@ -98,7 +102,7 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
       </div>
       <span className="question-discussion-context">题目讨论</span>
     </header>
-    <LearningChatPanel title="讨论这道题" autoFollow={Boolean(discussion?.turns.length || pending)} followToken={`${id}:${(discussion?.turns.length ?? 0) + (pending ? 1 : 0)}`}
+    <LearningChatPanel title="讨论这道题" autoFollow={(replyHistory.following || busy) && Boolean(discussion?.turns.length || pending)} followToken={`${id}:${(discussion?.turns.length ?? 0) + (pending ? 1 : 0)}`}
       notice={<>{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
       composer={discussion && !discussion.purged && <LearningComposer
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
@@ -124,7 +128,7 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
           </div>
         </details>
         {!discussion.turns.length && !pending && <div className="ai-empty-chat"><Bot size={24} /><h2>还有哪里没弄明白？</h2><p>可以追问反馈、比较解法，或回答拓展问题。原验证结果保持不变。</p></div>}
-        {discussion.turns.map(turn => <div key={turn.id} className="discussion-turn">
+        {visibleTurns.map(turn => <div key={turn.id} className="discussion-turn">
           {turn.status === 'purged' ? <p>这轮讨论内容已删除。</p> : <>
             <LearningMessage role="user"><div className="ai-message-content">{turn.user_content ?? ''}</div></LearningMessage>
             <LearningMessage role="assistant" state={turn.status === 'running' ? 'streaming' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? 'canceled' : 'failed') : undefined} status={turn.status === 'running' ? '生成中' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? '已取消' : '失败') : undefined}>
@@ -135,7 +139,10 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
               {turn.status === 'succeeded' && turn.sources.length === 0 && <p className="form-hint">{turn.history_searched ? '本轮检索没有找到匹配的历史记录。' : '本轮依据这道题和当前讨论回答，未检索其他历史。'}</p>}
               {turn.sources.length > 0 && <DiscussionSources sources={turn.sources} />}
               <LearningReplyActions content={turn.assistant_content ?? ''} retryDisabled={busy || running || Boolean(pending) || !turn.user_content}
-                onRetry={() => void send(turn.user_content ?? '', requestId(), false, true)} />
+                onRetry={() => void send(turn.user_content ?? '', requestId(), false, true, turn.id)}
+                version={{ disabled: busy || running || Boolean(pending), index: discussion.turns.filter(item => item.question_id === turn.question_id).findIndex(item => item.id === turn.id), count: discussion.turns.filter(item => item.question_id === turn.question_id).length,
+                  onPrevious: () => { const versions = discussion.turns.filter(item => item.question_id === turn.question_id); replyHistory.switchVersion(versions[versions.findIndex(item => item.id === turn.id) - 1].id); },
+                  onNext: () => { const versions = discussion.turns.filter(item => item.question_id === turn.question_id); replyHistory.switchVersion(versions[versions.findIndex(item => item.id === turn.id) + 1].id); } }} />
             </LearningMessage>
           </>}
         </div>)}

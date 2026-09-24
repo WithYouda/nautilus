@@ -264,15 +264,16 @@ async def test_discussion_failure_retry_recovery_and_request_conflict(learning_d
     assert failed['turns'][0]['status'] == 'failed'
     assert failed['turns'][0]['user_content'] == '保留合成追问'
     with pytest.raises(DomainError, match='idempotency_conflict'):
-        await discussions.send(IDENTITY, thread['id'], '不同问题', 'same', True)
+        await discussions.send(IDENTITY, thread['id'], '不同问题', 'same')
     service.transport = response_transport(['{"history_query":null}', '重试后的合成回复'])
-    retried = await discussions.send(IDENTITY, thread['id'], '保留合成追问', 'same', True)
-    assert len(retried['turns']) == 1
-    assert retried['turns'][0]['status'] == 'succeeded'
+    retried = await discussions.send(IDENTITY, thread['id'], '保留合成追问', 'regenerated', regenerate_turn_id=failed['turns'][0]['id'])
+    assert len(retried['turns']) == 2
+    assert retried['turns'][0] == failed['turns'][0]
+    assert retried['turns'][1]['status'] == 'succeeded'
     with learning_database.transaction() as c:
-        c.execute("UPDATE learning_discussion_turn SET status='running' WHERE id=?", (retried['turns'][0]['id'],))
+        c.execute("UPDATE learning_discussion_turn SET status='running' WHERE id=?", (retried['turns'][1]['id'],))
     discussions.recover()
-    assert discussions.get(IDENTITY, thread['id'])['turns'][0]['reason'] == 'interrupted'
+    assert discussions.get(IDENTITY, thread['id'])['turns'][1]['reason'] == 'interrupted'
 
 
 @pytest.mark.asyncio

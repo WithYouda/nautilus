@@ -306,6 +306,8 @@ class ConversationUpdateRequest(BaseModel):
 
 
 class MessageSendRequest(BaseModel):
+    regenerate_message_id: str | None = Field(default=None, max_length=64)
+    parent_message_id: str | None = Field(default=None, max_length=64)
     content: str = Field(min_length=1, max_length=8000)
     client_message_id: str = Field(min_length=1, max_length=64)
 
@@ -608,6 +610,8 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 
 class QuestionDiscussionMessageRequest(BaseModel):
+    regenerate_turn_id: str | None = Field(default=None, max_length=64)
+    parent_turn_id: str | None = Field(default=None, max_length=64)
     content: str = Field(min_length=1, max_length=12000)
     request_key: str = Field(min_length=1, max_length=200)
     retry: bool = False
