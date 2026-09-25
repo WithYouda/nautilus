@@ -2,6 +2,8 @@
 
 Before making changes in this repository:
 
+The lead agent completes the baseline reading below. Delegated agents read this file and the task-relevant source/specification sections supplied in the handoff; they do not repeat the entire baseline reading unless their scope requires it.
+
 1. Read `docs/superpowers/specs/2026-09-02-nautilus-prd-v2.md` as the current product requirements baseline.
 2. Read `docs/superpowers/specs/2026-07-23-nautilus-design.md` for the original product and technical baseline.
 3. Read `docs/progress/nautilus-development-status.md`.
@@ -17,6 +19,18 @@ Collaboration and engineering judgment:
 - Do not hide uncertainty or pretend agreement. Verify facts from the repository or relevant primary sources when needed, and make assumptions explicit.
 - After the user has seen the trade-offs and made an informed decision within the safe project scope, execute that decision faithfully unless it conflicts with a higher-priority instruction or repository safety rule.
 - Optimize for the smallest coherent product slice: correctness, understandable workflows, usable interface, maintainability, and verification must advance together. Avoid both backend-complete but unusable features and expensive visual polish on an unvalidated workflow.
+
+Development agent delegation (confirmed 2026-09-25):
+
+- Prefer `gpt-6-astra` as lead and explicitly select `gpt-6-sol` for bounded delegated tasks when the runtime supports these models. The user authorizes this project workflow without per-task reconfirmation. This governs development tooling, not Nautilus's in-product Provider/model policy. This file does not switch the running lead model; if the requested model or delegation is unavailable, report the limitation and continue with the available lead rather than silently substituting another worker model.
+- Astra owns requirement interpretation, product semantics, architecture, data relationships, state machines, cross-module contracts, difficult diagnosis, acceptance criteria, final review, and integration. Sol can implement agreed components/interfaces, fix reproducible local bugs, inspect code, and run or add focused checks within a defined scope. Astra may implement critical logic directly.
+- Delegate only when the task has clear boundaries and the expected benefit exceeds handoff/review overhead. Small fixes, short documentation changes, and tightly coupled or still-ambiguous work stay with the lead. Do not force every task into a multi-agent workflow.
+- Start with one or two Sol workers; parallelize independent work only. Assign disjoint file ownership, settle shared interfaces first, and serialize overlapping edits. Workers do not recursively delegate unless the lead explicitly assigns that responsibility.
+- Each handoff states the goal, relevant files/specification sections, allowed edit scope, agreed interfaces, invariants, acceptance checks, and expected result. Provide the minimum sufficient context instead of copying the entire conversation or all project documents. Workers report missing context or contract conflicts rather than guessing or expanding scope.
+- Workers return a concise summary of changes, file references, actual checks/results, and unresolved concerns. The lead reviews the diff and evidence against the acceptance criteria, then performs necessary integration checks; a worker's success claim alone is not acceptance. Reuse valid checks and do not redo the whole task merely to review it.
+- If a worker repeatedly misunderstands the task or fails the same acceptance requirement after a focused correction, the lead takes over or changes the decomposition. Do not run an open-ended retry loop to preserve nominally cheaper execution.
+- Judge delegation by total task cost, elapsed time, and rework, including lead review and all worker attempts. Use available usage evidence from representative tasks to adjust delegation; do not promise a fixed saving from per-token prices or create a separate reporting bureaucracy.
+- The lead owns the final progress/decision updates, local commit, and user report for the combined task. Workers report to the lead without competing progress snapshots or commits unless explicitly assigned otherwise. All existing scope, data-safety, permission, and staging rules apply to every agent.
 
 Product design discussion continuity:
 
