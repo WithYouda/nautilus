@@ -236,3 +236,17 @@
 .ai-reply-actions [aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
 .ai-reply-versions { display: inline-flex; align-items: center; gap: 2px; margin-right: 6px; font-variant-numeric: tabular-nums; }
 .reply-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+.ai-user-actions { justify-content: flex-end; }
+.ai-message--user .ai-user-actions { color: #d6e1df; }
+.ai-message--user .ai-user-actions .icon-button { color: inherit; }
+.ai-message--user .ai-user-actions .icon-button:hover { color: #fff; background: #ffffff18; }
+.ai-message--editing { width: min(820px, 78%); }
+.ai-message-editor textarea { display: block; box-sizing: border-box; width: 100%; min-height: 76px; max-height: min(340px, 40dvh); overflow-y: auto; resize: vertical; padding: 8px 10px; border: 1px solid #a4b7b9; border-radius: 6px; color: #edf2ef; background: #ffffff0a; font: inherit; font-size: 13px; line-height: 1.68; }
+.ai-message-editor textarea:focus { outline: 2px solid #c9d9d6; outline-offset: 2px; }
+.ai-message-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.ai-message-editor-actions .button { min-height: 36px; border-radius: 18px; padding-inline: 17px; }
+.ai-message-editor-actions .button--quiet { border: 1px solid #a4b7b9; background: transparent; color: #edf2ef; }
+@media (max-width: 600px) {
+  .ai-message--editing { width: 100%; max-width: 100%; }
+  .ai-user-actions .icon-button { width: 36px; height: 36px; }
+}

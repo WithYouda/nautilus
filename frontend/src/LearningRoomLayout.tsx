@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from 'react';
-import { Bot, Check, ChevronLeft, ChevronRight, Copy, GitBranch, RefreshCw, Send, UserRound } from 'lucide-react';
+import { Bot, Check, ChevronLeft, ChevronRight, Copy, GitBranch, Pencil, RefreshCw, Send, UserRound } from 'lucide-react';
 
 // Presentation only: both teaching and question discussions own their data and actions.
 export function LearningChatPanel({ title, children, notice, composer, messagesRef, autoFollow = true, followToken }: {
@@ -28,10 +28,18 @@ export function LearningMessage({ role, status, state, children }: { role: 'user
   </article>;
 }
 
-export function LearningReplyActions({ content, onRetry, retryDisabled, version }: {
-  content: string; onRetry?: () => void; retryDisabled?: boolean;
-  version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
-}) {
+export type MessageVersion = { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
+
+function MessageVersions({ version, label }: { version?: MessageVersion; label: '回答' | '消息' }) {
+  if (!version || version.count < 2) return null;
+  return <div className="ai-reply-versions" role="group" aria-label={`${label}版本`}>
+    <button type="button" className="icon-button" aria-label={`上一个${label}`} title={`上一个${label}`} disabled={version.disabled || version.index === 0} onClick={version.onPrevious}><ChevronLeft size={15} /></button>
+    <span aria-label={`${label} ${version.index + 1}/${version.count}`}>{version.index + 1}/{version.count}</span>
+    <button type="button" className="icon-button" aria-label={`下一个${label}`} title={`下一个${label}`} disabled={version.disabled || version.index === version.count - 1} onClick={version.onNext}><ChevronRight size={15} /></button>
+  </div>;
+}
+
+function CopyMessageButton({ content }: { content: string }) {
   const [copyState, setCopyState] = useState('');
   useEffect(() => {
     if (!copyState) return;
@@ -58,17 +66,74 @@ export function LearningReplyActions({ content, onRetry, retryDisabled, version 
       setCopyState('已复制');
     } catch { setCopyState('复制失败，请手动选择正文复制'); }
   }
-  return <div className="ai-reply-actions" role="group" aria-label="回复操作">
-    {version && version.count > 1 && <div className="ai-reply-versions" role="group" aria-label="回答版本">
-      <button type="button" className="icon-button" aria-label="上一个回答" title="上一个回答" disabled={version.disabled || version.index === 0} onClick={version.onPrevious}><ChevronLeft size={15} /></button>
-      <span aria-label={`回答 ${version.index + 1}/${version.count}`}>{version.index + 1}/{version.count}</span>
-      <button type="button" className="icon-button" aria-label="下一个回答" title="下一个回答" disabled={version.disabled || version.index === version.count - 1} onClick={version.onNext}><ChevronRight size={15} /></button>
-    </div>}
+  return <>
     <button className="icon-button" type="button" aria-label="复制" disabled={!content} onClick={() => void copy()} title={copyState || '复制'}>{copyState === '已复制' ? <Check size={15} /> : <Copy size={15} />}</button>
+    {copyState && <span className={copyState === '已复制' ? 'reply-sr-only' : ''} role="status">{copyState}</span>}
+  </>;
+}
+
+export function LearningReplyActions({ content, onRetry, retryDisabled, version }: {
+  content: string; onRetry?: () => void; retryDisabled?: boolean; version?: MessageVersion;
+}) {
+  return <div className="ai-reply-actions" role="group" aria-label="回复操作">
+    <MessageVersions version={version} label="回答" />
+    <CopyMessageButton content={content} />
     <button className="icon-button" type="button" aria-label="重新生成" disabled={retryDisabled || !onRetry} onClick={onRetry} title="重新生成"><RefreshCw size={15} /></button>
     <button className="icon-button" type="button" aria-label="分支（尚未实现）" aria-disabled="true" title="分支（尚未实现）"><GitBranch size={15} /></button>
-    {copyState && <span className={copyState === '已复制' ? 'reply-sr-only' : ''} role="status">{copyState}</span>}
   </div>;
+}
+
+export function LearningUserMessage({ content, automatic, editing, onStartEdit, onCancelEdit, onSendEdit, editDisabled, sendDisabled, version, maxLength = 8000 }: {
+  content: string; automatic?: boolean; editing: boolean; onStartEdit: () => void; onCancelEdit: () => void;
+  onSendEdit: (content: string) => Promise<boolean>; editDisabled?: boolean; sendDisabled?: boolean;
+  version?: MessageVersion; maxLength?: number;
+}) {
+  const [draft, setDraft] = useState(content);
+  const [submitting, setSubmitting] = useState(false);
+  const sending = useRef(false);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (editing) { setDraft(content); input.current?.focus({ preventScroll: true }); }
+  }, [editing, content]);
+  useLayoutEffect(() => {
+    if (editing && input.current) {
+      input.current.style.height = 'auto';
+      input.current.style.height = `${input.current.scrollHeight}px`;
+    }
+  }, [editing, draft]);
+  function cancel() {
+    if (sending.current) return;
+    onCancelEdit();
+    window.requestAnimationFrame(() => editButton.current?.focus({ preventScroll: true }));
+  }
+  async function submit() {
+    if (sending.current || sendDisabled || !draft.trim()) return;
+    sending.current = true; setSubmitting(true);
+    try { if (await onSendEdit(draft.trim())) onCancelEdit(); }
+    finally { sending.current = false; setSubmitting(false); }
+  }
+  const body = editing ? <form className="ai-message-editor" aria-label="修改消息" onSubmit={event => { event.preventDefault(); void submit(); }}>
+    <textarea ref={input} aria-label="修改消息内容" value={draft} onChange={event => setDraft(event.target.value)} maxLength={maxLength} rows={2} disabled={submitting}
+      onKeyDown={event => {
+        if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+        if (event.key === 'Escape') { event.preventDefault(); cancel(); }
+        if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); void submit(); }
+      }} />
+    <div className="ai-message-editor-actions">
+      <button className="button button--quiet" type="button" disabled={submitting} onClick={cancel}>取消</button>
+      <button className="button button--accent" type="submit" disabled={submitting || sendDisabled || !draft.trim()}>{submitting ? '发送中…' : '发送'}</button>
+    </div>
+  </form> : <>
+    <div className="ai-message-content">{content}</div>
+    <div className="ai-reply-actions ai-user-actions" role="group" aria-label="消息操作">
+      <MessageVersions version={version} label="消息" />
+      <CopyMessageButton content={content} />
+      <button ref={editButton} className="icon-button" type="button" aria-label="修改" title="修改" disabled={editDisabled} onClick={onStartEdit}><Pencil size={15} /></button>
+    </div>
+  </>;
+  if (automatic && !editing) return <details className="ai-learning-prompt"><summary>自动发送的学习提示</summary>{body}</details>;
+  return <LearningMessage role="user" state={editing ? 'editing' : undefined}>{body}</LearningMessage>;
 }
 
 export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, actions, sendLabel = '发送问题' }: {

@@ -512,6 +512,7 @@ async def send_message(
             client_message_id=payload.client_message_id,
             regenerate_message_id=payload.regenerate_message_id,
             parent_message_id=payload.parent_message_id,
+            edit_message_id=payload.edit_message_id,
         )
     except ConversationError as error:
         _raise(error)

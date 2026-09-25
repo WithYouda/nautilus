@@ -1,5 +1,5 @@
 import useReplyHistory from "./useReplyHistory";
-import { LearningChatPanel, LearningComposer, LearningMessage, LearningReplyActions, ReasoningBlock } from "./LearningRoomLayout";
+import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions, ReasoningBlock } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
 import { setReviewLocation } from "./LearningRecords";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
@@ -55,6 +55,7 @@ type PendingSubmission = {
   conversationId: string | null;
   clientMessageId: string;
   regenerateMessageId?: string;
+  editMessageId?: string;
   parentMessageId?: string;
 };
 
@@ -105,6 +106,7 @@ function readSession(): RoomSession | null {
               : typeof parsed.pending.taskId === "string" ? parsed.pending.taskId : null,
             conversationId: typeof parsed.pending.conversationId === "string" ? parsed.pending.conversationId : null,
             regenerateMessageId: parsed.pending.regenerateMessageId,
+            editMessageId: parsed.pending.editMessageId,
             parentMessageId: parsed.pending.parentMessageId,
             clientMessageId: typeof parsed.pending.clientMessageId === "string" ? parsed.pending.clientMessageId : "",
           }
@@ -288,6 +290,7 @@ export default function AiLearningRoom({
   const pendingContentRef = useRef<string | null>(null);
   const initialDraftSentRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
   useDismissibleLayer(openLayer === "config", [configLayerRef], dismissLayer);
@@ -298,6 +301,8 @@ export default function AiLearningRoom({
   const conversationId = detail?.conversation.id ?? null;
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id);
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
+
+  useEffect(() => { setEditingMessageId(null); }, [conversationId]);
 
   conversationIdRef.current = conversationId;
   currentRunRef.current = currentRun;
@@ -681,11 +686,11 @@ export default function AiLearningRoom({
     await submitMessage(draft.trim());
   }
 
-  async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string) {
-    if (!entryReady || !content || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return;
+  async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string): Promise<boolean> {
+    if (!entryReady || !content || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
     if (!activeProvider?.has_api_key || !activeProvider.enabled) {
       setError("请先配置并启用 AI 提供方");
-      return;
+      return false;
     }
     setError("");
     setStatus("submitting");
@@ -700,18 +705,19 @@ export default function AiLearningRoom({
         savedPending.targetId === effectiveTargetId &&
         savedPending.conversationId === conversation.conversation.id &&
         savedPending.regenerateMessageId === regenerateMessageId &&
+        savedPending.editMessageId === editMessageId &&
         (!pendingContentRef.current || pendingContentRef.current === content),
       );
-      const automatic = !regenerateMessageId && Boolean(learningBrief && initialDraft?.trim() === content);
+      const automatic = !regenerateMessageId && !editMessageId && Boolean(learningBrief && initialDraft?.trim() === content);
       const clientMessageId = canReusePending ? savedPending!.clientMessageId : `${automatic ? LEARNING_PROMPT_ID_PREFIX : ""}${makeClientMessageId()}`;
-      const parentMessageId = canReusePending ? savedPending!.parentMessageId : (!regenerateMessageId ? replyHistory.leaf ?? undefined : undefined);
-      const pending: PendingSubmission = { regenerateMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
+      const parentMessageId = canReusePending ? savedPending!.parentMessageId : (!regenerateMessageId && !editMessageId ? replyHistory.leaf ?? undefined : undefined);
+      const pending: PendingSubmission = { regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, parent_message_id: parentMessageId });
-      if (!mountedRef.current) return;
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId });
+      if (!mountedRef.current) return false;
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
       pendingSubmissionRef.current = null;
       pendingContentRef.current = null;
@@ -742,11 +748,13 @@ export default function AiLearningRoom({
       runIdRef.current = result.run.id;
       persistSession({ conversationId: conversation.conversation.id, runId: result.run.id, initialDraft: null });
       void subscribe(result.run);
+      return true;
     } catch (reason: unknown) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return false;
       if (!preserveDraft) setDraft(content);
       setStatus("failed");
       setError(reason instanceof Error ? reason.message : "消息发送失败");
+      return false;
     } finally {
       sendingRef.current = false;
     }
@@ -1076,21 +1084,36 @@ export default function AiLearningRoom({
         {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}
       </div></>}
 
-      <LearningChatPanel title={conversationTitle} autoFollow={replyHistory.following || status === "submitting"} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
+      <LearningChatPanel title={conversationTitle} autoFollow={!editingMessageId && (replyHistory.following || status === "submitting")} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
           {error && <div className="ai-room-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div>}
-          {status === "failed" && detail?.messages.some((message) => message.role === "user") && (
+          {status === "failed" && !editingMessageId && !pendingSubmissionRef.current?.editMessageId && detail?.messages.some((message) => message.role === "user") && (
             <button className="button button--quiet ai-retry-button button--with-icon" onClick={() => void handleRetry()}><RefreshCw size={15} />重新生成</button>
           )}
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-        disabled={!canSend} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+        disabled={!canSend || Boolean(editingMessageId)} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
-              const versions = detail!.messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
+              const versions = message.role === 'user'
+                ? detail!.messages.filter(item => item.role === 'user' && (item.question_version_id ?? item.id) === (message.question_version_id ?? message.id))
+                : detail!.messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
               const versionIndex = versions.findIndex(item => item.id === message.id);
-              return <MessageBubble key={message.id} message={message} retryDisabled={!canSend}
-                version={{ disabled: Boolean(currentRun) || status === "submitting", index: versionIndex, count: versions.length,
+              return <MessageBubble key={message.id} message={message} retryDisabled={!canSend || Boolean(editingMessageId)}
+                editing={editingMessageId === message.id}
+                editDisabled={!entryReady || Boolean(currentRun) || status === "submitting" || (Boolean(editingMessageId) && editingMessageId !== message.id)}
+                sendDisabled={!canSend}
+                onStartEdit={() => setEditingMessageId(message.id)}
+                onCancelEdit={() => {
+                  setEditingMessageId(null);
+                  if (pendingSubmissionRef.current?.editMessageId === message.id) {
+                    pendingSubmissionRef.current = null; pendingContentRef.current = null;
+                    persistSession({ pending: undefined }); setError("");
+                    if (status === "failed") setStatus("idle");
+                  }
+                }}
+                onSendEdit={text => submitMessage(text, true, undefined, message.id)}
+                version={{ disabled: Boolean(currentRun) || status === "submitting" || Boolean(editingMessageId), index: versionIndex, count: versions.length,
                   onPrevious: () => replyHistory.switchVersion(versions[versionIndex - 1].id),
                   onNext: () => replyHistory.switchVersion(versions[versionIndex + 1].id) }}
                 onRetry={message.role === 'assistant' ? () => {
@@ -1219,25 +1242,22 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message, automatic = false, onRetry, retryDisabled, version }: { message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void } }) {
+function MessageBubble({ message, automatic = false, onRetry, retryDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit }: {
+  message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean;
+  version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
+  editing: boolean; editDisabled: boolean; sendDisabled: boolean; onStartEdit: () => void; onCancelEdit: () => void; onSendEdit: (text: string) => Promise<boolean>;
+}) {
   const isUser = message.role === "user";
-  if (automatic) return <details className="ai-learning-prompt">
-    <summary>自动发送的学习提示</summary>
-    <div className="ai-message-content">{message.content}</div>
-  </details>;
+  if (isUser) return <LearningUserMessage content={message.content} automatic={automatic} version={version}
+    editing={editing} editDisabled={editDisabled} sendDisabled={sendDisabled}
+    onStartEdit={onStartEdit} onCancelEdit={onCancelEdit} onSendEdit={onSendEdit} />;
   return (
-    <LearningMessage role={isUser ? "user" : "assistant"} state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
-      {!isUser && message.reasoning_content && <ReasoningBlock content={message.reasoning_content} streaming={message.status === "streaming"} />}
-      {isUser ? (
-        <div className="ai-message-content">{message.content}</div>
-      ) : (
-        <div className="ai-message-content ai-markdown">
-          {message.content ? (
-            <LearningMarkdown>{message.content}</LearningMarkdown>
-          ) : message.status === "streaming" ? "…" : ""}
-        </div>
-      )}
-      {!isUser && <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} />}
+    <LearningMessage role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
+      {message.reasoning_content && <ReasoningBlock content={message.reasoning_content} streaming={message.status === "streaming"} />}
+      <div className="ai-message-content ai-markdown">
+        {message.content ? <LearningMarkdown>{message.content}</LearningMarkdown> : message.status === "streaming" ? "…" : ""}
+      </div>
+      <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} />
     </LearningMessage>
   );
 }

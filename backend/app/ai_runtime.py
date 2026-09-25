@@ -87,14 +87,17 @@ class AiRunManager:
         client_message_id: str,
         regenerate_message_id: str | None = None,
         parent_message_id: str | None = None,
+        edit_message_id: str | None = None,
     ) -> dict[str, Any]:
         prepared = self.conversations.prepare_run(
             identity_id,
             conversation_id,
             content=content,
             client_message_id=client_message_id,
-            **({"regenerate_message_id": regenerate_message_id, "parent_message_id": parent_message_id}
-               if regenerate_message_id or parent_message_id else {}),
+            **({"regenerate_message_id": regenerate_message_id,
+                "parent_message_id": parent_message_id,
+                "edit_message_id": edit_message_id}
+               if regenerate_message_id or parent_message_id or edit_message_id else {}),
         )
         run = prepared["run"]
         if not prepared["created"]:

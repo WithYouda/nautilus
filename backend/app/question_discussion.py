@@ -153,14 +153,18 @@ class QuestionDiscussionService:
         reply = snapshot.get('reply', {})
         turn['history_searched'] = bool(snapshot.get('history_searched'))
         turn['question_id'] = reply.get('question_id', turn['id'])
+        turn['question_version_id'] = reply.get('question_version_id', turn['question_id'])
         turn['parent_turn_id'] = reply.get('parent_turn_id', turn.get('parent_turn_id'))
         turn['sources'] = [{**source, **(self._resolve(owner, delegation_id, source) or {'excerpt': '来源已不可用'})}
                            for source in json.loads(turn.pop('sources_json'))]
         return turn
 
-    def start(self, identity, discussion_id, content, request_key, retry=False, regenerate_turn_id=None, parent_turn_id=None):
+    def start(self, identity, discussion_id, content, request_key, retry=False,
+              regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None):
         if retry:
             raise DomainError('discussion_regeneration_required', 422)
+        if edit_turn_id and (regenerate_turn_id or parent_turn_id):
+            raise DomainError('verification_scope_invalid', 422)
         if not content.strip():
             raise DomainError('verification_response_required', 422)
         owner = self.learning.principal(identity).owner_id
@@ -174,7 +178,8 @@ class QuestionDiscussionService:
             if turn:
                 saved_reply = json.loads(turn['provider_snapshot_json']).get('reply', {})
                 if (turn['user_content'] != content or saved_reply.get('retry_of') != regenerate_turn_id
-                        or saved_reply.get('requested_parent') != parent_turn_id):
+                        or saved_reply.get('requested_parent') != parent_turn_id
+                        or saved_reply.get('edit_of') != edit_turn_id):
                     raise DomainError('idempotency_conflict', 409)
                 turn_id = None
             else:
@@ -184,11 +189,19 @@ class QuestionDiscussionService:
                 by_id = {item['id']: item for item in records}
                 parent_id = parent_turn_id or (records[-1]['id'] if records else None)
                 question_id = turn_id
+                question_version_id = turn_id
                 if regenerate_turn_id:
                     answer = by_id.get(regenerate_turn_id)
                     if not answer or answer['status'] in ('running', 'purged') or answer['user_content'] != content:
                         raise DomainError('verification_scope_invalid')
                     question_id, parent_id = answer['question_id'], answer['parent_turn_id']
+                    question_version_id = answer['question_version_id']
+                elif edit_turn_id:
+                    question = by_id.get(edit_turn_id)
+                    if not question or question['status'] in ('running', 'purged') or question['user_content'] is None:
+                        raise DomainError('verification_scope_invalid')
+                    parent_id = question['parent_turn_id']
+                    question_version_id = question['question_version_id']
                 path, seen = [], set()
                 while parent_id:
                     if parent_id not in by_id or parent_id in seen or by_id[parent_id]['status'] == 'purged':
@@ -197,8 +210,10 @@ class QuestionDiscussionService:
                     path.append(parent_id)
                     parent_id = by_id[parent_id]['parent_turn_id']
                 path.reverse()
-                reply = dict(schema_version=1, question_id=question_id, parent_turn_id=path[-1] if path else None,
-                    history_turn_ids=path, retry_of=regenerate_turn_id, requested_parent=parent_turn_id)
+                reply = dict(schema_version=1, question_id=question_id,
+                    question_version_id=question_version_id, parent_turn_id=path[-1] if path else None,
+                    history_turn_ids=path, retry_of=regenerate_turn_id,
+                    requested_parent=parent_turn_id, edit_of=edit_turn_id)
                 if c.execute("SELECT 1 FROM learning_discussion_turn WHERE discussion_id=? AND status='running'", (discussion_id,)).fetchone():
                     raise DomainError('discussion_busy', 409)
                 c.execute("""INSERT INTO learning_discussion_turn (id,discussion_id,request_key,user_content,status,created_at)

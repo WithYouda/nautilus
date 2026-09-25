@@ -1402,6 +1402,8 @@ class ConversationService:
                 else reply.get("question_id", request_id) if item["role"] == "assistant"
                 else previous
             )
+            if item["role"] == "user":
+                item["question_version_id"] = reply.get("question_version_id", item["id"])
             if item["role"] == "assistant" and item["parent_message_id"] is None:
                 item["parent_message_id"] = previous
             messages.append(item)
@@ -1463,7 +1465,7 @@ class ConversationService:
 
     def _existing_submission(
         self, conversation_id, client_message_id, content, *, connection=None,
-        regenerate_message_id=None, parent_message_id=None,
+        regenerate_message_id=None, parent_message_id=None, edit_message_id=None,
     ):
         query = connection.execute if connection is not None else self.database.connection.execute
         existing = query("SELECT * FROM message WHERE conversation_id=? AND client_message_id=?",
@@ -1479,7 +1481,8 @@ class ConversationService:
                          (reply.get("question_id", run["request_message_id"]), conversation_id)).fetchone()
         if (question is None or question["content"] != content
                 or reply.get("retry_of") != regenerate_message_id
-                or reply.get("requested_parent") != parent_message_id):
+                or reply.get("requested_parent") != parent_message_id
+                or reply.get("edit_of") != edit_message_id):
             raise ConversationConflict("同一 client_message_id 已用于不同的消息内容或回答版本")
         return {"created": False, "run": dict(run), "history": [], "context": None}
 
@@ -1492,6 +1495,7 @@ class ConversationService:
         client_message_id: str,
         regenerate_message_id: str | None = None,
         parent_message_id: str | None = None,
+        edit_message_id: str | None = None,
     ) -> dict[str, Any]:
         """写入用户消息、上下文快照、助手占位消息和 queued 运行记录。
 
@@ -1502,8 +1506,10 @@ class ConversationService:
         text = content.strip()
         if not text:
             raise ConversationError("消息内容不能为空")
+        if edit_message_id and (regenerate_message_id or parent_message_id):
+            raise ConversationError("编辑消息不能同时指定重新生成或回答上下文")
 
-        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id)
+        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id)
         if replayed:
             return replayed
 
@@ -1525,7 +1531,8 @@ class ConversationService:
             with self.database.transaction() as connection:
                 replayed = self._existing_submission(
                     conversation_id, client_message_id, text, connection=connection,
-                    regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id
+                    regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id,
+                    edit_message_id=edit_message_id
                 )
                 if replayed:
                     return replayed
@@ -1567,6 +1574,7 @@ class ConversationService:
                 messages = self.list_messages(identity_id, conversation_id)
                 by_id = {item["id"]: item for item in messages}
                 parent_id = parent_message_id or (messages[-1]["id"] if messages else None)
+                question_version_id = user_message_id
                 if regenerate_message_id:
                     answer = by_id.get(regenerate_message_id)
                     if not answer or answer["role"] != "assistant" or answer["status"] == "streaming":
@@ -1576,6 +1584,13 @@ class ConversationService:
                         raise ConversationError("回答与原问题不匹配")
                     user_message_id = question["id"]
                     parent_id = question["parent_message_id"]
+                    question_version_id = question.get("question_version_id", question["id"])
+                elif edit_message_id:
+                    question = by_id.get(edit_message_id)
+                    if not question or question["role"] != "user" or question["status"] != "complete":
+                        raise ConversationError("要编辑的问题不存在")
+                    parent_id = question["parent_message_id"]
+                    question_version_id = question.get("question_version_id", question["id"])
                 if parent_id and (parent_id not in by_id or by_id[parent_id]["role"] != "assistant"):
                     raise ConversationError("回答上下文不存在")
                 history = [{"role": item["role"], "content": item["content"]}
@@ -1584,7 +1599,9 @@ class ConversationService:
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,
-                    parent_answer_id=parent_id, retry_of=regenerate_message_id, requested_parent=parent_message_id)
+                    question_version_id=question_version_id, parent_answer_id=parent_id,
+                    retry_of=regenerate_message_id, requested_parent=parent_message_id,
+                    edit_of=edit_message_id)
                 sequence_row = connection.execute(
                     "SELECT COALESCE(MAX(sequence), -1) + 1 AS next FROM message WHERE conversation_id = ?",
                     (conversation_id,),
@@ -1675,7 +1692,7 @@ class ConversationService:
         except sqlite3.IntegrityError as error:
             # 并发提交命中唯一索引：另一个协程已经写入了同一个 client_message_id。
             # 返回对方的运行记录，不重复追加消息，也不报错。
-            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id)
+            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id)
             if replayed:
                 return replayed
             active = self.active_run(identity_id, conversation_id)
