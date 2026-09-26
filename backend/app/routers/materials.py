@@ -11,7 +11,7 @@ from ..dependencies import current_identity
 from ..learning_domain import DomainError
 from ..purge_storage import receipt_path
 from ..managed_purge import EXTERNAL_LIMITS
-from ..material_files import MAX_FILE_BYTES, extract_material_text
+from ..material_files import extract_material_text
 
 router = APIRouter(prefix='/api/materials')
 ScopeKind = Literal['conversation', 'discussion']
@@ -60,8 +60,6 @@ async def upload_material(scope_kind: ScopeKind, scope_id: str, request: Request
         raw = bytearray()
         async for chunk in request.stream():
             raw.extend(chunk)
-            if len(raw) > MAX_FILE_BYTES:
-                raise DomainError('material_file_too_large', 413)
         content = await run_in_threadpool(extract_material_text, name, bytes(raw))
         return await run_in_threadpool(service.create, identity, scope_kind, scope_id, title=name, content=content)
     except DomainError as error:

@@ -8,7 +8,6 @@ from xml.etree import ElementTree
 
 from .learning_domain import DomainError
 
-MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_TEXT_CHARS = 30000
 TEXT_EXTENSIONS = {'.txt', '.md', '.markdown', '.json', '.csv', '.tsv', '.py', '.js', '.ts', '.tsx', '.jsx', '.html', '.css', '.xml', '.yaml', '.yml', '.sql', '.sh', '.rs', '.go', '.java', '.c', '.cpp', '.h'}
 
@@ -17,8 +16,6 @@ def extract_material_text(filename: str, raw: bytes) -> str:
     name = PurePath(filename.replace('\\', '/')).name
     if not name or name in {'.', '..'} or len(name) > 300:
         raise DomainError('invalid_material_title', 422)
-    if len(raw) > MAX_FILE_BYTES:
-        raise DomainError('material_file_too_large', 413)
     suffix = PurePath(name).suffix.lower()
     if suffix in TEXT_EXTENSIONS:
         try:
@@ -41,13 +38,7 @@ def extract_material_text(filename: str, raw: bytes) -> str:
 def _docx_text(raw: bytes) -> str:
     try:
         with ZipFile(BytesIO(raw)) as archive:
-            document = archive.getinfo('word/document.xml')
-            if document.file_size > 2 * 1024 * 1024:
-                raise DomainError('material_file_too_large', 413)
-            with archive.open(document) as stream:
-                xml = stream.read(2 * 1024 * 1024 + 1)
-            if len(xml) > 2 * 1024 * 1024:
-                raise DomainError('material_file_too_large', 413)
+            xml = archive.read('word/document.xml')
         root = ElementTree.fromstring(xml)
         ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
         lines = []

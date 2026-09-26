@@ -47,7 +47,6 @@ function latestActive(versions: MaterialVersion[]) {
 }
 function uploadError(code: unknown) {
   const messages: Record<string, string> = {
-    material_file_too_large: '文件超过 5 MiB，请选较小的文件。',
     material_file_encoding: '文本文件需要使用 UTF-8 编码。',
     material_file_unsupported: '暂不支持此文件格式。',
     material_file_no_text: '没有读到可用文字。扫描版 PDF 和图片暂不支持。',
@@ -115,7 +114,6 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     const current = epoch.current;
     setFileReading(true); setBusy(true); setError('');
     try {
-      if (file.size > 5 * 1024 * 1024) throw new Error('文件超过 5 MiB，请选较小的文件。');
       const target = await targetId();
       if (!target) throw new Error('请先打开对话。');
       const response = await fetch(`/api/materials/${kind}/${target}/upload`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, body: file });
@@ -160,7 +158,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     <button className="button button--quiet" type="button" aria-expanded={open} onClick={() => { const current = epoch.current; setOpen(value => !value); if (id) void refresh(id, current).catch(() => { if (epoch.current === current) setError('资料列表加载失败'); }); else if (onEnsure) void onEnsure().catch(reason => { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '无法创建对话'); }); }}>资料{scope.mode !== 'unspecified' ? ` · ${selected.length}` : ''}</button>
     {open && <section className="task-materials-panel" aria-label="本对话资料" onKeyDown={event => { if (event.key === 'Enter' && event.target instanceof HTMLInputElement) event.preventDefault(); }}>
       <h3>本对话资料</h3><p>保存或上传成功后即可在本对话参考。联网由工具栏单独控制。取消参考不会删除历史回答；明确选择严格范围时，会隔离范围外的旧对话，答案只依据所选资料。</p>
-      <label className="task-material-upload">上传资料（UTF-8 文本、DOCX 或文字版 PDF；最大 5 MiB）<input ref={fileInput} type="file" disabled={disabled || busy || !id} accept=".txt,.md,.markdown,.json,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,.sql,.sh,.rs,.go,.java,.c,.cpp,.h,.docx,.pdf" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></label>
+      <label className="task-material-upload">上传资料（UTF-8 文本、DOCX 或文字版 PDF）<input ref={fileInput} type="file" disabled={disabled || busy || !id} accept=".txt,.md,.markdown,.json,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,.sql,.sh,.rs,.go,.java,.c,.cpp,.h,.docx,.pdf" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></label>
       {fileReading && <p role="status">正在读取资料…</p>}
       <label><input type="checkbox" checked={scope.mode === 'only'} disabled={disabled || busy || selected.length === 0} onChange={event => change({ ...scope, mode: event.target.checked ? 'only' : selected.length ? 'reference' : 'unspecified' })} />只依据所选资料（严格范围）</label>
       <label>资料冲突时<select value={scope.conflict_policy ?? ''} disabled={disabled || busy || !id} onChange={event => change({ ...scope, conflict_policy: event.target.value ? event.target.value as ConflictPolicy : undefined })}>
