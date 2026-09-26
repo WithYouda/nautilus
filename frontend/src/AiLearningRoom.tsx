@@ -3,13 +3,13 @@ import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessa
 import QuestionDiscussion from "./QuestionDiscussion";
 import { setReviewLocation } from "./LearningRecords";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
-import { ArrowLeft, Bot, Check, CircleAlert, History, MapPin, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { ArrowLeft, Bot, Check, CircleAlert, History, ListChecks, MapPin, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
 import LearningMarkdown from "./LearningMarkdown";
 import SearchControls, { type SearchSelection } from "./SearchControls";
 import type { SearchTrace } from "./SearchResults";
 import AssistantResponse, { type GenerationTrace } from "./AssistantResponse";
 import HelpControls from "./HelpControls";
-import HelpRecord from "./HelpRecord";
+import HelpRecord, { HelpRecordFacts } from "./HelpRecord";
 import {
   ApiError,
   recordLearningRoomEntry,
@@ -268,6 +268,9 @@ export default function AiLearningRoom({
   const [status, setStatus] = useState<RoomStatus>("loading");
   const [entryReady, setEntryReady] = useState(false);
   const [completionOpen, setCompletionOpen] = useState(false);
+  const [helpHistoryOpen, setHelpHistoryOpen] = useState(false);
+  const [failedHelpDisplays, setFailedHelpDisplays] = useState<Record<string, number>>({});
+  const helpHistoryTriggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { setCompletionOpen(false); }, [learningBrief?.delegation_id]);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
@@ -314,6 +317,7 @@ export default function AiLearningRoom({
   const [searchSelection, setSearchSelection] = useState<SearchSelection>({ mode: "off" });
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
+  const closeHelpHistory = useCallback(() => setHelpHistoryOpen(false), []);
   useDismissibleLayer(openLayer === "config", [configLayerRef], dismissLayer);
   useDismissibleLayer(openLayer === "history" && !historyDismissSuspended, [historyLayerRef, deleteDialogRef], dismissLayer);
   useDismissibleLayer(openLayer === "context", [contextLayerRef], dismissLayer);
@@ -323,7 +327,7 @@ export default function AiLearningRoom({
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id);
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
 
-  useEffect(() => { setEditingMessageId(null); setSearchSelection({ mode: "off" }); }, [conversationId]);
+  useEffect(() => { setEditingMessageId(null); setSearchSelection({ mode: "off" }); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
 
   conversationIdRef.current = conversationId;
   currentRunRef.current = currentRun;
@@ -1002,6 +1006,9 @@ export default function AiLearningRoom({
           </div>
         </div>
         <div className="ai-room-actions">
+          <button ref={helpHistoryTriggerRef} className="ai-room-tool-trigger" type="button" aria-label="当前对话帮助记录" title="帮助记录" aria-haspopup="dialog" onClick={() => { setOpenLayer(null); setHelpHistoryOpen(true); }}>
+            <ListChecks size={14} /><span>帮助记录</span>
+          </button>
           <div className="ai-room-layer-anchor" ref={historyLayerRef}>
             <button
               className={`ai-room-tool-trigger${openLayer === "history" ? " is-open" : ""}`}
@@ -1153,6 +1160,19 @@ export default function AiLearningRoom({
                 : detail!.messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
               const versionIndex = versions.findIndex(item => item.id === message.id);
               return <MessageBubble key={message.id} message={message} retryDisabled={!canSend || Boolean(editingMessageId)}
+                onHelpDisplay={async characters => {
+                  try {
+                    const record = await recordAiHelpDisplay(message.conversation_id, message.id, characters);
+                    setFailedHelpDisplays(previous => { const next = { ...previous }; delete next[message.id]; return next; });
+                    setDetail(previous => previous?.conversation.id === message.conversation_id ? {
+                      ...previous, messages: previous.messages.map(item => item.id === message.id ? { ...item, help_record: record } : item),
+                    } : previous);
+                    return record;
+                  } catch (reason) {
+                    if (conversationIdRef.current === message.conversation_id) setFailedHelpDisplays(previous => ({ ...previous, [message.id]: characters }));
+                    throw reason;
+                  }
+                }}
                 editing={editingMessageId === message.id}
                 editDisabled={!entryReady || Boolean(currentRun) || status === "submitting" || (Boolean(editingMessageId) && editingMessageId !== message.id)}
                 sendDisabled={!canSend}
@@ -1184,6 +1204,15 @@ export default function AiLearningRoom({
               </div>
             )}
       </LearningChatPanel>
+      {helpHistoryOpen && <ConversationHelpDialog key={conversationId ?? 'new'} messages={detail?.messages ?? []} title={conversationTitle} failedDisplays={failedHelpDisplays} triggerRef={helpHistoryTriggerRef} onRetryDisplay={async message => {
+        const characters = failedHelpDisplays[message.id];
+        if (!characters || message.conversation_id !== conversationIdRef.current) return;
+        const record = await recordAiHelpDisplay(message.conversation_id, message.id, characters);
+        setFailedHelpDisplays(previous => { const next = { ...previous }; delete next[message.id]; return next; });
+        setDetail(previous => previous?.conversation.id === message.conversation_id ? {
+          ...previous, messages: previous.messages.map(item => item.id === message.id ? { ...item, help_record: record } : item),
+        } : previous);
+      }} onClose={closeHelpHistory} />}
       {deleteTarget && <ConversationDeleteDialog
         conversation={deleteTarget}
         busy={historyActionBusy === deleteTarget.id}
@@ -1198,6 +1227,59 @@ export default function AiLearningRoom({
 
 function scopeNoun(scope: AiContextScope) {
   return { independent: "独立", global: "全局", plan: "当前计划", task: "当前任务" }[scope];
+}
+
+function ConversationHelpDialog({ messages, title, failedDisplays, triggerRef, onRetryDisplay, onClose }: {
+  messages: AiMessage[]; title: string; failedDisplays: Record<string, number>;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  onRetryDisplay: (message: AiMessage) => Promise<void>;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryErrorId, setRetryErrorId] = useState<string | null>(null);
+  const entries = messages.filter(message => message.role === 'assistant' && message.help_record);
+  useEffect(() => {
+    dialogRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const buttons = Array.from(dialogRef.current.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+      const first = buttons[0], last = buttons.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.removeEventListener('keydown', onKeyDown); triggerRef.current?.focus(); };
+  }, [onClose, triggerRef]);
+
+  return <DialogPortal><div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <section ref={dialogRef} tabIndex={-1} className="ai-help-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-help-dialog-title">
+      <header className="dialog-header"><div><p className="eyebrow">CURRENT CONVERSATION</p><h2 id="ai-help-dialog-title">帮助记录</h2><p className="ai-help-dialog-title">{title}</p></div><button className="icon-button" type="button" aria-label="关闭帮助记录" onClick={onClose}><X size={18} /></button></header>
+      <div className="ai-help-dialog-body">
+        {entries.length === 0 ? <p>当前对话还没有帮助记录。无记录不证明独立完成。</p> : entries.map(message => {
+          const question = messages.find(item => item.id === message.parent_message_id);
+          const questionVersions = question ? messages.filter(item => item.role === 'user' && (item.question_version_id ?? item.id) === (question.question_version_id ?? question.id)) : [];
+          const questionIndex = questionVersions.findIndex(item => item.id === question?.id) + 1;
+          const answerVersions = messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
+          const answerIndex = answerVersions.findIndex(item => item.id === message.id) + 1;
+          return <article key={message.id} className="ai-help-dialog-entry">
+            <h3>问题版本 {questionIndex || '?'} / {questionVersions.length || '?'} · 回答版本 {answerIndex} / {answerVersions.length}</h3>
+            <p className="ai-help-dialog-question">{question?.content ?? '原问题不可用'}</p>
+            <HelpRecordFacts record={message.help_record!} />
+            {failedDisplays[message.id] && !message.help_record?.display && <p role="alert">页面呈现记录未保存。
+              <button className="text-button" type="button" disabled={retryingId === message.id} onClick={async () => {
+                setRetryingId(message.id); setRetryErrorId(null);
+                try { await onRetryDisplay(message); } catch { setRetryErrorId(message.id); }
+                finally { setRetryingId(null); }
+              }}>{retryingId === message.id ? '重试中' : '重试保存'}</button>
+              {retryErrorId === message.id && ' 重试失败，请稍后再试。'}
+            </p>}
+          </article>;
+        })}
+      </div>
+    </section>
+  </div></DialogPortal>;
 }
 
 function learningContextTitle(context: AiLearningContext | null, scope: AiContextScope) {
@@ -1296,8 +1378,9 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message, automatic = false, onRetry, retryDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit }: {
+function MessageBubble({ message, automatic = false, onRetry, retryDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay }: {
   message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean;
+  onHelpDisplay: (characters: number) => Promise<NonNullable<AiMessage['help_record']>>;
   version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
   editing: boolean; editDisabled: boolean; sendDisabled: boolean; onStartEdit: () => void; onCancelEdit: () => void; onSendEdit: (text: string) => Promise<boolean>;
 }) {
@@ -1308,7 +1391,7 @@ function MessageBubble({ message, automatic = false, onRetry, retryDisabled, ver
   return (
     <LearningMessage role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
       <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
-      <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} onDisplay={characters => recordAiHelpDisplay(message.conversation_id, message.id, characters)} />
+      <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />
       <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} />
     </LearningMessage>
   );

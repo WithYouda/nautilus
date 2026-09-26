@@ -12,6 +12,80 @@ test.beforeEach(async ({ page }) => {
   for (const conversation of conversations) expect((await page.request.delete(`/api/ai/conversations/${conversation.id}`)).ok()).toBeTruthy();
 });
 
+test('learning room keeps help records in one conversation dialog across answer versions and refresh', async ({ page }) => {
+  test.setTimeout(45_000);
+  await configureProvider(page.context().request, 'mock-success');
+  await page.reload();
+  await openLearningRoom(page);
+  const firstRun = waitForSentRun(page);
+  await page.getByRole('button', { name: '给个提示', exact: true }).click();
+  const { conversationId } = await firstRun;
+  const answer = page.locator('.ai-message--assistant');
+  await expect(answer).toContainText('完成');
+  await expect(answer.getByText('帮助记录', { exact: true })).toHaveCount(0);
+  await expect.poll(async () => (await getConversation(page.request, conversationId)).messages[1].help_record.display).not.toBeNull();
+  let failDisplayOnce = true;
+  await page.route('**/help-display', route => {
+    if (failDisplayOnce) { failDisplayOnce = false; return route.abort('failed'); }
+    return route.continue();
+  });
+  await answer.getByRole('button', { name: '重新生成', exact: true }).click();
+  await expect(answer.getByLabel('回答 2/2')).toBeVisible();
+  await expect.poll(() => failDisplayOnce).toBe(false);
+  await page.getByRole('button', { name: '当前对话帮助记录' }).click();
+  const dialog = page.getByRole('dialog', { name: '帮助记录' });
+  await expect(dialog.locator('.ai-help-dialog-entry')).toHaveCount(2);
+  await expect(dialog.getByText('回答版本 1 / 2', { exact: false })).toBeVisible();
+  await expect(dialog.getByText('回答版本 2 / 2', { exact: false })).toBeVisible();
+  await expect(dialog.getByText('页面呈现正文（客户端记录）：', { exact: false }).first()).toContainText('字符');
+  await dialog.getByRole('button', { name: '重试保存' }).click();
+  await expect(dialog.getByRole('button', { name: '重试保存' })).toHaveCount(0);
+  await expect.poll(async () => (await getConversation(page.request, conversationId)).messages.at(-1).help_record.display).not.toBeNull();
+  await page.setViewportSize({ width: 390, height: 800 });
+  await expect(dialog).toBeInViewport();
+  await page.screenshot({ path: '/tmp/nautilus-help-dialog-mobile.png' });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: '新建对话' }).click();
+  await page.getByRole('button', { name: '当前对话帮助记录' }).click();
+  await expect(dialog.locator('.ai-help-dialog-entry')).toHaveCount(0);
+  await expect(dialog).toContainText('当前对话还没有帮助记录');
+  await dialog.getByRole('button', { name: '关闭帮助记录' }).click();
+  await page.getByRole('button', { name: '对话历史' }).click();
+  await page.getByLabel('对话列表').locator(`[data-conversation-id="${conversationId}"]`).click();
+  await expect(answer.getByLabel('回答 2/2')).toBeVisible();
+  await page.reload();
+  await expect(answer.getByLabel('回答 2/2')).toBeVisible();
+  await page.getByRole('button', { name: '当前对话帮助记录' }).click();
+  await expect(dialog.locator('.ai-help-dialog-entry')).toHaveCount(2);
+  await dialog.getByRole('button', { name: '关闭帮助记录' }).click();
+
+  const hiddenResponse = await page.request.post('/api/ai/conversations', { data: { title: '隐藏版本帮助记录' } });
+  expect(hiddenResponse.status()).toBe(201);
+  const hiddenId = (await hiddenResponse.json()).conversation.id as string;
+  const sent = await page.request.post(`/api/ai/conversations/${hiddenId}/messages`, { data: {
+    content: '合成旧问题版本', client_message_id: 'hidden-question-first', help_request: 'hint',
+  } });
+  expect(sent.status()).toBe(202);
+  await expect.poll(async () => (await getConversation(page.request, hiddenId)).active_run).toBeNull();
+  const oldQuestionId = (await getConversation(page.request, hiddenId)).messages[0].id;
+  const edited = await page.request.post(`/api/ai/conversations/${hiddenId}/messages`, { data: {
+    content: '合成新问题版本', client_message_id: 'hidden-question-edited', edit_message_id: oldQuestionId,
+  } });
+  expect(edited.status()).toBe(202);
+  await expect.poll(async () => (await getConversation(page.request, hiddenId)).active_run).toBeNull();
+  await page.reload();
+  await expect(answer.getByLabel('回答 2/2')).toBeVisible();
+  await page.getByRole('button', { name: '对话历史' }).click();
+  await page.getByLabel('对话列表').locator(`[data-conversation-id="${hiddenId}"]`).click();
+  await expect(page.locator('.ai-message--assistant')).toHaveCount(1);
+  await expect(page.locator('.ai-message--user')).toContainText('合成新问题版本');
+  await page.getByRole('button', { name: '当前对话帮助记录' }).click();
+  await expect(dialog.locator('.ai-help-dialog-entry')).toHaveCount(2);
+  const hidden = await getConversation(page.request, hiddenId);
+  expect(hidden.messages[1].help_record.display).toBeNull();
+});
+
 test("provider connection distinguishes an unreachable local API from an upstream error", async ({ page }) => {
   await page.getByRole("button", { name: "打开 AI 学习伙伴" }).click();
   await page.getByRole("button", { name: "提供方设置" }).first().click();

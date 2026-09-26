@@ -255,6 +255,16 @@
 .help-record { margin-top: .5rem; font-size: .8rem; color: var(--text-muted, #686868); }
 .help-record summary { cursor: pointer; }
 .help-record p { margin: .3rem 0; }
+.help-record-observer { height: 0; overflow: hidden; }
+.ai-help-dialog { width: min(680px, 100%); max-height: calc(100vh - 48px); overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); box-shadow: var(--shadow); }
+.ai-help-dialog .dialog-header h2 { margin-top: 0; }
+.ai-help-dialog-title { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+.ai-help-dialog-body { padding: 18px 22px 22px; font-size: 12px; }
+.ai-help-dialog-entry { padding: 14px 0; border-top: 1px solid var(--line); }
+.ai-help-dialog-entry:first-child { padding-top: 0; border-top: 0; }
+.ai-help-dialog-entry h3 { margin: 0 0 6px; font-size: 13px; }
+.ai-help-dialog-entry p { margin: 5px 0; }
+.ai-help-dialog-question { max-height: 5em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
 
 .ai-composer-suggestions { grid-column: 1 / -1; grid-row: 1; min-width: 0; }
 .ai-composer--suggestions textarea, .ai-composer--suggestions .ai-composer-actions { grid-row: 2; }
