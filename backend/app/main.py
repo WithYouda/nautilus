@@ -33,6 +33,8 @@ from .learning_storage import open_learning_database
 from .verification import VerificationService
 from .question_discussion import QuestionDiscussionService
 from .model_discovery import ModelDiscoveryService
+from .materials import MaterialService
+from .routers import materials
 from .network import wsl_ip
 from .plan_editor import PlanEditorService
 from .plans import PlanService
@@ -71,6 +73,8 @@ def create_app(
         conversation_service = ConversationService(database, plan_service, credential_store)
         search_service = SearchService(credential_store, transport=provider_transport)
         conversation_service.search_service = search_service
+        material_service = MaterialService(learning_service, conversation_service)
+        conversation_service.materials = material_service
         learning_setup_service = LearningSetupService(
             learning_service,
             conversation_service,
@@ -131,6 +135,7 @@ def create_app(
         app.state.evidence_events = evidence_events
         app.state.credentials = credential_store
         app.state.search = search_service
+        app.state.materials = material_service
         app.state.conversations = conversation_service
         app.state.ai_runs = ai_run_manager
         app.state.model_discovery = model_discovery
@@ -170,6 +175,7 @@ def create_app(
     app.include_router(delayed_follow_up.router)
     app.include_router(ai.router)
     app.include_router(search.router)
+    app.include_router(materials.router)
     return app
 
 

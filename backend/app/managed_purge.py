@@ -50,9 +50,14 @@ def scrub_snapshot(path, owner, kind, object_id, now, submission_ids=(), artifac
         connection.execute('PRAGMA synchronous=FULL')
         # Offline snapshots can predate WAL or use PERSIST journals. DELETE
         # mode removes old rollback-journal payloads after the scrub commits.
-        connection.execute('PRAGMA journal_mode=DELETE')
         if not columns(connection, 'learning_raw_artifact'):
+            if columns(connection, 'ai_run') and columns(connection, 'conversation'):
+                # Material erasure registers both databases. These learning-only
+                # object kinds have no ordinary-chat copies in their contracts;
+                # material erasure itself uses the dedicated cross-DB scrubber.
+                return
             raise ValueError('unrecognized_backup')
+        connection.execute('PRAGMA journal_mode=DELETE')
         connection.execute('BEGIN IMMEDIATE')
         try:
             erase(connection, owner, kind, object_id, now, submission_ids=submission_ids, artifact_ids=artifact_ids)

@@ -59,7 +59,11 @@ def _add_results(trace, result, fetch):
                     for item in result.get("urls", [])]
     by_url = {item["url"]: item for item in trace["items"]}
     for item in incoming:
-        clean = {**item, "text": str(item.get("text", ""))[:12000]}
+        raw_text = str(item.get("text", ""))
+        clean = {**item, "text": raw_text[:12000],
+                 "content_kind": "page" if fetch else "excerpt",
+                 "content_truncated": len(raw_text) > 12000,
+                 "retrieved_at": result["retrieved_at"]}
         if clean["url"] in by_url:
             by_url[clean["url"]].update(clean)
         elif len(trace["items"]) < 50:

@@ -11,6 +11,7 @@ from .learning_domain import DomainError
 from .learning_room import LearningRoomService
 from .learning_setup import _clean_json
 from .providers import ProviderError, build_provider
+from .source_runtime import scoped_path
 
 
 class PositionText(BaseModel):
@@ -36,7 +37,7 @@ class LearningPositionService:
             raise DomainError("not_found", 404) from exc
         if path[-1]["role"] != "assistant" or path[-1]["status"] != "complete":
             raise DomainError("position_answer_pending", 409)
-        return room["brief"], path
+        return room["brief"], scoped_path(path, path[-1].get('source_scope'))
 
     def _run(self, identity, conversation_id, message_id):
         row = self.chats.database.fetchone(

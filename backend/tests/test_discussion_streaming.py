@@ -203,6 +203,13 @@ async def test_upgrade_028_preserves_existing_turn_and_erases_new_reasoning(lear
         legacy.executescript('CREATE TRIGGER learning_discussion_erase_turns' + old_migration.split('CREATE TRIGGER learning_discussion_erase_turns', 1)[1])
         # Build a real 028 ceiling: a later migration cannot remain applied
         # while 029 is absent, and its completion tables did not exist in 028.
+        legacy.execute('DROP TRIGGER learning_discussion_purge_materials')
+        legacy.execute('DROP TABLE learning_task_material')
+        legacy.execute('DROP TRIGGER learning_delayed_source_erased')
+        legacy.execute('DROP TABLE learning_delayed_view')
+        legacy.execute('DROP TABLE learning_delayed_attempt')
+        legacy.execute('DROP TABLE learning_delayed_follow_up')
+        legacy.execute("DELETE FROM schema_migrations WHERE version >= '032'")
         legacy.execute('DROP TRIGGER learning_practice_source_erased')
         legacy.execute('DROP TABLE learning_practice_run')
         legacy.execute('DROP TABLE learning_practice_attempt')

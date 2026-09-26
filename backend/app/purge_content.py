@@ -205,6 +205,9 @@ def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifac
         _update(connection, 'learning_discussion_turn', dict(user_content=None, assistant_content=None, reasoning_content=None,
             sources_json='[]', provider_snapshot_json='{}', status='purged', reason='content_purged', finished_at=now),
             'discussion_id=?', (discussion,))
+        _update(connection, 'learning_task_material', dict(title=None, content=None, url=None,
+            provenance_json='{}', purged_at=now), 'owner_id=? AND scope_kind=? AND scope_id=?',
+            (owner, 'discussion', discussion))
 
     claims = set()
     for artifact in artifacts:

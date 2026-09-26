@@ -10,6 +10,7 @@ import type { SearchTrace } from "./SearchResults";
 import AssistantResponse, { type GenerationTrace } from "./AssistantResponse";
 import HelpControls from "./HelpControls";
 import HelpRecord, { HelpRecordFacts } from "./HelpRecord";
+import TaskMaterials, { MaterialUse, emptySourceScope, readSourceScope, webMaterialCandidates } from './TaskMaterials';
 import {
   ApiError,
   recordLearningRoomEntry,
@@ -43,6 +44,8 @@ import {
   type AiLearningContext,
   type AiRun,
   type AiStreamEvent,
+  type SourceScope,
+  type MaterialVersion,
   type LearningRoomBrief,
   type Task,
 } from "./api";
@@ -65,6 +68,7 @@ type PendingSubmission = {
   conversationId: string | null;
   clientMessageId: string;
   search?: SearchSelection;
+  sourceScope?: SourceScope;
   helpRequest?: HelpRequestKind | null;
   regenerateMessageId?: string;
   editMessageId?: string;
@@ -122,6 +126,7 @@ function readSession(): RoomSession | null {
             parentMessageId: parsed.pending.parentMessageId,
             clientMessageId: typeof parsed.pending.clientMessageId === "string" ? parsed.pending.clientMessageId : "",
             search: parsed.pending.search && typeof parsed.pending.search === "object" && ["off", "external", "native"].includes(parsed.pending.search.mode) ? parsed.pending.search : undefined,
+            sourceScope: parsed.pending.sourceScope && ['unspecified', 'reference', 'only'].includes(parsed.pending.sourceScope.mode) && Array.isArray(parsed.pending.sourceScope.version_ids) ? parsed.pending.sourceScope : undefined,
             helpRequest: ["hint", "explain_step", "example", "try_first"].includes(parsed.pending.helpRequest ?? "") ? parsed.pending.helpRequest : null,
           }
         : undefined,
@@ -315,6 +320,8 @@ export default function AiLearningRoom({
   const sendingRef = useRef(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [searchSelection, setSearchSelection] = useState<SearchSelection>({ mode: "off" });
+  const [sourceScope, setSourceScope] = useState<SourceScope>(emptySourceScope);
+  const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
   const closeHelpHistory = useCallback(() => setHelpHistoryOpen(false), []);
@@ -327,7 +334,7 @@ export default function AiLearningRoom({
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id);
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
 
-  useEffect(() => { setEditingMessageId(null); setSearchSelection({ mode: "off" }); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
+  useEffect(() => { setEditingMessageId(null); setSearchSelection({ mode: "off" }); setSourceScope(detail?.conversation ? readSourceScope('conversation', detail.conversation.identity_id, detail.conversation.id) : emptySourceScope()); setMaterialVersions([]); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
 
   conversationIdRef.current = conversationId;
   currentRunRef.current = currentRun;
@@ -727,6 +734,7 @@ export default function AiLearningRoom({
 
   async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
     if (!entryReady || !content || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
+    if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本，或改为未指定资料。'); return false; }
     const unresolved = pendingSubmissionRef.current;
     if (unresolved && (pendingContentRef.current !== content || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
       setError("上次发送结果尚未确认。请先用原问题重试，或重新打开对话核对已保存的消息。");
@@ -757,12 +765,13 @@ export default function AiLearningRoom({
       const parentMessageId = canReusePending ? savedPending!.parentMessageId : (!regenerateMessageId && !editMessageId ? replyHistory.leaf ?? undefined : undefined);
       const frozenSearch = canReusePending ? savedPending!.search ?? { mode: "off" as const } : automatic ? { mode: "off" as const } : structuredClone(searchSelection);
       const frozenHelp = canReusePending ? savedPending!.helpRequest ?? null : requestedHelp !== undefined ? requestedHelp : regenerateMessageId ? detail?.messages.find(message => message.id === regenerateMessageId)?.help_record?.request?.kind ?? null : null;
-      const pending: PendingSubmission = { search: frozenSearch, helpRequest: frozenHelp, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
+      const frozenScope = canReusePending ? savedPending!.sourceScope ?? emptySourceScope() : sourceScope;
+      const pending: PendingSubmission = { search: frozenSearch, sourceScope: frozenScope, helpRequest: frozenHelp, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, ...(frozenSearch.mode === "off" ? {} : { search: frozenSearch }) });
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, source_scope: frozenScope, ...(frozenScope.mode === 'unspecified' && frozenSearch.mode !== "off" ? { search: frozenSearch } : {}) });
       if (!mountedRef.current) return false;
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
       pendingSubmissionRef.current = null;
@@ -1152,14 +1161,14 @@ export default function AiLearningRoom({
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<SearchControls value={searchSelection} onChange={setSearchSelection} disabled={!canSend || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} />} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={setSearchSelection} disabled={!canSend || Boolean(editingMessageId) || sourceScope.mode !== 'unspecified'} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) setDetail(next); } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
               const versions = message.role === 'user'
                 ? detail!.messages.filter(item => item.role === 'user' && (item.question_version_id ?? item.id) === (message.question_version_id ?? message.id))
                 : detail!.messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
               const versionIndex = versions.findIndex(item => item.id === message.id);
-              return <MessageBubble key={message.id} message={message} retryDisabled={!canSend || Boolean(editingMessageId)}
+              return <MessageBubble key={message.id} message={message} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)}
                 onHelpDisplay={async characters => {
                   try {
                     const record = await recordAiHelpDisplay(message.conversation_id, message.id, characters);
@@ -1378,8 +1387,8 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message, automatic = false, onRetry, retryDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay }: {
-  message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean;
+function MessageBubble({ message, automatic = false, onRetry, retryDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
+  message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; materialVersions: MaterialVersion[];
   onHelpDisplay: (characters: number) => Promise<NonNullable<AiMessage['help_record']>>;
   version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
   editing: boolean; editDisabled: boolean; sendDisabled: boolean; onStartEdit: () => void; onCancelEdit: () => void; onSendEdit: (text: string) => Promise<boolean>;
@@ -1391,6 +1400,7 @@ function MessageBubble({ message, automatic = false, onRetry, retryDisabled, ver
   return (
     <LearningMessage role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
       <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
+      <MaterialUse scope={message.source_scope} versions={materialVersions} />
       <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />
       <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} />
     </LearningMessage>

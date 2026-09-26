@@ -31,11 +31,12 @@ def test_upgrade_029_to_current_preserves_existing_learning_facts(tmp_path):
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '029_discussion_reasoning'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '032_delayed_follow_up'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '033_task_materials'
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute('SELECT * FROM learning_event ORDER BY position').fetchall() == before
         assert connection.execute('SELECT status FROM learning_session WHERE id=?', (context['session_id'],)).fetchone()[0] == 'running'
         assert connection.execute('SELECT COUNT(*) FROM learning_completion').fetchone()[0] == 0
+        assert connection.execute('SELECT COUNT(*) FROM learning_task_material').fetchone()[0] == 0
         assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
 

@@ -404,7 +404,29 @@ export type AiMessage = {
   search_trace?: SearchTrace | null;
   generation_trace?: GenerationTrace | null;
   help_record?: HelpRecord | null;
+  source_scope?: AppliedSourceScope | null;
 };
+export type SourceScope = { mode: 'unspecified' | 'reference' | 'only'; version_ids: string[] };
+export type AppliedSourceScope = SourceScope & {
+  material_ids: string[];
+  materials: Array<{ id: string; material_id: string; version: number; title: string; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; cited: boolean }>;
+  fingerprint: string;
+  purged?: boolean;
+};
+export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; provenance?: Record<string, unknown> };
+export type MaterialKind = 'conversation' | 'discussion';
+export function getMaterials(kind: MaterialKind, id: string): Promise<{ versions: MaterialVersion[] }> {
+  return request(`/api/materials/${kind}/${id}`);
+}
+export function saveMaterial(kind: MaterialKind, id: string, payload: { title: string; content?: string; material_id?: string; web_run_id?: string; web_item_index?: number }): Promise<MaterialVersion> {
+  return request(`/api/materials/${kind}/${id}`, { method: 'POST', body: JSON.stringify(payload) });
+}
+export function purgeMaterial(kind: MaterialKind, id: string, materialId: string): Promise<{ purge: PurgeReport; affected_run_ids?: string[] }> {
+  return request(`/api/materials/${kind}/${id}/${materialId}/purge`, { method: 'POST', body: JSON.stringify({ confirmation: 'PURGE' }) });
+}
+export function getMaterialPurge(kind: MaterialKind, id: string, materialId: string): Promise<PurgeReport> {
+  return request(`/api/materials/${kind}/${id}/${materialId}/purge`);
+}
 
 export type AiRunStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
@@ -929,7 +951,7 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
-  versions: { edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null } = {},
+  versions: { edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -1978,11 +2000,11 @@ export type VerificationReview = {
   purge_discussion_count: number;
 };
 export type QuestionDiscussion = {
-  id: string; verification_id: string; submission_id: string; evaluation_id?: string | null; question_id: string; purged: boolean;
+  id: string; identity_id?: string; verification_id: string; submission_id: string; evaluation_id?: string | null; question_id: string; purged: boolean;
   help_displays?: Record<string, ReferenceHelpDisplay>;
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
   provider_protocol?: AiApiProtocol | null;
-  turns: Array<{ search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+  turns: Array<{ search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; source_scope?: AppliedSourceScope | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; outcome_id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
@@ -2021,7 +2043,7 @@ export function createQuestionDiscussion(id: string, submissionId: string, quest
   return request(`/api/learning/verifications/${id}/discussions`, { method: 'POST', body: JSON.stringify({ submission_id: submissionId, question_id: questionId, request_key: requestKey, evaluation_id: evaluationId }) });
 }
 export function getQuestionDiscussion(id: string): Promise<QuestionDiscussion> { return request(`/api/learning/discussions/${id}`); }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null } = {}): Promise<QuestionDiscussion> {
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {}): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
 }
 export function recordDiscussionHelpDisplay(discussionId: string, turnId: string, characters: number): Promise<HelpRecord> {

@@ -310,6 +310,7 @@ class ConversationUpdateRequest(BaseModel):
 
 
 class MessageSendRequest(BaseModel):
+    source_scope: dict[str, Any] | None = None
     search: dict[str, Any] | None = None
     help_request: Literal["hint", "explain_step", "example", "try_first"] | None = None
     regenerate_message_id: str | None = Field(default=None, max_length=64)
@@ -632,6 +633,7 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 
 class QuestionDiscussionMessageRequest(BaseModel):
+    source_scope: dict[str, Any] | None = None
     search: dict[str, Any] | None = None
     help_request: Literal["hint", "explain_step", "example", "try_first"] | None = None
     regenerate_turn_id: str | None = Field(default=None, max_length=64)

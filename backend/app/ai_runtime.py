@@ -96,6 +96,7 @@ class AiRunManager:
         edit_message_id: str | None = None,
         search: dict | None = None,
         help_request: str | None = None,
+        source_scope: dict | None = None,
     ) -> dict[str, Any]:
         prepared = self.conversations.prepare_run(
             identity_id,
@@ -104,6 +105,7 @@ class AiRunManager:
             client_message_id=client_message_id,
             search=search,
             help_request=help_request,
+            **({"source_scope": source_scope} if source_scope is not None else {}),
             **({"regenerate_message_id": regenerate_message_id,
                 "parent_message_id": parent_message_id,
                 "edit_message_id": edit_message_id}
@@ -128,6 +130,8 @@ class AiRunManager:
                 prepared["history"], prepared["context"],
                 search_enabled=bool(prepared.get("search_run") and prepared["search_run"].selection["mode"] != "off"),
             )
+            if prepared.get("material_prompt"):
+                messages[0]["content"] += "\n" + prepared["material_prompt"]
             from .help_records import HELP_PROMPTS
             help_kind = json.loads(run.get("config_snapshot_json") or "{}").get("help_request", {}).get("kind")
             if help_kind in HELP_PROMPTS:
@@ -448,6 +452,34 @@ class AiRunManager:
         return self.conversations.owned_run(identity_id, run_id)
 
     # ------------------------------------------------------------------
+    def forget_material_runs(self, run_ids):
+        for run_id in run_ids:
+            state = self._runs.get(run_id)
+            if state is None:
+                continue
+            state.cancel_requested = True
+            state.finished = True
+            state.status = 'canceled'
+            state.chunks.clear()
+            state.reasoning_chunks.clear()
+            state.response_chars = 0
+            state.search_trace = {'mode': 'off', 'status': 'off', 'items': []}
+            state.generation_trace = None
+            state.recorder = None
+            state.error_kind = state.error_message = None
+            if state.task and not state.task.done():
+                state.task.cancel()
+            for queue in state.subscribers:
+                while not queue.empty():
+                    queue.get_nowait()
+                queue.put_nowait(sse_event('start', {
+                    'run_id': run_id, 'conversation_id': state.conversation_id,
+                    'message_id': state.response_message_id, 'status': 'canceled',
+                    'content': '', 'reasoning_content': '', 'search_trace': state.search_trace,
+                    'generation_trace': None,
+                }))
+            self._broadcast(state, None)
+
     async def stream(self, identity_id: str, run_id: str) -> AsyncIterator[str]:
         run = self.conversations.owned_run(identity_id, run_id)
         state = self._runs.get(run_id)

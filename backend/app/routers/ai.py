@@ -536,6 +536,7 @@ async def send_message(
             edit_message_id=payload.edit_message_id,
             search=payload.search,
             help_request=payload.help_request,
+            source_scope=payload.source_scope,
         )
     except ConversationError as error:
         _raise(error)

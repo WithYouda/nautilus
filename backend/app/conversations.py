@@ -13,6 +13,7 @@ from .db import Database
 from .plans import PlanError, PlanService
 from .providers import ProviderConfig, normalize_base_url
 from .help_records import public_help, record_display
+from .source_runtime import material_guard, scope_key, scoped_path, public_scope
 
 # 单次请求带入的历史消息条数上限，避免上下文无界增长。
 HISTORY_LIMIT = 20
@@ -98,6 +99,7 @@ class ConversationService:
         self.credentials = credentials
         self._provider_lock = threading.RLock()
         self.search_service = None
+        self.materials = None
 
     def _protocol(self, profile, model_id=None):
         if profile is None:
@@ -1447,6 +1449,7 @@ class ConversationService:
             item = dict(row)
             snapshot = json.loads(item.pop("config_snapshot_json") or "{}")
             reply = snapshot.get("reply", {})
+            item["source_scope"] = public_scope(snapshot.get("source_scope"), item["content"])
             if item["role"] == "assistant":
                 item["search_trace"] = snapshot.get("search_trace")
                 item["generation_trace"] = snapshot.get("generation_trace")
@@ -1539,7 +1542,7 @@ class ConversationService:
 
     def _existing_submission(
         self, conversation_id, client_message_id, content, *, connection=None,
-        regenerate_message_id=None, parent_message_id=None, edit_message_id=None, search=None, help_request=None,
+        regenerate_message_id=None, parent_message_id=None, edit_message_id=None, search=None, help_request=None, source_scope=None,
     ):
         query = connection.execute if connection is not None else self.database.connection.execute
         existing = query("SELECT * FROM message WHERE conversation_id=? AND client_message_id=?",
@@ -1551,6 +1554,8 @@ class ConversationService:
         if not run:
             raise ConversationError("这条消息已提交，但缺少对应的 AI 运行记录")
         snapshot = json.loads(run["config_snapshot_json"] or "{}")
+        if snapshot.get("source_request", {"mode": "unspecified", "version_ids": []}) != (source_scope or {"mode": "unspecified", "version_ids": []}):
+            raise ConversationConflict("同一 client_message_id 已用于不同的资料范围")
         if snapshot.get("search_request", {"mode": "off"}) != (search or {"mode": "off"}):
             raise ConversationConflict("同一 client_message_id 已用于不同的搜索选择")
         if (snapshot.get("help_request") or {}).get("kind") != help_request:
@@ -1565,6 +1570,7 @@ class ConversationService:
             raise ConversationConflict("同一 client_message_id 已用于不同的消息内容或回答版本")
         return {"created": False, "run": dict(run), "history": [], "context": None}
 
+    @material_guard
     def prepare_run(
         self,
         identity_id: str,
@@ -1577,6 +1583,7 @@ class ConversationService:
         edit_message_id: str | None = None,
         search: dict | None = None,
         help_request: str | None = None,
+        source_scope: dict | None = None,
     ) -> dict[str, Any]:
         """写入用户消息、上下文快照、助手占位消息和 queued 运行记录。
 
@@ -1596,7 +1603,7 @@ class ConversationService:
             if original:
                 help_request = (json.loads(original["config_snapshot_json"] or "{}").get("help_request") or {}).get("kind")
 
-        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request)
+        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope)
         if replayed:
             return replayed
 
@@ -1605,9 +1612,22 @@ class ConversationService:
             identity_id, conversation_id
         )
 
+        frozen = None
+        if self.materials is not None and source_scope not in (None, {'mode': 'unspecified', 'version_ids': []}):
+            from .learning_domain import DomainError
+            try:
+                identity = dict(self.database.fetchone("SELECT * FROM local_identity WHERE id=?", (identity_id,)))
+                frozen = self.materials.freeze(identity, "conversation", conversation_id, source_scope)
+            except DomainError as error:
+                raise ConversationError("资料范围不可用，请重新选择资料") from error
+        elif source_scope and source_scope.get("mode") != "unspecified":
+            raise ConversationError("资料服务不可用")
+        material_bound = bool(frozen and frozen["mode"] != "unspecified")
+        config_snapshot["source_request"] = source_scope or {"mode": "unspecified", "version_ids": []}
+        config_snapshot["source_scope"] = public_scope(frozen)
         from .search_adapters import SearchError
         search_run = None
-        if self.search_service is not None:
+        if self.search_service is not None and not material_bound:
             try:
                 search_run = self.search_service.prepare(identity_id, search, config.provider_kind)
             except SearchError as error:
@@ -1616,7 +1636,7 @@ class ConversationService:
         if help_request:
             config_snapshot["help_request"] = {"kind": help_request, "at": _now()}
         config_snapshot["search_trace"] = search_run.initial_trace() if search_run else {"mode": "off", "status": "off", "items": []}
-        context = self.context_for_conversation(identity_id, conversation_id)
+        context = None if frozen and frozen["mode"] == "only" else self.context_for_conversation(identity_id, conversation_id)
 
         now = _now()
         run_id = _id()
@@ -1630,7 +1650,7 @@ class ConversationService:
                 replayed = self._existing_submission(
                     conversation_id, client_message_id, text, connection=connection,
                     regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id,
-                    edit_message_id=edit_message_id, search=search, help_request=help_request
+                    edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope
                 )
                 if replayed:
                     return replayed
@@ -1691,9 +1711,11 @@ class ConversationService:
                     question_version_id = question.get("question_version_id", question["id"])
                 if parent_id and (parent_id not in by_id or by_id[parent_id]["role"] != "assistant"):
                     raise ConversationError("回答上下文不存在")
-                history = [self._history_message(connection, item, bool(search_run and search_run.selection["mode"] == "external"))
-                           for item in self.message_path(messages, parent_id)
-                           if item["status"] == "complete" and item["content"]][-HISTORY_LIMIT:]
+                history_items = [item for item in scoped_path(self.message_path(messages, parent_id), frozen)
+                                 if item['status'] == 'complete' and item['content']][-HISTORY_LIMIT:]
+                history = [self._history_message(connection, item, bool(search_run and search_run.selection['mode'] == 'external'))
+                           for item in history_items]
+                config_snapshot['source_history_message_ids'] = [item['id'] for item in history_items]
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,
@@ -1790,7 +1812,7 @@ class ConversationService:
         except sqlite3.IntegrityError as error:
             # 并发提交命中唯一索引：另一个协程已经写入了同一个 client_message_id。
             # 返回对方的运行记录，不重复追加消息，也不报错。
-            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request)
+            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope)
             if replayed:
                 return replayed
             active = self.active_run(identity_id, conversation_id)
@@ -1808,6 +1830,7 @@ class ConversationService:
             "context": context,
             "provider_config": config,
             "search_run": search_run,
+            "material_prompt": self.materials.prompt(frozen) if material_bound else None,
         }
 
     def mark_run_running(self, run_id: str) -> bool:
@@ -1914,8 +1937,11 @@ class ConversationService:
         connection: sqlite3.Connection | None = None,
     ) -> list[dict[str, str]]:
         sql = """
-            SELECT id, role, content FROM message
+            SELECT m.id, m.role, m.content FROM message m
             WHERE conversation_id = ? AND status = 'complete' AND content <> ''
+              AND NOT EXISTS (SELECT 1 FROM ai_run r
+                  WHERE (r.response_message_id=m.id OR r.request_message_id=m.id)
+                  AND COALESCE(json_extract(r.config_snapshot_json,'$.source_scope.mode'),'unspecified')<>'unspecified')
             ORDER BY sequence DESC
             LIMIT ?
         """
@@ -1982,6 +2008,8 @@ class ConversationService:
                     (conversation_id, identity_id),
                 ).fetchone()
                 if not trigger or not conversation or conversation["title_generation_status"] != "pending":
+                    return None
+                if scope_key(json.loads(trigger['config_snapshot_json'] or '{}').get('source_scope')) != ('unspecified', ()):
                     return None
                 inputs = self._title_inputs(conversation_id, connection=connection)
                 if not inputs:
