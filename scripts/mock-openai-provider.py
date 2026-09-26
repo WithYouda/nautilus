@@ -120,7 +120,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
-        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review"} else "mock-success"
+        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools"} else "mock-success"
         is_title_request = payload.get("stream") is not True and int(payload.get("max_tokens") or 0) >= 256
         STATE.requested(f"title:{scenario}" if is_title_request else scenario)
 
@@ -183,6 +183,19 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         try:
+            messages = payload.get("messages", [])
+            last_user = max((i for i, message in enumerate(messages) if message.get("role") == "user"), default=-1)
+            has_result = any(message.get("role") == "tool" for message in messages[last_user + 1:])
+            if scenario == "mock-search-tools" and payload.get("tools") and payload.get("tool_choice") != "none" and not has_result:
+                arguments = json.dumps({"query": "Nautilus search reference"})
+                for delta in [
+                    {"tool_calls": [{"index": 0, "id": "mock-call-search", "type": "function", "function": {"name": "search_web", "arguments": arguments[:12]}}]},
+                    {"tool_calls": [{"index": 0, "function": {"arguments": arguments[12:]}}]},
+                ]:
+                    self.wfile.write(("data: " + json.dumps({"choices": [{"delta": delta}]}) + "\n\n").encode())
+                self.wfile.write(b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n')
+                self.wfile.flush()
+                return
             if scenario == "mock-reasoning" or discussion_stream:
                 for reasoning in ["先识别题目条件。", "再核对推导路径。"]:
                     event = json.dumps(
@@ -204,7 +217,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
                 STATE.chunk_delivered(scenario)
                 time.sleep(delay)
-            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.write(b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             STATE.disconnected(scenario)

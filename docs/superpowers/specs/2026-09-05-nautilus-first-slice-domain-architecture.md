@@ -328,4 +328,4 @@ AI 调用分为保存链路和分析链路。保存链路不依赖 AI 成功；�
 
 SearchService在现有加密CredentialStore保存按owner隔离的完整配置；revision防止并发旧设置覆盖，响应只有密钥状态/掩码，脚本也加密落盘。SearchRun在发送时冻结所选实例/参数/密钥。19种外部HTTP协议、隔离QuickJS执行与3种原生模型协议各自有明确入口；无静默换服务，无新增迁移。API协议复用provider_model.overrides_json，公开api_protocol，运行使用实际协议，不改变旧profile约束。
 
-普通会话将实际搜索轨迹写入ai_run.config_snapshot_json，SSE的search及start/done重放携带同一轨迹；讨论写入provider_snapshot_json并复用现有attempt/purge屏障。搜索成功而模型失败时保留取得的来源；取消中的queued/running状态收敛为失败，迟到输出不能恢复。外部补查只在当前实例与次数边界内执行，网页读取限已有结果；来源文本不授予工具或证据权限。Google搜索建议在严格隔离iframe中呈现。服务协议、参数和验证边界见[联网搜索规格](2026-09-26-nautilus-web-search.md)。
+普通会话将实际搜索轨迹写入ai_run.config_snapshot_json，SSE的search及start/done重放携带同一轨迹；讨论写入provider_snapshot_json并复用现有attempt/purge屏障。搜索成功而模型失败时保留取得的来源；取消中的queued/running状态收敛为失败，迟到输出不能恢复。外部搜索先经ToolSession调用当前模型，支持Chat Completions/Responses/Gemini/Anthropic的真实函数协议，保存本轮原生工具调用、结果ID及思考签名供续轮使用；无调用则not_used，禁止预搜或JSON伪工具回退。external_stream只在当前实例与次数边界执行search_web/scrape_web，结果回填模型，耗尽预算后禁用工具完成回答。网页读取限已有结果或用户提供的URL；来源文本不授予工具或证据权限。Google搜索建议在严格隔离iframe中呈现。服务协议、参数和验证边界见[联网搜索规格](2026-09-26-nautilus-web-search.md)。

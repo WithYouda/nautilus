@@ -1,0 +1,421 @@
+"""Client-executed function calls for the four configured model protocols.
+
+This module transports calls and results only. The application owns tool authorization,
+execution, and per-run budgets.
+"""
+from __future__ import annotations
+
+import copy
+import json
+from dataclasses import dataclass
+from typing import Any, AsyncIterator
+
+import httpx
+
+from .providers import ProviderChunk, ProviderError, _ThinkStreamParser
+
+MAX_CALLS = 8
+MAX_ARGUMENTS = 20_000
+MAX_NAME = 128
+MAX_CONTENT = 2_000_000
+MAX_CONTINUATION = 4_000_000
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True)
+class ToolTurn:
+    calls: list[ToolCall]
+    continuation: Any
+
+
+def _bad(message: str = "提供方工具响应格式不正确") -> ProviderError:
+    return ProviderError(message, kind="protocol_error")
+
+
+def _args(value: str) -> str:
+    if len(value.encode("utf-8")) > MAX_ARGUMENTS:
+        raise _bad("提供方工具参数过大")
+    try:
+        parsed = json.loads(value)
+    except ValueError as error:
+        raise _bad("提供方工具参数无法解析") from error
+    if not isinstance(parsed, dict):
+        raise _bad("提供方工具参数格式不正确")
+    return value
+
+
+def _call(id: Any, name: Any, arguments: str) -> ToolCall:
+    if not isinstance(id, str) or not 0 < len(id) <= MAX_NAME:
+        raise _bad()
+    if not isinstance(name, str) or not 0 < len(name) <= MAX_NAME:
+        raise _bad()
+    return ToolCall(id, name, _args(arguments))
+
+
+def _bounded(calls: list[ToolCall]) -> list[ToolCall]:
+    if len(calls) > MAX_CALLS or len({call.id for call in calls}) != len(calls):
+        raise _bad("提供方工具调用数量或标识无效")
+    return calls
+
+
+class ToolSession:
+    """One conversation's wire-faithful function-call history."""
+
+    def __init__(self, provider: Any, messages: list[dict]) -> None:
+        self.provider = provider
+        self.kind = provider.config.provider_kind
+        if self.kind not in {"openai_compatible", "openai_responses", "google", "anthropic"}:
+            raise ProviderError("暂不支持提供方类型", kind="config_error")
+        self.messages = copy.deepcopy(messages)
+        self._history: list[dict] | None = None
+        self._system = ""
+        self._pending: ToolTurn | None = None
+
+    def _initial(self) -> list[dict]:
+        if self.kind in {"openai_compatible", "openai_responses"}:
+            return copy.deepcopy(self.messages)
+        self._system = "\n".join(str(m.get("content", "")) for m in self.messages if m.get("role") == "system")
+        if self.kind == "google":
+            return [{"role": "model" if m.get("role") == "assistant" else "user", "parts": [{"text": str(m.get("content", ""))}]} for m in self.messages if m.get("role") != "system"]
+        return [{"role": "assistant" if m.get("role") == "assistant" else "user", "content": str(m.get("content", ""))} for m in self.messages if m.get("role") != "system"]
+
+    async def stream_turn(self, tools: list[dict], *, allow_tools: bool = True) -> AsyncIterator[ProviderChunk | ToolTurn]:
+        if self._pending is not None:
+            raise ProviderError("上一轮工具结果尚未回填", kind="protocol_error")
+        if self._history is None:
+            self._history = self._initial()
+        if len(tools) > MAX_CALLS:
+            raise ProviderError("工具声明数量过多", kind="config_error")
+        if self.kind == "openai_compatible":
+            async for item in self._chat(tools, allow_tools):
+                yield item
+        elif self.kind == "openai_responses":
+            async for item in self._responses(tools, allow_tools):
+                yield item
+        elif self.kind == "google":
+            async for item in self._google(tools, allow_tools):
+                yield item
+        else:
+            async for item in self._anthropic(tools, allow_tools):
+                yield item
+
+    def _finish(self, calls: list[ToolCall], continuation: Any) -> ToolTurn:
+        if len(json.dumps(continuation, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
+            raise _bad("提供方响应过大")
+        turn = ToolTurn(_bounded(calls), continuation)
+        if turn.calls:
+            self._pending = turn
+        return turn
+
+    def append_results(self, turn: ToolTurn, results: list[dict]) -> None:
+        if self._history is None or self._pending is not turn:
+            raise ProviderError("工具调用轮次无效", kind="protocol_error")
+        expected = {call.id for call in turn.calls}
+        supplied = [result.get("call_id") for result in results]
+        if len(supplied) != len(expected) or set(supplied) != expected:
+            raise ProviderError("工具结果与调用不匹配", kind="protocol_error")
+        if any(not isinstance(result.get("content"), str) or len(result["content"].encode("utf-8")) > MAX_CONTENT for result in results):
+            raise ProviderError("工具结果格式不正确", kind="protocol_error")
+        by_id = {result["call_id"]: result["content"] for result in results}
+        if self.kind == "openai_compatible":
+            self._history.append(copy.deepcopy(turn.continuation))
+            self._history.extend({"role": "tool", "tool_call_id": call.id, "content": by_id[call.id]} for call in turn.calls)
+        elif self.kind == "openai_responses":
+            self._history.extend(copy.deepcopy(turn.continuation))
+            self._history.extend({"type": "function_call_output", "call_id": call.id, "output": by_id[call.id]} for call in turn.calls)
+        elif self.kind == "google":
+            self._history.append(copy.deepcopy(turn.continuation))
+            parts = []
+            for call in turn.calls:
+                response: dict[str, Any] = {"name": call.name, "response": {"result": by_id[call.id]}}
+                if not call.id.startswith("google-local-"):
+                    response["id"] = call.id
+                parts.append({"functionResponse": response})
+            self._history.append({"role": "user", "parts": parts})
+        else:
+            self._history.append({"role": "assistant", "content": copy.deepcopy(turn.continuation)})
+            self._history.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": call.id, "content": by_id[call.id]} for call in turn.calls]})
+        self._pending = None
+
+    async def _chat_events(self, payload: dict) -> AsyncIterator[dict]:
+        provider = self.provider
+        try:
+            async with provider._client() as client:
+                async with client.stream("POST", provider.endpoint, headers=provider._headers(), json=payload) as response:
+                    if not response.is_success:
+                        raise provider._http_error(response.status_code, await provider._read_limited(response))
+                    count = 0
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        if len(data.encode("utf-8")) > 256_000:
+                            raise _bad("提供方流式事件过大")
+                        try:
+                            event = json.loads(data)
+                        except ValueError as error:
+                            raise _bad("提供方流式事件无法解析") from error
+                        if not isinstance(event, dict):
+                            raise _bad()
+                        count += 1
+                        if count > 20_000:
+                            raise _bad("提供方流式事件过多")
+                        yield event
+        except httpx.TimeoutException as error:
+            raise ProviderError("提供方响应超时", kind="timeout") from error
+        except httpx.HTTPError as error:
+            raise ProviderError(f"无法连接提供方：{type(error).__name__}", kind="network_error") from error
+
+    async def _chat(self, tools: list[dict], allow_tools: bool) -> AsyncIterator[ProviderChunk | ToolTurn]:
+        payload = {"model": self.provider.config.model, "messages": self._history, "stream": True,
+                   "tools": [{"type": "function", "function": t} for t in tools],
+                   "tool_choice": "auto" if allow_tools else "none"}
+        indexed: dict[int, dict[str, str]] = {}
+        content, reasoning = "", ""
+        finish = None
+        think_parser = _ThinkStreamParser()
+        async for event in self._chat_events(payload):
+            choices = event.get("choices")
+            if not isinstance(choices, list) or not choices:
+                continue
+            choice = choices[0]
+            if not isinstance(choice, dict):
+                raise _bad()
+            delta = choice.get("delta") or {}
+            if not isinstance(delta, dict):
+                raise _bad()
+            for field, kind in (("reasoning_content", "reasoning"), ("content", "content")):
+                value = delta.get(field)
+                if isinstance(value, str) and value:
+                    if kind == "content":
+                        content += value
+                    else:
+                        reasoning += value
+                    if len(content.encode("utf-8")) + len(reasoning.encode("utf-8")) > MAX_CONTINUATION:
+                        raise _bad("提供方响应过大")
+                    if kind == "content":
+                        for chunk in think_parser.feed(value):
+                            yield chunk
+                    else:
+                        yield ProviderChunk(kind, value)
+            for item in delta.get("tool_calls") or []:
+                if not isinstance(item, dict) or not isinstance(item.get("index"), int):
+                    raise _bad()
+                index = item["index"]
+                if index < 0 or index >= MAX_CALLS:
+                    raise _bad("提供方工具调用数量过多")
+                current = indexed.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                for key, value in (("id", item.get("id")), ("name", (item.get("function") or {}).get("name")), ("arguments", (item.get("function") or {}).get("arguments"))):
+                    if value is not None:
+                        if not isinstance(value, str):
+                            raise _bad()
+                        current[key] += value
+                if len(current["arguments"].encode("utf-8")) > MAX_ARGUMENTS or len(current["name"]) > MAX_NAME or len(current["id"]) > MAX_NAME:
+                    raise _bad("提供方工具调用过大")
+            if choice.get("finish_reason") is not None:
+                finish = choice["finish_reason"]
+        if finish == "length":
+            raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
+        if finish not in {"stop", "tool_calls"}:
+            raise _bad("提供方流式响应未正常结束")
+        if bool(indexed) != (finish == "tool_calls"):
+            raise _bad()
+        for chunk in think_parser.finish():
+            yield chunk
+        calls = [_call(value["id"], value["name"], value["arguments"]) for _, value in sorted(indexed.items())]
+        assistant: dict[str, Any] = {"role": "assistant", "content": content or None}
+        if reasoning:
+            assistant["reasoning_content"] = reasoning
+        if calls:
+            assistant["tool_calls"] = [{"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}} for call in calls]
+        yield self._finish(calls, assistant)
+
+    async def _responses(self, tools: list[dict], allow_tools: bool) -> AsyncIterator[ProviderChunk | ToolTurn]:
+        payload = {"model": self.provider.config.model, "input": self._history, "stream": True, "store": False,
+                   "tools": [{"type": "function", **t, "strict": False} for t in tools],
+                   "tool_choice": "auto" if allow_tools else "none",
+                   "include": ["reasoning.encrypted_content"]}
+        items: dict[int, dict] = {}
+        calls_delta: dict[str, str] = {}
+        completed = False
+        response_output: list[dict] | None = None
+        async for event, body in self.provider._events(self.provider.endpoint, payload):
+            kind = body.get("type") or event
+            if kind == "response.output_text.delta":
+                value = body.get("delta")
+                if isinstance(value, str) and value:
+                    yield ProviderChunk("content", value)
+            elif kind == "response.reasoning_summary_text.delta":
+                value = body.get("delta")
+                if isinstance(value, str) and value:
+                    yield ProviderChunk("reasoning", value)
+            elif kind == "response.output_item.added":
+                index, item = body.get("output_index"), body.get("item")
+                if isinstance(index, int) and isinstance(item, dict):
+                    items[index] = copy.deepcopy(item)
+            elif kind == "response.function_call_arguments.delta":
+                index, delta = body.get("output_index"), body.get("delta")
+                if not isinstance(index, int) or not isinstance(delta, str):
+                    raise _bad()
+                key = str(index)
+                calls_delta[key] = calls_delta.get(key, "") + delta
+                if len(calls_delta[key].encode("utf-8")) > MAX_ARGUMENTS:
+                    raise _bad("提供方工具参数过大")
+            elif kind == "response.output_item.done":
+                index, item = body.get("output_index"), body.get("item")
+                if isinstance(index, int) and isinstance(item, dict):
+                    items[index] = copy.deepcopy(item)
+            elif kind == "response.completed":
+                completed = True
+                response = body.get("response") or {}
+                if isinstance(response, dict) and isinstance(response.get("output"), list):
+                    response_output = response["output"]
+            elif kind in {"response.failed", "response.incomplete", "error"}:
+                raise ProviderError("提供方未完成回复", kind="upstream_error")
+        if not completed:
+            raise _bad("提供方流式响应未正常结束")
+        output = copy.deepcopy(response_output) if response_output is not None else [items[i] for i in sorted(items)]
+        if not isinstance(output, list):
+            raise _bad()
+        # Some gateways omit encrypted reasoning from the terminal snapshot even
+        # though it was present in the completed output item event.
+        for index, item in items.items():
+            if index < len(output) and item.get("type") == "reasoning" and isinstance(output[index], dict):
+                if "encrypted_content" in item and "encrypted_content" not in output[index]:
+                    output[index]["encrypted_content"] = item["encrypted_content"]
+        calls = []
+        for index, item in enumerate(output):
+            if not isinstance(item, dict):
+                raise _bad()
+            if item.get("type") == "function_call":
+                arguments = item.get("arguments")
+                if not isinstance(arguments, str) or not arguments:
+                    arguments = calls_delta.get(str(index), "")
+                calls.append(_call(item.get("call_id"), item.get("name"), arguments))
+        yield self._finish(calls, copy.deepcopy(output))
+
+    async def _google(self, tools: list[dict], allow_tools: bool) -> AsyncIterator[ProviderChunk | ToolTurn]:
+        payload: dict[str, Any] = {"contents": self._history,
+            "tools": [{"functionDeclarations": [{"name": t["name"], "description": t["description"], "parameters": t["parameters"]} for t in tools]}],
+            "toolConfig": {"functionCallingConfig": {"mode": "AUTO" if allow_tools else "NONE"}}}
+        if self._system:
+            payload["systemInstruction"] = {"parts": [{"text": self._system}]}
+        parts: list[dict] = []
+        finished = False
+        async for event, body in self.provider._events(self.provider._endpoint(True), payload):
+            if "error" in body:
+                raise ProviderError("提供方流式请求失败", kind="upstream_error")
+            candidates = body.get("candidates") or []
+            if not candidates:
+                continue
+            candidate = candidates[0]
+            if not isinstance(candidate, dict):
+                raise _bad()
+            reason = candidate.get("finishReason")
+            if reason == "MAX_TOKENS":
+                raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
+            if reason not in {None, "STOP"}:
+                raise _bad("提供方未完成回复")
+            finished = finished or reason == "STOP"
+            for part in (candidate.get("content") or {}).get("parts") or []:
+                if not isinstance(part, dict):
+                    raise _bad()
+                parts.append(copy.deepcopy(part))
+                if len(parts) > 512:
+                    raise _bad("提供方响应片段过多")
+                if len(json.dumps(parts, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
+                    raise _bad("提供方响应过大")
+                value = part.get("text")
+                if isinstance(value, str) and value:
+                    yield ProviderChunk("reasoning" if part.get("thought") else "content", value)
+        if not finished:
+            raise _bad("提供方流式响应未正常结束")
+        calls = []
+        for index, part in enumerate(parts):
+            fc = part.get("functionCall")
+            if isinstance(fc, dict):
+                raw = json.dumps(fc.get("args", {}), ensure_ascii=False, separators=(",", ":"))
+                calls.append(_call(fc.get("id") or f"google-local-{index}", fc.get("name"), raw))
+        yield self._finish(calls, {"role": "model", "parts": parts})
+
+    async def _anthropic(self, tools: list[dict], allow_tools: bool) -> AsyncIterator[ProviderChunk | ToolTurn]:
+        payload: dict[str, Any] = {"model": self.provider.config.model, "messages": self._history,
+            "max_tokens": 4096, "stream": True,
+            "tools": [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]} for t in tools],
+            "tool_choice": {"type": "auto" if allow_tools else "none"}}
+        if self._system:
+            payload["system"] = self._system
+        blocks: dict[int, dict] = {}
+        raw_inputs: dict[int, str] = {}
+        stopped = False
+        reason = None
+        async for event, body in self.provider._events(self.provider.endpoint, payload):
+            kind = body.get("type") or event
+            if kind == "content_block_start":
+                index, block = body.get("index"), body.get("content_block")
+                if not isinstance(index, int) or not isinstance(block, dict) or index < 0 or index >= 512:
+                    raise _bad()
+                blocks[index] = copy.deepcopy(block)
+            elif kind == "content_block_delta":
+                index, delta = body.get("index"), body.get("delta")
+                if not isinstance(index, int) or index not in blocks or not isinstance(delta, dict):
+                    raise _bad()
+                block = blocks[index]
+                dtype = delta.get("type")
+                if dtype == "text_delta":
+                    value = delta.get("text")
+                    if isinstance(value, str):
+                        block["text"] = block.get("text", "") + value
+                        if value:
+                            yield ProviderChunk("content", value)
+                elif dtype == "thinking_delta":
+                    value = delta.get("thinking")
+                    if isinstance(value, str):
+                        block["thinking"] = block.get("thinking", "") + value
+                        if value:
+                            yield ProviderChunk("reasoning", value)
+                elif dtype == "signature_delta":
+                    value = delta.get("signature")
+                    if isinstance(value, str):
+                        block["signature"] = block.get("signature", "") + value
+                elif dtype == "input_json_delta":
+                    value = delta.get("partial_json")
+                    if not isinstance(value, str):
+                        raise _bad()
+                    raw_inputs[index] = raw_inputs.get(index, "") + value
+                    if len(raw_inputs[index].encode("utf-8")) > MAX_ARGUMENTS:
+                        raise _bad("提供方工具参数过大")
+                if len(json.dumps(block, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
+                    raise _bad("提供方响应过大")
+            elif kind == "message_delta":
+                reason = (body.get("delta") or {}).get("stop_reason") or reason
+                if reason == "max_tokens":
+                    raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
+            elif kind == "message_stop":
+                stopped = True
+            elif kind == "error":
+                raise ProviderError("提供方流式请求失败", kind="upstream_error")
+        if not stopped or reason not in {"end_turn", "tool_use"}:
+            raise _bad("提供方流式响应未正常结束")
+        ordered = [blocks[i] for i in sorted(blocks)]
+        calls = []
+        for index in sorted(blocks):
+            block = blocks[index]
+            if block.get("type") == "tool_use":
+                raw = raw_inputs.get(index)
+                if raw is None:
+                    raw = json.dumps(block.get("input", {}), ensure_ascii=False, separators=(",", ":"))
+                _args(raw)
+                block["input"] = json.loads(raw)
+                calls.append(_call(block.get("id"), block.get("name"), raw))
+        if bool(calls) != (reason == "tool_use"):
+            raise _bad()
+        yield self._finish(calls, ordered)

@@ -12,7 +12,7 @@ import httpx
 
 from .conversations import ConversationError, ConversationService
 from .providers import ProviderChunk, ProviderConfig, ProviderError, build_provider
-from .search_runtime import external_context, apply_native_event
+from .search_runtime import external_stream, apply_native_event
 
 logger = logging.getLogger("nautilus.ai")
 
@@ -165,9 +165,10 @@ class AiRunManager:
                 state.status = "running"
                 async with asyncio.timeout(float(config.timeout_seconds)):
                     if search_run is not None and search_run.selection["mode"] == "external":
-                        messages = await external_context(self.conversations.search_service, search_run, messages, provider,
+                        stream = external_stream(self.conversations.search_service, search_run, messages, provider,
                             lambda trace: self._publish_search(state, trace))
-                    stream = provider.stream_chat(messages)
+                    else:
+                        stream = provider.stream_chat(messages)
                     async for chunk in stream:
                         if state.cancel_requested:
                             break

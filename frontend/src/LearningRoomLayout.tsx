@@ -136,11 +136,11 @@ export function LearningUserMessage({ content, automatic, editing, onStartEdit, 
   return <LearningMessage role="user" state={editing ? 'editing' : undefined}>{body}</LearningMessage>;
 }
 
-export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, actions, sendLabel = '发送问题' }: {
+export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, tools, actions, sendLabel = '发送问题' }: {
   id: string; label?: string; value: string; onChange: (value: string) => void;
   onSubmit: FormEventHandler<HTMLFormElement>; onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   placeholder: string; disabled?: boolean; maxLength?: number;
-  textareaRef?: RefObject<HTMLTextAreaElement | null>; actions?: ReactNode; sendLabel?: string;
+  textareaRef?: RefObject<HTMLTextAreaElement | null>; tools?: ReactNode; actions?: ReactNode; sendLabel?: string;
 }) {
   const localRef = useRef<HTMLTextAreaElement>(null);
   const ref = textareaRef ?? localRef;
@@ -158,7 +158,7 @@ export function LearningComposer({ id, label = '输入学习问题', value, onCh
         }
       })} placeholder={placeholder} rows={1} maxLength={maxLength} disabled={disabled} />
     <div className="ai-composer-actions"><span>Enter 发送 · Shift+Enter 换行 · {value.length}/{maxLength}</span>
-      <div>{actions}<button className="button button--accent button--with-icon" type="submit" disabled={disabled || !value.trim()}><Send size={14} />{sendLabel}</button></div>
+      <div>{tools}{actions}<button className="button button--accent button--with-icon" type="submit" disabled={disabled || !value.trim()}><Send size={14} />{sendLabel}</button></div>
     </div>
   </form>;
 }

@@ -12,12 +12,17 @@ async function settings(page: Page) {
   return dialog;
 }
 
-async function setProvider(page: Page) {
+async function setProvider(page: Page, model = 'mock-success') {
   const response = await page.request.put('/api/ai/provider', { data: {
-    display_name: 'Synthetic mock provider', base_url: mockBase, model: 'mock-success',
+    display_name: 'Synthetic mock provider', base_url: mockBase, model,
     api_key: fakeKey, enabled: true, request_timeout_seconds: 15, api_protocol: 'openai_compatible',
   } });
   expect(response.ok()).toBeTruthy();
+}
+
+async function openPicker(page: Page) {
+  await page.locator('.ai-composer').getByRole('button', { name: /联网搜索：/ }).click();
+  return page.getByRole('dialog', { name: '联网搜索选择' });
 }
 
 async function setCustomSearch(page: Page) {
@@ -42,6 +47,7 @@ test('all 19 catalog services expose their fields and save without echoing secre
   const catalog = await (await page.request.get('/api/search/catalog')).json() as Array<{kind:string; label:string; fields:Array<{key:string;label:string;type:string;required?:boolean}>}>;
   expect(catalog).toHaveLength(19);
   const dialog = await settings(page);
+  const initialServiceCount = await dialog.locator('.search-service-row').count();
   const seenKinds = new Set<string>();
   for (const kind of catalog) {
     await dialog.getByLabel('新增服务类型').selectOption(kind.kind);
@@ -58,7 +64,7 @@ test('all 19 catalog services expose their fields and save without echoing secre
     }
   }
   expect(seenKinds.size).toBe(19);
-  await expect(dialog.locator('.search-service-row')).toHaveCount(20); // Initial Bing and 19 new instances.
+  await expect(dialog.locator('.search-service-row')).toHaveCount(initialServiceCount + 19);
   await dialog.locator('.search-service-row').filter({ hasText: 'Perplexity' }).first().getByRole('button', { name: /Perplexity/ }).first().click();
   const tokenLabel = catalog.find(item => item.kind === 'perplexity')!.fields.find(field => field.key === 'max_tokens')!.label;
   const tokenField = dialog.locator('.search-fields .field').filter({ hasText: tokenLabel }).first().locator('input');
@@ -67,7 +73,7 @@ test('all 19 catalog services expose their fields and save without echoing secre
   await dialog.getByRole('button', { name: '保存设置' }).click();
   await expect(dialog).toHaveCount(0);
   const saved = await (await page.request.get('/api/search/settings')).json();
-  expect(saved.services).toHaveLength(20);
+  expect(saved.services).toHaveLength(initialServiceCount + 19);
   for (const item of catalog) {
     const savedService = saved.services.find((service: {kind:string}) => service.kind === item.kind);
     expect(savedService, item.kind).toBeTruthy();
@@ -81,7 +87,7 @@ test('all 19 catalog services expose their fields and save without echoing secre
   expect(saved.services.find((item: {kind:string}) => item.kind === 'tavily')?.has_secrets.api_key).toBe(true);
   await page.reload();
   const reopened = await settings(page);
-  await expect(reopened.locator('.search-service-row')).toHaveCount(20);
+  await expect(reopened.locator('.search-service-row')).toHaveCount(initialServiceCount + 19);
   await reopened.locator('.search-service-row').filter({ hasText: 'Tavily' }).first().getByRole('button', { name: /Tavily/ }).first().click();
   const keyLabel = catalog.find(item => item.kind === 'tavily')!.fields.find(field => field.key === 'api_key')!.label;
   const secret = reopened.locator('.search-fields .field').filter({ hasText: keyLabel }).first().locator('input');
@@ -120,13 +126,13 @@ test('reorder and deleting the selected instance clear the default without switc
 });
 
 test('custom JS source stays with its answer version across reload; off sends no search selection', async ({ page }) => {
-  await setProvider(page);
+  await setProvider(page, 'mock-search-tools');
   const serviceId = await setCustomSearch(page);
   await page.reload();
   await page.getByRole('button', { name: '学习室', exact: true }).click();
-  const controls = page.locator('.search-controls');
-  await controls.getByRole('button', { name: '外部服务' }).click();
-  await expect(controls.getByLabel('搜索服务')).toHaveValue(serviceId);
+  const picker = await openPicker(page);
+  await picker.getByRole('button', { name: /外部服务/ }).click();
+  await expect(page.locator('.ai-composer').getByRole('button', { name: '联网搜索：Synthetic JS' })).toBeVisible();
   const composer = page.getByLabel('输入学习问题');
   await composer.fill('Synthetic search question');
   const firstRequest = page.waitForRequest(request => request.url().endsWith('/messages') && request.method() === 'POST');
@@ -142,12 +148,12 @@ test('custom JS source stays with its answer version across reload; off sends no
   await source.locator('summary').first().click();
   await expect(source.getByRole('link', { name: 'Synthetic source' })).toHaveAttribute('href', 'https://example.com/search-proof');
   await source.getByText('检索过程', { exact: false }).click();
-  await expect(source).toContainText('Synthetic search question');
+  await expect(source).toContainText('Nautilus search reference');
   await page.screenshot({ path: '/tmp/nautilus-search-results-e2e.png' });
   const saved = await (await page.request.get(`/api/ai/conversations/${run.conversation_id}`)).json();
   const firstAssistant = saved.messages.find((message: {role:string}) => message.role === 'assistant');
   expect(firstAssistant.search_trace?.items?.[0]?.title).toBe('Synthetic source');
-  await controls.getByRole('button', { name: '关闭' }).click();
+  await (await openPicker(page)).getByRole('button', { name: /^关闭 不使用联网搜索/ }).click();
   const secondRequest = page.waitForRequest(request => request.url().endsWith('/messages') && request.method() === 'POST');
   await answer.getByRole('button', { name: '重新生成', exact: true }).click();
   expect((await secondRequest).postDataJSON().search).toBeUndefined();
@@ -160,12 +166,12 @@ test('custom JS source stays with its answer version across reload; off sends no
   await expect(page.locator('.ai-message--assistant .search-results')).toContainText('1 条来源');
   await page.screenshot({ path: '/tmp/nautilus-search-compact-composer-e2e.png' });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.search-controls')).toBeVisible();
+  await expect(page.locator('.ai-composer .search-controls')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
   await page.screenshot({ path: '/tmp/nautilus-search-compact-composer-mobile-e2e.png' });
 });
 
-test('switching external services clears advanced parameters while mode toggles keep the current draft', async ({ page }) => {
+test('switching external services clears advanced parameters while mode toggles keep filters', async ({ page }) => {
   await setProvider(page);
   const customId = await setCustomSearch(page);
   const previous = await (await page.request.get('/api/search/settings')).json();
@@ -182,17 +188,17 @@ test('switching external services clears advanced parameters while mode toggles 
   expect(saved.ok()).toBeTruthy();
   await page.reload();
   await page.getByRole('button', { name: '学习室', exact: true }).click();
-  const controls = page.locator('.search-controls');
-  await controls.getByRole('button', { name: '外部服务' }).click();
-  await expect(controls.getByLabel('搜索服务')).toHaveValue(exaId);
-  await controls.getByLabel('搜索查询').fill('Synthetic retained query');
-  await controls.getByRole('button', { name: '展开高级参数' }).click();
-  await controls.getByRole('combobox', { name: /搜索类型/ }).selectOption('deep');
-  await controls.getByRole('button', { name: '关闭' }).click();
-  await controls.getByRole('button', { name: '外部服务' }).click();
-  await expect(controls.getByLabel('搜索查询')).toHaveValue('Synthetic retained query');
-  await expect(controls.getByRole('combobox', { name: /搜索类型/ })).toHaveValue('deep');
-  await controls.getByLabel('搜索服务').selectOption(customId);
+  let picker = await openPicker(page);
+  await picker.getByRole('button', { name: /外部服务/ }).click();
+  picker = await openPicker(page);
+  await picker.getByRole('button', { name: '展开高级参数' }).click();
+  await picker.getByRole('combobox', { name: /搜索类型/ }).selectOption('deep');
+  await picker.getByRole('button', { name: /^关闭 不使用联网搜索/ }).click();
+  picker = await openPicker(page);
+  await picker.getByRole('button', { name: /外部服务/ }).click();
+  picker = await openPicker(page);
+  await expect(picker.getByRole('combobox', { name: /搜索类型/ })).toHaveValue('deep');
+  await picker.getByRole('button', { name: 'Synthetic JS', exact: true }).click();
   const composer = page.getByLabel('输入学习问题');
   await composer.fill('Synthetic cross-service test');
   const sentRequest = page.waitForRequest(request => request.url().endsWith('/messages') && request.method() === 'POST');
@@ -239,9 +245,8 @@ test('an unconfirmed send replays the same ID and original search choice after m
   const serviceId = await setCustomSearch(page);
   await page.reload();
   await page.getByRole('button', { name: '学习室', exact: true }).click();
-  const controls = page.locator('.search-controls');
-  await controls.getByRole('button', { name: '外部服务' }).click();
-  await expect(controls.getByLabel('搜索服务')).toHaveValue(serviceId);
+  await (await openPicker(page)).getByRole('button', { name: /外部服务/ }).click();
+  await expect(page.locator('.ai-composer').getByRole('button', { name: '联网搜索：Synthetic JS' })).toBeVisible();
   const query = 'Synthetic ambiguous delivery';
   const requests: Array<{client_message_id:string; search?: {mode:string;service_id?:string}}> = [];
   let conversationId = '';
@@ -266,7 +271,7 @@ test('an unconfirmed send replays the same ID and original search choice after m
   await expect.poll(() => requests.length).toBe(1);
   await expect(page.getByRole('alert')).toContainText('上次发送结果尚未确认');
   await composer.fill(query);
-  await controls.getByRole('button', { name: '关闭' }).click();
+  await (await openPicker(page)).getByRole('button', { name: /^关闭 不使用联网搜索/ }).click();
   await composer.press('Enter');
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[0].client_message_id).toBe(requests[1].client_message_id);

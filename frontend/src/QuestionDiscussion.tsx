@@ -126,14 +126,15 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
     </header>
     <LearningChatPanel title="讨论这道题" autoFollow={!editingTurnId && (replyHistory.following || busy) && Boolean(discussion?.turns.length || pending)} followToken={`${id}:${(discussion?.turns.length ?? 0) + (pending ? 1 : 0)}`}
       notice={<>{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
-      composer={discussion && !discussion.purged && <><SearchControls value={searchSelection} onChange={setSearchSelection} disabled={busy || running || Boolean(pending) || Boolean(editingTurnId)} providerKind={discussion.provider_protocol ?? undefined} /><LearningComposer
+      composer={discussion && !discussion.purged && <LearningComposer
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
         onChange={value => { setContent(value); key.current = requestId(); }}
         onSubmit={event => { event.preventDefault(); void send(); }}
         placeholder="输入关于这道题的问题，或回答拓展问题" maxLength={12000}
         disabled={busy || running || Boolean(pending) || Boolean(editingTurnId)}
+        tools={<SearchControls value={searchSelection} onChange={setSearchSelection} disabled={busy || running || Boolean(pending) || Boolean(editingTurnId)} providerKind={discussion.provider_protocol ?? undefined} />}
         actions={running && <button className="button button--danger button--with-icon" type="button" disabled={cancelling} onClick={() => void cancel()}><Square size={14} fill="currentColor" />取消生成</button>}
-      /></>}
+      />}
     >
       {!discussion && !error && <p role="status">正在恢复题目讨论…</p>}
       {discussion?.purged ? <p>关联内容已彻底删除，讨论正文不可恢复。</p> : discussion && <>

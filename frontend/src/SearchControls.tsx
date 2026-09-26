@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Check, Globe2, Search, Settings2, Sparkles, X } from 'lucide-react';
 import { getSearchCatalog, getSearchSettings, type SearchCatalogItem, type SearchParameterSchema, type SearchService } from './searchApi';
 
 export type SearchSelection = { mode: 'off' | 'external' | 'native'; service_id?: string; query?: string; parameters?: Record<string, unknown> };
@@ -26,8 +28,13 @@ export default function SearchControls({ value, onChange, disabled, providerKind
   const [catalog, setCatalog] = useState<SearchCatalogItem[]>([]);
   const [defaultId, setDefaultId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; bottom: number } | null>(null);
   const [advanced, setAdvanced] = useState(false);
-  const [externalDraft, setExternalDraft] = useState<Pick<SearchSelection, 'service_id' | 'query' | 'parameters'>>({});
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const lastExternalId = useRef<string | undefined>(undefined);
+  const lastExternalParameters = useRef<Record<string, unknown> | undefined>(undefined);
   useEffect(() => {
     let active = true;
     const load = async () => {
@@ -37,34 +44,77 @@ export default function SearchControls({ value, onChange, disabled, providerKind
     void load(); window.addEventListener('nautilus:search-settings-changed', load);
     return () => { active = false; window.removeEventListener('nautilus:search-settings-changed', load); };
   }, []);
-  const selectedId = value.service_id ?? defaultId ?? '';
+  const selectedId = value.service_id ?? (value.mode === 'external' ? '' : defaultId ?? '');
   const service = services.find((entry) => entry.id === selectedId);
   const definition = useMemo(() => catalog.find((entry) => entry.kind === service?.kind), [catalog, service?.kind]);
   const nativeAllowed = nativeKinds.has(providerKind ?? '');
   useEffect(() => { if (value.mode === 'native' && !nativeAllowed) onChange({ mode: 'off' }); }, [nativeAllowed, value.mode]);
-  const changeMode = (mode: SearchSelection['mode']) => {
-    if (mode === value.mode) return;
-    if (value.mode === 'external') setExternalDraft({ service_id: value.service_id, query: value.query, parameters: value.parameters });
-    if (mode === 'off') onChange({ mode });
-    if (mode === 'external') onChange({ mode, service_id: externalDraft.service_id ?? value.service_id ?? defaultId ?? undefined, query: externalDraft.query, parameters: externalDraft.parameters });
-    if (mode === 'native') onChange({ mode });
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
+  useEffect(() => {
+    if (!open) return;
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPosition({ left: Math.max(16, Math.min(rect.left, window.innerWidth - 376)), bottom: window.innerHeight - rect.top + 8 });
+    };
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => { window.removeEventListener('resize', updatePosition); window.removeEventListener('scroll', updatePosition, true); };
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    panelRef.current?.focus();
+    const onPointerDown = (event: PointerEvent) => {
+      if (!panelRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKeyDown); };
+  }, [open]);
+  const close = () => { setOpen(false); triggerRef.current?.focus(); };
+  const toggle = () => {
+    if (open) { close(); return; }
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) setPosition({ left: Math.max(16, Math.min(rect.left, window.innerWidth - 376)), bottom: window.innerHeight - rect.top + 8 });
+    setOpen(true);
   };
+  const changeMode = (mode: SearchSelection['mode']) => {
+    if (value.mode === 'external') { lastExternalId.current = value.service_id; lastExternalParameters.current = value.parameters; }
+    if (mode === 'off' || mode === 'native') { onChange({ mode }); close(); return; }
+    const serviceId = value.mode === 'external' ? value.service_id : lastExternalId.current ?? defaultId ?? undefined;
+    onChange({ mode: 'external', service_id: serviceId, parameters: serviceId === lastExternalId.current ? lastExternalParameters.current : undefined });
+    if (serviceId && services.some((entry) => entry.id === serviceId)) close();
+  };
+  const chooseService = (id: string) => {
+    onChange({ mode: 'external', service_id: id, parameters: id === value.service_id ? value.parameters : undefined });
+    lastExternalId.current = id;
+    lastExternalParameters.current = id === value.service_id ? value.parameters : undefined;
+    setAdvanced(false);
+    close();
+  };
+  const triggerLabel = value.mode === 'off' ? '联网搜索：关闭' : value.mode === 'native' ? '联网搜索：模型内置' : `联网搜索：${service?.name ?? '请选择服务'}`;
   return <div className="search-controls">
-    <div className="search-controls-toolbar"><strong>联网搜索</strong>
-    <div className="search-mode-options" role="group" aria-label="本轮搜索模式">
-      <button type="button" className={value.mode === 'off' ? 'is-active' : ''} disabled={disabled} onClick={() => changeMode('off')}>关闭</button>
-      <button type="button" className={value.mode === 'external' ? 'is-active' : ''} disabled={disabled} onClick={() => changeMode('external')}>外部服务</button>
-      <button type="button" className={value.mode === 'native' ? 'is-active' : ''} disabled={disabled || !nativeAllowed} title={nativeAllowed ? '' : '当前模型提供方未接入内置搜索'} onClick={() => changeMode('native')}>模型内置</button>
-    </div><button className="search-text-toggle" type="button" onClick={() => onOpenSettings ? onOpenSettings() : window.dispatchEvent(new Event('nautilus:open-search-settings'))}>搜索设置</button></div>
-    {error && <p className="form-error" role="alert">{error}</p>}
-    {value.mode === 'external' && <div className="search-controls-detail">
-      <label className="field"><span>搜索服务</span><select disabled={disabled} value={selectedId} onChange={(event) => onChange({ ...value, service_id: event.target.value || undefined, parameters: event.target.value === selectedId ? value.parameters : undefined })}><option value="">选择搜索服务</option>{services.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-      {services.length === 0 && <p className="form-hint">还没有配置搜索服务。请先打开搜索设置。</p>}
-      {selectedId && !service && <p className="form-error">所选服务已不存在，请重新选择。</p>}
-      <label className="field"><span>搜索查询</span><input disabled={disabled} value={value.query ?? ''} onChange={(event) => onChange({ ...value, query: event.target.value })} placeholder="留空则使用当前问题" /></label>
-      <p className="form-hint">本轮查询会发送给所选搜索服务。留空时使用当前问题。</p>
-      {definition && <><button className="search-text-toggle" type="button" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>{advanced ? '收起高级参数' : '展开高级参数'}</button>{advanced && <Parameters schema={definition.search_parameters} value={value.parameters ?? {}} onChange={(parameters) => onChange({ ...value, parameters })} disabled={disabled} />}</>}
-    </div>}
-    {value.mode === 'native' && <p className="form-hint">由当前模型提供方执行内置搜索；是否实际调用会在回复中显示。</p>}
+    <button ref={triggerRef} type="button" className={`search-picker-trigger ${value.mode !== 'off' ? 'is-active' : ''}`} aria-label={triggerLabel} title={triggerLabel} aria-haspopup="dialog" aria-expanded={open} disabled={disabled} onClick={toggle}>
+      {value.mode === 'native' ? <Sparkles size={17} /> : value.mode === 'external' ? <Globe2 size={17} /> : <Search size={17} />}
+    </button>
+    {open && createPortal(<div className="search-picker-layer"><div ref={panelRef} className="search-picker-panel" style={window.innerWidth > 700 && position ? position : undefined} role="dialog" aria-label="联网搜索选择" tabIndex={-1}>
+      <div className="search-picker-header"><strong>联网搜索</strong><div><button type="button" className="search-picker-icon-button" aria-label="搜索设置" onClick={() => { close(); onOpenSettings ? onOpenSettings() : window.dispatchEvent(new Event('nautilus:open-search-settings')); }}><Settings2 size={17} /></button><button type="button" className="search-picker-icon-button" aria-label="关闭搜索选择" onClick={close}><X size={18} /></button></div></div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="search-picker-options" role="group" aria-label="本轮搜索模式">
+        <button type="button" className={value.mode === 'off' ? 'is-active' : ''} onClick={() => changeMode('off')}><Search size={17} /><span><strong>关闭</strong><small>不使用联网搜索</small></span>{value.mode === 'off' && <Check size={16} />}</button>
+        <button type="button" className={value.mode === 'external' ? 'is-active' : ''} onClick={() => changeMode('external')}><Globe2 size={17} /><span><strong>外部服务</strong><small>{value.mode === 'external' ? service?.name ?? '请选择服务' : services.find((entry) => entry.id === (lastExternalId.current ?? defaultId))?.name ?? '选择已配置服务'}</small></span>{value.mode === 'external' && <Check size={16} />}</button>
+        <button type="button" className={value.mode === 'native' ? 'is-active' : ''} disabled={!nativeAllowed} title={nativeAllowed ? '' : '当前模型提供方未接入内置搜索'} onClick={() => changeMode('native')}><Sparkles size={17} /><span><strong>模型内置</strong><small>{nativeAllowed ? '由当前模型决定是否调用' : '当前模型不可用'}</small></span>{value.mode === 'native' && <Check size={16} />}</button>
+      </div>
+      {(value.mode === 'external' || !services.length) && <div className="search-picker-services"><div className="search-picker-section-title"><strong>搜索服务</strong>{service && <span>当前：{service.name}</span>}</div>
+        {value.mode === 'external' && value.service_id && !service && <p className="form-error">所选服务已不存在，请重新选择。</p>}
+        {services.length ? <div className="search-picker-service-list">{services.map((item) => <button type="button" key={item.id} className={item.id === value.service_id ? 'is-active' : ''} onClick={() => chooseService(item.id)}>{item.name}{item.id === value.service_id && <Check size={15} />}</button>)}</div> : <p className="form-hint">还没有配置搜索服务。请打开搜索设置添加。</p>}
+        {service && definition && <div className="search-picker-advanced"><button className="search-text-toggle" type="button" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>{advanced ? '收起高级参数' : '展开高级参数'}</button>{advanced && <Parameters schema={definition.search_parameters} value={value.parameters ?? {}} onChange={(parameters) => { onChange({ ...value, parameters }); lastExternalParameters.current = parameters; }} disabled={disabled} />}</div>}
+      </div>}
+    </div></div>, document.body)}
   </div>;
 }

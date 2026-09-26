@@ -7,9 +7,24 @@ import pytest
 
 from test_ai_conversations import authorize, configure_provider, create_task, make_client, read_sse, start_conversation
 from test_learning_domain_schema import learning_database  # noqa: F401
+from app.search_service import SearchService
 
 
 SEARCH_URL = "https://source.example/article"
+
+
+def chat_stream(*events):
+    return "".join(f"data: {json.dumps({'choices': [event]})}\n\n" for event in events) + "data: [DONE]\n\n"
+
+
+def search_call(query="focused", *, call_id="search-1", **parameters):
+    return {"delta": {"tool_calls": [{"index": 0, "id": call_id, "type": "function",
+            "function": {"name": "search_web", "arguments": json.dumps({"query": query, **parameters})}}]},
+            "finish_reason": "tool_calls"}
+
+
+def answer_chunk(content="Answer"):
+    return {"delta": {"content": content}, "finish_reason": "stop"}
 
 
 def save_tavily(client):
@@ -36,8 +51,12 @@ def handler_factory(*, search_failure=False):
             if search_failure:
                 return httpx.Response(503, json={"error": "synthetic failure"})
             return httpx.Response(200, json={"results": [{"title": "Source", "url": SEARCH_URL, "content": "Verified source"}]})
+        if payload.get("stream") and payload.get("tools"):
+            if any(message.get("role") == "tool" for message in payload["messages"]):
+                return httpx.Response(200, text=chat_stream(answer_chunk()))
+            return httpx.Response(200, text=chat_stream(search_call("focused")))
         if payload.get("stream"):
-            return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"Answer"}}]}\n\ndata: [DONE]\n\n')
+            return httpx.Response(200, text=chat_stream(answer_chunk()))
         return httpx.Response(200, json={"choices": [{"message": {"content": "Title"}}]})
     return handler, calls
 
@@ -76,6 +95,13 @@ def test_off_external_sources_replay_versions_and_conflict(tmp_path):
         assert events[-1][1]["search_trace"]["items"][0]["url"] == SEARCH_URL
         search_calls = [payload for url, payload in calls if url == "https://api.tavily.com/search"]
         assert len(search_calls) == 1 and search_calls[0]["query"] == "focused"
+        urls = [url for url, _ in calls]
+        assert urls.index("https://api.tavily.com/search") > next(i for i, (url, payload) in enumerate(calls)
+            if payload.get("stream") and payload.get("tools"))
+        replay = next(payload for url, payload in calls if payload.get("stream") and
+            any(message.get("role") == "tool" for message in payload.get("messages", [])))
+        assert replay["messages"][-1]["tool_call_id"] == "search-1"
+        assert SEARCH_URL in replay["messages"][-1]["content"]
         repeated = send(client, conversation, "external", selected)
         assert repeated.status_code == 202 and repeated.json()["created"] is False
         conflict = send(client, conversation, "external", {"mode": "off"})
@@ -229,8 +255,10 @@ def test_external_selection_is_frozen_while_settings_are_removed(tmp_path):
             await release.wait()
             return httpx.Response(200, json={"results": [{"title": "Source", "url": SEARCH_URL, "content": "Evidence"}]})
         payload = json.loads(request.content)
+        if payload.get("stream") and payload.get("tools") and not any(m.get("role") == "tool" for m in payload["messages"]):
+            return httpx.Response(200, text=chat_stream(search_call("Question")))
         if payload.get("stream"):
-            return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"Answer"}}]}\n\ndata: [DONE]\n\n')
+            return httpx.Response(200, text=chat_stream(answer_chunk()))
         return httpx.Response(200, json={"choices": [{"message": {"content": "Title"}}]})
 
     with make_client(tmp_path, handler) as client:
@@ -273,8 +301,10 @@ def test_cancel_during_search_does_not_accept_late_trace(tmp_path):
             await release.wait()
             return httpx.Response(200, json={"results": [{"title": "Secret", "url": SEARCH_URL, "content": "Private"}]})
         payload = json.loads(request.content)
+        if payload.get("stream") and payload.get("tools") and not any(m.get("role") == "tool" for m in payload["messages"]):
+            return httpx.Response(200, text=chat_stream(search_call("Question")))
         if payload.get("stream"):
-            return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"Answer"}}]}\n\ndata: [DONE]\n\n')
+            return httpx.Response(200, text=chat_stream(answer_chunk()))
         return httpx.Response(200, json={"choices": [{"message": {"content": "Title"}}]})
 
     with make_client(tmp_path, handler) as client:
@@ -322,7 +352,9 @@ async def test_discussion_purge_while_search_waits_cannot_resurrect_trace(learni
 
         def _catalog(self, kind):
             assert kind == "tavily"
-            return {"supports_scrape": False}
+            return SearchService._catalog(kind)
+
+        _validate_parameters = staticmethod(SearchService._validate_parameters)
 
         async def invoke(self, run, params, *, fetch=False):
             assert params["query"] == private
@@ -336,7 +368,7 @@ async def test_discussion_purge_while_search_waits_cannot_resurrect_trace(learni
     def ai_handler(request):
         payload = json.loads(request.content)
         if payload.get("stream"):
-            return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"Late answer"}}]}\n\ndata: [DONE]\n\n')
+            return httpx.Response(200, text=chat_stream(search_call(private)))
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"history_query":null}'}}]})
 
     verification.transport = httpx.MockTransport(ai_handler)
@@ -372,7 +404,9 @@ async def test_discussion_keeps_completed_search_if_answer_stream_fails(learning
                              {"id": "mock", "kind": "tavily", "name": "Mock search", "options": {"api_key": "fake"}})
 
         def _catalog(self, kind):
-            return {"supports_scrape": False}
+            return SearchService._catalog(kind)
+
+        _validate_parameters = staticmethod(SearchService._validate_parameters)
 
         async def invoke(self, run, params, *, fetch=False):
             return {"answer": None, "items": [{"title": "Source", "url": SEARCH_URL, "text": "Verified evidence"}],
@@ -383,7 +417,9 @@ async def test_discussion_keeps_completed_search_if_answer_stream_fails(learning
     def ai_handler(request):
         payload = json.loads(request.content)
         if payload.get("stream"):
-            return httpx.Response(503, json={"error": {"message": "Synthetic model failure"}})
+            if any(m.get("role") == "tool" for m in payload["messages"]):
+                return httpx.Response(503, json={"error": {"message": "Synthetic model failure"}})
+            return httpx.Response(200, text=chat_stream(search_call("focused")))
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"history_query":null}'}}]})
 
     verification.transport = httpx.MockTransport(ai_handler)
@@ -415,7 +451,9 @@ async def test_discussion_cancel_while_search_waits_finalizes_trace(learning_dat
                              {"id": "mock", "kind": "tavily", "name": "Mock search", "options": {"api_key": "fake"}})
 
         def _catalog(self, kind):
-            return {"supports_scrape": False}
+            return SearchService._catalog(kind)
+
+        _validate_parameters = staticmethod(SearchService._validate_parameters)
 
         async def invoke(self, run, params, *, fetch=False):
             entered.set()
@@ -428,7 +466,7 @@ async def test_discussion_cancel_while_search_waits_finalizes_trace(learning_dat
     def ai_handler(request):
         payload = json.loads(request.content)
         if payload.get("stream"):
-            return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"Late answer"}}]}\n\ndata: [DONE]\n\n')
+            return httpx.Response(200, text=chat_stream(search_call("focused")))
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"history_query":null}'}}]})
 
     verification.transport = httpx.MockTransport(ai_handler)

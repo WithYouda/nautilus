@@ -11,7 +11,7 @@ from .learning_records import LearningRecords
 from .providers import build_provider
 from .verification import _clean_json
 from .search_adapters import SearchError
-from .search_runtime import external_context, apply_native_event
+from .search_runtime import external_stream, apply_native_event
 
 
 class QuestionDiscussionService:
@@ -387,10 +387,12 @@ class QuestionDiscussionService:
                     messages.extend([{'role': 'user', 'content': previous['user_content']}, {'role': 'assistant', 'content': previous['assistant_content']}])
                 messages.append({'role': 'user', 'content': content})
                 if search_run is not None and search_run.selection['mode'] == 'external':
-                    messages = await external_context(self.chats.search_service, search_run, messages, provider, publish_search)
+                    stream = external_stream(self.chats.search_service, search_run, messages, provider, publish_search)
+                else:
+                    stream = provider.stream_chat(messages)
                 reply = ''
                 reasoning = ''
-                async for chunk in provider.stream_chat(messages):
+                async for chunk in stream:
                     if chunk.kind in {'search_status', 'search_sources'}:
                         apply_native_event(trace, chunk)
                         publish_search(trace)
