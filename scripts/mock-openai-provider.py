@@ -136,6 +136,9 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     outcome_context_key='synthetic-continuity', boundaries='仅一份样例',
                     stop_conditions='写出自己的判断与过程', time_budget_minutes=15,
                     recommended_criterion_id=None, rationale='先完成一个可观察的小步骤'), ensure_ascii=False)
+            elif '你为Nautilus整理学习位置' in prompt:
+                content = json.dumps(dict(current='正在讨论如何定位日志编号，尚未验证理解。',
+                    next='可以解释一次自己的判断过程。'), ensure_ascii=False)
             elif '评估本次作答' in prompt:
                 evaluation_prompt = json.loads(payload['messages'][-1]['content'])
                 question_ids = [q['id'] for q in evaluation_prompt['questions']]

@@ -32,6 +32,40 @@ async function setup(page: Page, title: string) {
   await expect(page.getByRole('region', { name: '本次学习安排' })).toContainText(title);
 }
 
+test('learning position: AI summary, correction, refresh and answer version isolation', async ({ page }) => {
+  await authorize(page);
+  await provider(page);
+  await page.reload(); // Provider setup used the API; refresh the workspace's cached selection.
+  await setup(page, '合成位置记录');
+  await expect(page.getByRole('button', { name: '重新生成', exact: true }).first()).toBeEnabled();
+  const arrangement = page.getByRole('region', { name: '本次学习安排' });
+  await arrangement.locator('summary').first().click();
+  const position = page.locator('.learning-position');
+  await position.getByRole('button', { name: 'AI整理', exact: true }).click();
+  await expect(position).toContainText('正在讨论如何定位日志编号，尚未验证理解。');
+  await expect(position.getByText('AI概括', { exact: true })).toBeVisible();
+  await position.getByText('查看依据对话', { exact: true }).click();
+  await expect(position.locator('.learning-position__excerpt')).toHaveCount(2);
+  await position.getByRole('button', { name: '修改记录', exact: true }).click();
+  await position.getByRole('textbox', { name: '当前讨论', exact: true }).fill('我还在确认数字范围');
+  await position.getByRole('textbox', { name: '建议下一步', exact: true }).fill('比较空输入与正常输入');
+  await position.getByRole('button', { name: '保存记录', exact: true }).click();
+  await expect(position.getByText('我的记录', { exact: true })).toBeVisible();
+  await page.reload();
+  await arrangement.locator('summary').first().click();
+  await expect(position).toContainText('我还在确认数字范围');
+  await expect(position).toContainText('比较空输入与正常输入');
+  await page.getByRole('button', { name: '重新生成', exact: true }).first().click();
+  await expect(page.getByRole('button', { name: '上一个回答', exact: true })).toBeEnabled();
+  await expect(position).toContainText('未记录，请整理或自己填写。');
+  await page.getByRole('button', { name: '上一个回答', exact: true }).click();
+  await expect(position).toContainText('我还在确认数字范围');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(position.getByRole('button', { name: '修改记录', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.screenshot({ path: '/tmp/nautilus-position-preview.png', fullPage: true });
+});
+
 test('new learning → saved verification → confirmed completion → return card → continue', async ({ page }) => {
   await authorize(page);
   await provider(page);

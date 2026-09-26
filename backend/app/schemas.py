@@ -450,6 +450,17 @@ class LearningRoomConversationRequest(BaseModel):
     conversation_id: str = Field(min_length=1, max_length=100)
 
 
+class LearningPositionRequest(LearningRoomConversationRequest):
+    message_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+
+
+class LearningPositionCorrectionRequest(LearningPositionRequest):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    current: str = Field(min_length=1, max_length=500)
+    next: str = Field(max_length=500)
+
+
 class LearningVerificationSubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     responses: dict[str, str] = Field(default_factory=dict)

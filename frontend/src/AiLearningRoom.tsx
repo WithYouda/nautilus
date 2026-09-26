@@ -45,6 +45,7 @@ import {
 import DialogPortal from "./DialogPortal";
 import useDismissibleLayer from "./useDismissibleLayer";
 import LearningVerification from "./LearningVerification";
+import LearningPosition from "./LearningPosition";
 
 const SESSION_KEY = "nautilus.ai.learning-room";
 const MAX_RECONNECT_ATTEMPTS = 3;
@@ -1115,7 +1116,7 @@ export default function AiLearningRoom({
         </div>
       </header>
 
-      {learningBrief && <><LearningRoomBriefCard brief={learningBrief} /><div className="return-room-actions">
+      {learningBrief && <><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
         <button className="button button--quiet" onClick={async () => { try { const card = await getReturnReview(); if (card) await chooseReturnReview(card.id, "stop_for_now", `room-stop:${card.id}`); onBack(); } catch (reason) { setError(reason instanceof Error ? reason.message : "暂停未保存"); } }}>今天先停</button>
         {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}
       </div></>}
@@ -1203,7 +1204,7 @@ function ContextFacts({ context }: { context: AiLearningContext }) {
   return <dl><div><dt>计划</dt><dd>{context.plan_counts.total}</dd></div><div><dt>待执行</dt><dd>{context.task_counts.total}</dd></div><div><dt>逾期</dt><dd>{context.task_counts.overdue}</dd></div></dl>;
 }
 
-function LearningRoomBriefCard({ brief }: { brief: LearningRoomBrief }) {
+function LearningRoomBriefCard({ brief, conversationId, visibleMessages, chatBusy }: { brief: LearningRoomBrief; conversationId: string | null; visibleMessages: AiMessage[]; chatBusy: boolean }) {
   return (
     <section className="ai-room-brief" aria-label="本次学习安排">
       <details>
@@ -1214,6 +1215,7 @@ function LearningRoomBriefCard({ brief }: { brief: LearningRoomBrief }) {
           {brief.boundaries && <span><b>边界</b>{brief.boundaries}</span>}
           <span><b>停止</b>{brief.stop_conditions}</span>
         </div>
+        {brief.session_id && <LearningPosition key={`${brief.session_id}:${conversationId}`} sessionId={brief.session_id} conversationId={conversationId} visibleMessages={visibleMessages} chatBusy={chatBusy} />}
       </details>
     </section>
   );

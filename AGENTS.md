@@ -48,6 +48,8 @@ Before ending every development turn:
 
 Proportionate local development:
 
+- Prioritize a visible, usable product increment and enable it in the existing trial after relevant checks. Avoid tests that merely mirror implementation, speculative defensive layers, and generic frameworks without a current need; keep checks focused on the changed user journey and its material data boundaries.
+
 - After a coherent change passes the relevant checks, create a local Git commit for the reviewed task files unless the user asks to keep it uncommitted. Do not leave completed work uncommitted merely because pushing or publishing would need separate authorization. Exclude unrelated work and private runtime data; use explicit file paths when staging.
 - Reuse validation results while the tested code is unchanged. Run focused checks for small changes; broaden testing for shared behavior, data lifecycle changes, failures, or other concrete concerns. Do not rerun a full suite merely to record another handoff or commit.
 - Keep the current progress summary short and update it in place; do not prepend competing "latest" snapshots. Record actual changes, checks, limitations, and the next task once. Git preserves the detailed history. Update the product decision record or PRD only when their substance changes; routine fixes do not need a new standalone implementation report.

@@ -24,6 +24,7 @@ from ..dependencies import (
 )
 from ..learning_domain import DomainError
 from ..learning_room import LearningRoomService
+from ..learning_position import LearningPositionService
 from ..learning_records import LearningRecords
 from ..question_discussion import QuestionDiscussionService
 from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest
@@ -55,6 +56,8 @@ from ..schemas import (
     LearningVerificationConfirmRequest,
     LearningVerificationPurgeRequest,
     LearningRoomConversationRequest,
+    LearningPositionRequest,
+    LearningPositionCorrectionRequest,
 )
 
 router = APIRouter(prefix="/api/learning")
@@ -62,6 +65,12 @@ router = APIRouter(prefix="/api/learning")
 
 def _raise_learning_error(error: DomainError) -> None:
     messages = {
+        "position_answer_pending": "等这次回答结束后再整理位置。",
+        "position_changed": "位置记录已更新，请重新打开学习安排后再试。",
+        "position_provider_unavailable": "当前对话模型不可用，可以先手动记录位置。",
+        "position_generation_failed": "AI整理失败，请稍后重试；也可以直接手动记录。",
+        "position_format_invalid": "AI未返回可用的位置概括，可以重试或手动记录。",
+        "position_canceled": "已取消整理。",
         "discussion_busy": "这段讨论正在回答，请等待结果或稍后回来。问题已保存。",
         "permission_denied": "当前身份无权访问或修改这条学习事实",
         "permission_request_not_pending": "权限申请已过期或已处理",
@@ -278,6 +287,40 @@ async def start_learning_verification(
 def get_learning_room(session_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
     try:
         return LearningRoomService(learning_service(request), request.app.state.conversations).get(identity, session_id)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.get("/sessions/{session_id}/room/position")
+def get_learning_position(session_id: str, conversation_id: str, message_id: str,
+                          request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return LearningPositionService(learning_service(request), request.app.state.conversations).get(
+            identity, session_id, conversation_id, message_id)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.put("/sessions/{session_id}/room/position")
+def correct_learning_position(session_id: str, payload: LearningPositionCorrectionRequest,
+                              request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return LearningPositionService(learning_service(request), request.app.state.conversations).save(
+            identity, session_id, payload.conversation_id, payload.message_id, payload.expected_revision,
+            {"current": payload.current, "next": payload.next})
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post("/sessions/{session_id}/room/position/generate")
+async def generate_learning_position(session_id: str, payload: LearningPositionRequest,
+                                     request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return await LearningPositionService(
+            learning_service(request), request.app.state.conversations,
+            transport=request.app.state.learning_setup.transport,
+        ).generate(identity, session_id, payload.conversation_id, payload.message_id,
+                   payload.expected_revision, request.is_disconnected)
     except DomainError as error:
         _raise_learning_error(error)
 

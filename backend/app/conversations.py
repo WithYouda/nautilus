@@ -1403,6 +1403,11 @@ class ConversationService:
             if cursor.rowcount != 1:
                 raise ConversationError("对话不存在")
 
+            connection.execute(
+                "UPDATE ai_run SET config_snapshot_json=json_remove(config_snapshot_json, '$.learning_position') WHERE conversation_id=?",
+                (conversation_id,),
+            )
+
     def _primary_task_id(self, conversation_id: str) -> str | None:
         row = self.database.fetchone(
             """

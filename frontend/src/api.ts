@@ -1342,6 +1342,44 @@ export type LearningRoomBrief = {
   stop_conditions: string;
 };
 
+export type PositionRevision = {
+  current: string;
+  next: string;
+  source: "ai" | "user";
+  created_at: string;
+  basis_message_ids: string[];
+  provider_model?: string | null;
+};
+
+export type LearningPosition = { message_id: string; revisions: PositionRevision[] };
+
+function positionPath(sessionId: string) {
+  return `/api/learning/sessions/${encodeURIComponent(sessionId)}/room/position`;
+}
+
+export function getLearningPosition(sessionId: string, conversationId: string, messageId: string, signal?: AbortSignal): Promise<LearningPosition> {
+  const query = new URLSearchParams({ conversation_id: conversationId, message_id: messageId });
+  return request<LearningPosition>(`${positionPath(sessionId)}?${query}`, { signal });
+}
+
+export function saveLearningPosition(sessionId: string, payload: {
+  conversation_id: string;
+  message_id: string;
+  expected_revision: number;
+  current: string;
+  next: string;
+}, signal?: AbortSignal): Promise<LearningPosition> {
+  return request<LearningPosition>(positionPath(sessionId), { method: "PUT", body: JSON.stringify(payload), signal });
+}
+
+export function generateLearningPosition(sessionId: string, payload: {
+  conversation_id: string;
+  message_id: string;
+  expected_revision: number;
+}, signal?: AbortSignal): Promise<LearningPosition> {
+  return request<LearningPosition>(`${positionPath(sessionId)}/generate`, { method: "POST", body: JSON.stringify(payload), signal });
+}
+
 export type LearningVerificationQuestion = {
   id: string;
   type: "scenario" | "project" | "short_response" | "true_false";
