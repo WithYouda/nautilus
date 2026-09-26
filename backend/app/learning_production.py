@@ -11,6 +11,7 @@ from typing import Any
 
 from .config import PROJECT_ROOT
 from .learning_storage import open_learning_database
+from .purge_storage import register_backup, unregister_missing_backup, storage_lock, receipts
 
 
 class ProductionLearningDatabaseError(RuntimeError):
@@ -130,6 +131,14 @@ def create_learning_backup(
     label: str,
 ) -> tuple[Path, Path, dict[str, Any]]:
     database_path = validate_learning_path(database_path)
+    with storage_lock(database_path):
+        return _create_learning_backup(database_path, backup_dir, label=label)
+
+
+def _create_learning_backup(database_path, backup_dir, *, label):
+    if any(receipt['status'] != 'complete' for receipt in receipts(database_path)):
+        raise ProductionLearningDatabaseError('purged content cleanup is incomplete; finish it before creating a backup')
+    database_path = validate_learning_path(database_path)
     backup_dir = backup_dir.expanduser().resolve()
     if "diagnostic-backups" in backup_dir.parts:
         raise ProductionLearningDatabaseError("diagnostic-backups is not a Nautilus backup location")
@@ -140,8 +149,13 @@ def create_learning_backup(
     if backup_path.exists():
         raise ProductionLearningDatabaseError(f"backup already exists: {backup_path}")
 
-    with closing(sqlite3.connect(database_path)) as source, closing(sqlite3.connect(backup_path)) as target:
-        source.backup(target)
+    register_backup(database_path, backup_path)
+    try:
+        with closing(sqlite3.connect(database_path)) as source, closing(sqlite3.connect(backup_path)) as target:
+            source.backup(target)
+    except BaseException:
+        unregister_missing_backup(database_path, backup_path)
+        raise
     with closing(sqlite3.connect(backup_path)) as connection:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     os.chmod(backup_path, 0o600)
@@ -149,6 +163,7 @@ def create_learning_backup(
     backup_inspection = inspect_learning_database(backup_path)
     if backup_inspection["applied_migrations"] != inspection["applied_migrations"]:
         backup_path.unlink(missing_ok=True)
+        unregister_missing_backup(database_path, backup_path)
         raise ProductionLearningDatabaseError("backup migration history does not match source")
     manifest_path = _write_manifest(backup_path, database_path, label, backup_inspection)
     for suffix in ("-wal", "-shm"):
@@ -175,6 +190,11 @@ def _backup_loses_purge_barriers(
     # predate the object, discard its tombstone, and allow the text back on a
     # subsequent restore. Preserve every known erasure, including shared
     # private evidence and discussions reached through deletion propagation.
+    if current.execute("SELECT 1 FROM sqlite_master WHERE name='learning_event'").fetchone():
+        purges = {row[0] for row in current.execute("SELECT event_id FROM learning_event WHERE event_type='artifact.purged'")}
+        retained = {row[0] for row in backup.execute("SELECT event_id FROM learning_event WHERE event_type='artifact.purged'")}
+        if not purges.issubset(retained):
+            return True
     barriers = (
         ("learning_raw_artifact", ("owner_id", "artifact_id", "content_version")),
         ("learning_verification", ("owner_id", "id")),
@@ -310,6 +330,12 @@ def restore_learning_backup(
     *,
     allow_missing_current: bool = False,
 ) -> dict[str, Any]:
+    target_path = validate_learning_path(target_path)
+    with storage_lock(target_path):
+        return _restore_learning_backup(backup_path, target_path, allow_missing_current=allow_missing_current)
+
+
+def _restore_learning_backup(backup_path, target_path, *, allow_missing_current=False):
     """Restore an offline database; callers must stop all database users first."""
     backup_path = validate_learning_path(backup_path)
     target_path = validate_learning_path(target_path)
@@ -331,6 +357,7 @@ def restore_learning_backup(
         restored_inspection = inspect_learning_database(temporary_path)
         if restored_inspection["applied_migrations"] != backup_inspection["applied_migrations"]:
             raise ProductionLearningDatabaseError("restored database migration history does not match backup")
+        _check_purge_receipts(target_path, temporary_path)
         if target_path.exists():
             inspect_learning_database(target_path)
             with closing(_connect_read_only(target_path)) as current, closing(_connect_read_only(temporary_path)) as backup:
@@ -355,6 +382,55 @@ def restore_learning_backup(
         for suffix in ("", "-wal", "-shm"):
             temporary_path.with_name(temporary_path.name + suffix).unlink(missing_ok=True)
     return inspect_learning_database(target_path)
+
+
+def _check_purge_receipts(target_path, candidate_path):
+    # The local receipt survives a database rollback or missing-current restore.
+    # Incomplete cleanup cannot be disguised by restoring a different snapshot.
+    from .purge_content import columns, erase
+    for receipt in receipts(target_path):
+        if receipt['status'] != 'complete':
+            raise ProductionLearningDatabaseError('purged content cleanup is incomplete; finish it before restoring')
+        kind, owner, object_id = (receipt[key] for key in ('kind', 'owner', 'object_id'))
+        table, key = {'artifact': ('learning_raw_artifact', 'artifact_id'),
+                      'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id')}[kind]
+        with closing(sqlite3.connect(candidate_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            if 'purged_at' not in columns(connection, table):
+                raise ProductionLearningDatabaseError('backup would lose deletion barriers for purged content')
+            rows = connection.execute(f'SELECT purged_at FROM {table} WHERE owner_id=? AND {key}=?', (owner, object_id)).fetchall()
+            if not rows or any(not row[0] for row in rows):
+                raise ProductionLearningDatabaseError('backup would lose deletion barriers for purged content')
+            for artifact_id in receipt.get('artifact_ids', []) + ([object_id] if kind == 'artifact' else []):
+                if not connection.execute("SELECT 1 FROM learning_event WHERE owner_id=? AND event_type='artifact.purged' AND json_extract(payload_json,'$.artifact_id')=?", (owner, artifact_id)).fetchone():
+                    raise ProductionLearningDatabaseError('backup would lose deletion facts for purged content')
+            private_columns = {
+                'learning_raw_artifact': ['content', 'content_hash'],
+                'learning_verification': ['challenge_json', 'answer_key_json', 'submission_json', 'result_json', 'contract_snapshot_json'],
+                'learning_verification_submission': ['content_json'],
+                'learning_verification_evaluation': ['result_json', 'provider_snapshot_json'],
+                'learning_discussion_turn': ['user_content', 'assistant_content', 'reasoning_content', 'sources_json', 'provider_snapshot_json'],
+                'learning_evidence_event': ['payload_json'],
+                'learning_evidence_private_content': ['content_json'],
+                'learning_completion': ['content_json', 'contract_snapshot_json', 'request_fingerprint'],
+                'learning_completion_review': ['result_json', 'user_response', 'provider_name', 'model'],
+            }
+            def snapshot():
+                result = {}
+                for name, wanted in private_columns.items():
+                    fields = [field for field in wanted if field in columns(connection, name)]
+                    if fields:
+                        result[name] = [tuple(row) for row in connection.execute(f"SELECT {','.join(fields)} FROM {name} ORDER BY rowid")]
+                return result
+            connection.execute('BEGIN')
+            try:
+                before = snapshot()
+                erase(connection, owner, kind, object_id, receipt['updated_at'],
+                      submission_ids=receipt.get('submission_ids', []), artifact_ids=receipt.get('artifact_ids', []))
+                if snapshot() != before:
+                    raise ProductionLearningDatabaseError('backup would restore purged private content')
+            finally:
+                connection.rollback()
 
 
 def upgrade_learning_database(

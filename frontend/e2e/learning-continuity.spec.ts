@@ -281,7 +281,8 @@ test('outcome review: history versions, raw artifact and deletion stay connected
   await review.getByText('更多操作', { exact: true }).click();
   page.once('dialog', dialog => dialog.accept());
   await review.getByRole('button', { name: '彻底删除本次验证内容' }).click();
-  await expect(review).toContainText('本次作答内容已彻底删除');
+  await expect(review).toContainText('本次作答在线内容已清除');
+  await expect(review.getByLabel('副本清除结果')).toContainText('Nautilus 管理的副本已处理完成。');
   await page.getByRole('button', { name: '返回成果依据' }).click();
   await expect(outcome.getByRole('button', { name: '查看当时作答与评估版本' })).toHaveCount(0);
   await expect(outcome.getByText('查看 AI 反馈', { exact: true })).toHaveCount(0);

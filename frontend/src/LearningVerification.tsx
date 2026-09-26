@@ -1,5 +1,6 @@
 import LearningMarkdown from "./LearningMarkdown";
 import VerificationReview from "./VerificationReview";
+import PurgeStatus from "./PurgeStatus";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Send, ShieldCheck } from "lucide-react";
 import {
@@ -42,6 +43,8 @@ export default function LearningVerification({
 }) {
   const [mode, setMode] = useState<VerificationMode>("ai_challenge");
   const [verification, setVerification] = useState<LearningVerification | null>(null);
+  const verificationId = useRef<string | null>(null);
+  verificationId.current = verification?.id ?? null;
   const [attempts, setAttempts] = useState<LearningVerification[]>([]);
   const drafts = useRef(new Map<string, VerificationDraft>());
   const [responses, setResponses] = useState<Record<string, string>>({});
@@ -209,12 +212,16 @@ export default function LearningVerification({
 
   async function removeMaterial() {
     if (!verification || busy) return;
+    const targetId = verification.id;
     setBusy(true);
     try {
-      const detail = await getVerificationReview(verification.id);
-      if (!window.confirm(`彻底删除本次验证的全部提交、题目及评估？另有 ${detail.purge_discussion_count} 段关联或引用它的题目讨论正文会一并清除。依赖证据失效，完成记录保留，内容不可恢复。`)) return;
-      updateVerification(await purgeVerification(verification.id));
-      drafts.current.delete(verification.id);
+      const detail = await getVerificationReview(targetId);
+      if (verificationId.current !== targetId) return;
+      if (!verification.verification_purged && !window.confirm(`彻底删除本次验证的全部提交、题目及评估？另有 ${detail.purge_discussion_count} 段关联或引用它的题目讨论正文会一并清除。同时清除受管理历史版本和普通备份中的对应内容，不可恢复；其他记录保留。外部副本另列结果。依赖证据失效，完成记录保留。`)) return;
+      const value = await purgeVerification(targetId);
+      if (verificationId.current !== targetId) return;
+      updateVerification(value);
+      drafts.current.delete(targetId);
       setResponses({}); setMaterial(""); setLearnerWork(""); setEditing(false);
     } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "删除失败"); }
     finally { setBusy(false); }
@@ -272,7 +279,8 @@ export default function LearningVerification({
         </section>
       ) : verification.content_purged ? (
         <section className="verification-panel">
-          <p>{verification.verification_purged ? "验证内容已彻底删除" : "本次作答已彻底删除，题目及其他提交可能仍有保留"}，相关证据已失效。已有行动完成记录保留。</p>
+          <p>{verification.verification_purged ? "验证在线内容已清除" : "本次作答在线内容已清除，题目及其他提交可能仍有保留"}，相关证据已失效。已有行动完成记录保留。</p>
+          {verification.verification_purged && <PurgeStatus kind="verification" objectId={verification.id} onRetry={removeMaterial} busy={busy} />}
           {!verification.verification_purged && <button className="button button--quiet" type="button" onClick={() => void removeMaterial()} disabled={busy}>彻底删除本次验证的剩余内容</button>}
           {!completed && <button className="button button--quiet" type="button" onClick={() => { startKey.current = requestId(); setVerification(null); }} disabled={busy}>重新准备验证</button>}
           <button className="button button--quiet" type="button" onClick={onBack}>返回学习室</button>

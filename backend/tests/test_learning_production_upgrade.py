@@ -90,6 +90,11 @@ def test_restore_refuses_backup_that_would_resurrect_purged_content(client, tmp_
         backup_dir,
         label="before-purge",
     )
+    # Managed snapshots are now physically scrubbed by the purge endpoint.
+    # A user-exported copy remains outside that catalogue and must be refused.
+    unmanaged = tmp_path / 'user-export.sqlite3'
+    with closing(sqlite3.connect(before_purge)) as source, closing(sqlite3.connect(unmanaged)) as target:
+        source.backup(target)
 
     purged = client.post(
         f"/api/learning/artifacts/{created['artifact']['id']}/purge",
@@ -108,7 +113,7 @@ def test_restore_refuses_backup_that_would_resurrect_purged_content(client, tmp_
     unchanged = current_copy.read_bytes()
     # A first restore must not erase the only knowledge of the purge. Even
     # after that refused attempt, the second (body-containing) backup is denied.
-    for candidate in (before_object, before_purge):
+    for candidate in (before_object, unmanaged):
         with pytest.raises(ProductionLearningDatabaseError, match="purged"):
             restore_learning_backup(candidate, current_copy)
         assert current_copy.read_bytes() == unchanged

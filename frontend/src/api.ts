@@ -1593,6 +1593,17 @@ export function purgeVerification(id: string): Promise<LearningVerification> {
   });
 }
 
+export type PurgeReport = {
+  status: 'not_requested' | 'pending' | 'partial' | 'complete';
+  updated_at?: string;
+  files: Array<{ name: string; status: 'cleared' | 'failed'; reason?: string }>;
+  external_limits: string[];
+};
+
+export function getLearningPurgeReport(kind: 'verification' | 'completion' | 'artifact', objectId: string): Promise<PurgeReport> {
+  return request<PurgeReport>(`/api/learning/purges/${kind}/${objectId}`);
+}
+
 export type LearningRoomState = { brief: LearningRoomBrief; conversation_id: string | null; conversation_ids: string[] };
 
 export function getLearningRoom(sessionId: string): Promise<LearningRoomState> {

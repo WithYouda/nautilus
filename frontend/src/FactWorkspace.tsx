@@ -56,6 +56,7 @@ import {
 
 import ReturnReviewCard from "./ReturnReviewCard";
 import LearningPageHeader from "./LearningPageHeader";
+import PurgeStatus from "./PurgeStatus";
 
 type FactOperation =
   | "action"
@@ -835,7 +836,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
     action: "soft-delete" | "restore" | "withdraw" | "purge",
   ) {
     if (!selectedArtifact || !selectedAction) return;
-    if (action === "purge" && purgeConfirmation !== "PURGE") {
+    if (action === "purge" && selectedArtifact.visibility !== "purged" && purgeConfirmation !== "PURGE") {
       setError("请输入 PURGE 以确认彻底删除");
       return;
     }
@@ -876,7 +877,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
             ? "产出已恢复"
             : action === "withdraw"
               ? "产出已撤出当前证据计算"
-              : "产出已彻底删除，依赖主张已失效",
+          : "产出在线内容已清除，依赖主张已失效；副本清除进度见下方结果",
       );
     });
   }
@@ -1612,6 +1613,8 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                       撤回证据
                     </button>
                     <div className="fact-purge">
+                      {selectedArtifact.visibility !== "purged" && <>
+                      <p className="form-hint">彻底删除会清除受管理历史版本和普通备份中的对应内容，不可恢复；其他记录保留。外部副本另列结果。</p>
                       <input
                         value={purgeConfirmation}
                         onChange={(event) => setPurgeConfirmation(event.target.value)}
@@ -1622,12 +1625,14 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                         className="button button--danger button--compact"
                         type="button"
                         onClick={() => void handleArtifactLifecycle("purge")}
-                        disabled={busy || purgeConfirmation !== "PURGE" || selectedArtifact.visibility === "purged"}
+                        disabled={busy || purgeConfirmation !== "PURGE"}
                       >
                         彻底删除
                       </button>
+                      </>}
                     </div>
                   </div>
+                  {selectedArtifact.visibility === "purged" && <PurgeStatus kind="artifact" objectId={selectedArtifact.id} busy={busy} onRetry={() => handleArtifactLifecycle("purge")} />}
                   <p className="fact-lifecycle__impact">
                     当前影响：
                     {state.evidence_claims.filter((claim) => claim.artifact_id === selectedArtifact.id).length} 条主张，

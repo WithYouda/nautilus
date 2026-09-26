@@ -28,6 +28,7 @@ from ..learning_position import LearningPositionService
 from ..learning_records import LearningRecords
 from ..outcome_review import OutcomeReview
 from ..completion import CompletionService, CompletionRequest, CompletionReviewRequest, CompletionResponseRequest
+from ..managed_purge import ManagedPurge
 from ..question_discussion import QuestionDiscussionService
 from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest
 from ..schemas import (
@@ -62,7 +63,11 @@ from ..schemas import (
     LearningPositionCorrectionRequest,
 )
 
-router = APIRouter(prefix="/api/learning")
+def _private_response(response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+
+
+router = APIRouter(prefix="/api/learning", dependencies=[Depends(_private_response)])
 
 
 def _raise_learning_error(error: DomainError) -> None:
@@ -422,7 +427,9 @@ def respond_completion_review(completion_id: str, review_id: str, payload: Compl
 @router.post("/completions/{completion_id}/purge")
 def purge_completion_content(completion_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
     try:
-        return CompletionService(verification_service(request)).purge(identity, completion_id)
+        service = CompletionService(verification_service(request))
+        return ManagedPurge(service.learning).run(identity, 'completion', completion_id,
+            lambda: service.purge(identity, completion_id))
     except DomainError as error:
         _raise_learning_error(error)
 
@@ -532,7 +539,9 @@ async def analyze_verification_evidence(verification_id: str, request: Request, 
 @router.post("/verifications/{verification_id}/purge")
 def purge_verification(verification_id: str, payload: LearningVerificationPurgeRequest, request: Request, identity: dict[str, Any] = Depends(current_identity)):
     try:
-        result = verification_service(request).purge(identity, verification_id)
+        service = verification_service(request)
+        result = ManagedPurge(service.learning).run(identity, 'verification', verification_id,
+            lambda: service.purge(identity, verification_id))
         return result
     except DomainError as error:
         _raise_learning_error(error)
@@ -674,7 +683,7 @@ def purge_learning_artifact(
 ) -> dict[str, Any]:
     service = learning_service(request)
     try:
-        result = service.purge_artifact(
+        result = ManagedPurge(service).run(identity, 'artifact', artifact_id, lambda: service.purge_artifact(
             identity,
             {
                 "artifact_id": artifact_id,
@@ -682,8 +691,16 @@ def purge_learning_artifact(
                 "confirmation": payload.confirmation,
             },
             payload.idempotency_key,
-        )
+        ))
         return result
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.get('/purges/{kind}/{object_id}')
+def purge_status(kind: str, object_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return ManagedPurge(learning_service(request)).status(identity, kind, object_id)
     except DomainError as error:
         _raise_learning_error(error)
 

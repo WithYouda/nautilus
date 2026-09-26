@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import QuestionFeedbackContent from './QuestionFeedbackContent';
 import LearningMarkdown from './LearningMarkdown';
 import { createQuestionDiscussion, getVerificationReview, purgeVerification, type VerificationReview as Review, type LearningVerification } from './api';
+import PurgeStatus from './PurgeStatus';
 
 export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged, onReadSolution, initialSubmissionId, initialEvaluationId, onSelectionChange }: {
   id: string; refreshKey?: string; onDiscuss: (id: string) => void;
@@ -14,6 +15,8 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
   const [evaluation, setEvaluation] = useState<string | undefined>(initialEvaluationId ?? undefined);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const currentId = useRef(id);
+  currentId.current = id;
   useEffect(() => { setSubmission(initialSubmissionId ?? undefined); setEvaluation(initialEvaluationId ?? undefined); }, [id, initialSubmissionId, initialEvaluationId]);
   useEffect(() => {
     let active = true;
@@ -33,15 +36,17 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
   }
   async function purge() {
     if (!review || busy) return;
-    if (!window.confirm(`彻底删除本次验证的题目、全部作答和评估？另有 ${review.purge_discussion_count} 段关联或引用它的题目讨论正文会一并清除。依赖证据失效，完成记录保留，内容不可恢复。`)) return;
+    if (!review.verification.verification_purged && !window.confirm(`彻底删除本次验证的题目、全部作答和评估？另有 ${review.purge_discussion_count} 段关联或引用它的题目讨论正文会一并清除。同时清除受管理历史版本和普通备份中的对应内容，不可恢复；其他记录保留。外部副本另列结果。依赖证据失效，完成记录保留。`)) return;
     setBusy(true); setError('');
     try {
       const value = await purgeVerification(id);
+      if (currentId.current !== id) return;
       setSubmission(undefined); setEvaluation(undefined);
       setReview(null);
       onSelectionChange?.(null, null);
       onPurged?.(value);
-      setReview(await getVerificationReview(id));
+      const next = await getVerificationReview(id);
+      if (currentId.current === id) setReview(next);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '删除未完成'); }
     finally { setBusy(false); }
   }
@@ -57,7 +62,7 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
       {review.evaluations.length > 1 && <label className="field"><span>查看哪次评估</span><select value={review.selected_evaluation_id ?? ''} onChange={event => { setEvaluation(event.target.value); onSelectionChange?.(review.selected_submission_id, event.target.value); }}>
         {review.evaluations.map((e, i) => <option key={e.id} value={e.id}>第 {review.evaluations.length - i} 次评估 · {e.status === 'succeeded' ? '已完成' : e.status === 'running' ? '处理中' : '未完成'}</option>)}
       </select></label>}
-      {!review.content ? <p>{review.verification.content_purged || review.submissions.find(s => s.id === review.selected_submission_id)?.purged_at ? '本次作答内容已彻底删除。完成事实仍保留。' : '尚未保存作答。'}</p> : <>
+      {!review.content ? <p>{review.verification.content_purged || review.submissions.find(s => s.id === review.selected_submission_id)?.purged_at ? '本次作答在线内容已清除。完成事实仍保留；副本清除进度见下方结果。' : '尚未保存作答。'}</p> : <>
         {questions.map((question, index) => {
           const feedback = review.result?.question_feedback?.find(item => item.question_id === question.id);
           return <article className="verification-question" key={question.id} aria-label={`第 ${index + 1} 题回看`}>
@@ -75,7 +80,7 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
           <div className="ai-markdown"><LearningMarkdown>{review.result.feedback}</LearningMarkdown><LearningMarkdown>{review.result.next_step}</LearningMarkdown></div>
         </div></div>}
       </>}
-      {!review.verification.verification_purged && <details className="review-actions"><summary>更多操作</summary><p>彻底删除会清除本次验证内容及关联讨论，无法恢复；完成记录保留。</p><button className="button button--danger" type="button" disabled={busy} onClick={() => void purge()}>彻底删除本次验证内容</button></details>}
+      {review.verification.verification_purged ? <PurgeStatus kind="verification" objectId={id} onRetry={purge} busy={busy} /> : <details className="review-actions"><summary>更多操作</summary><p>彻底删除会清除本次验证内容、关联讨论及受管理副本，无法恢复；完成记录保留。外部副本另列结果。</p><button className="button button--danger" type="button" disabled={busy} onClick={() => void purge()}>彻底删除本次验证内容</button></details>}
     </>}
   </section>;
 }

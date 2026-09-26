@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { createLearningCompletion, getLearningCompletion, purgeLearningCompletion, respondToCompletionReview, reviewLearningCompletion, type CompletionKind, type LearningCompletion as Completion } from './api';
+import PurgeStatus from './PurgeStatus';
 
 const kindLabel: Record<CompletionKind, string> = {
   unverified: '未经过验证',
@@ -102,10 +103,12 @@ export default function LearningCompletion({ delegationId, allowCreate = true, o
   }
 
   async function purge() {
-    if (!completion || busy || completion.purged_at || !window.confirm('删除这条完成记录的说明、材料、约定与审查内容？完成事实和验证来源类别仍会保留。')) return;
-    const current = generation.current;
+    if (!completion || busy || (!completion.purged_at && !window.confirm('删除这条完成记录的说明、材料、约定与审查内容？同时清除受管理历史版本和普通备份中的对应内容，不可恢复；其他记录保留。外部副本的处理边界会在结果中单独列出。完成事实和验证来源类别仍会保留。'))) return;
+    const current = ++generation.current;
     setBusy(true); setError('');
-    try { const saved = await purgeLearningCompletion(completion.id); if (generation.current === current) { setCompletion(saved); setResponses({}); onPurged?.(); } }
+    try { const saved = await purgeLearningCompletion(completion.id); if (generation.current === current) {
+      setCompletion(saved); setResponses({}); setNote(''); setMethod(''); setResult(''); setMaterialLabel(''); setMaterialText(''); onPurged?.();
+    } }
     catch (reason) { if (generation.current === current) setError(reason instanceof Error ? reason.message : '内容删除失败，请重试。'); }
     finally { if (generation.current === current) setBusy(false); }
   }
@@ -118,7 +121,7 @@ export default function LearningCompletion({ delegationId, allowCreate = true, o
     {loadFailed && <button className="button button--quiet" type="button" disabled={busy} onClick={() => void refresh()}>重新读取完成记录</button>}
     {!loading && completion && <>
       <p><strong>已记录完成</strong> · {completion.purged_at && completion.verification_kind === 'external_material' ? '用户报告非 AI 验证 · 曾附材料，内容已删除 · 平台未核验' : kindLabel[completion.verification_kind]} · {new Date(completion.created_at).toLocaleString()}</p>
-      {completion.purged_at || !completion.content ? <p>内容已删除。完成事实及验证来源类别仍保留。</p> : <>
+      {completion.purged_at || !completion.content ? <p>在线内容已清除。完成事实及验证来源类别仍保留；副本清除进度见下方结果。</p> : <>
         {completion.content.note && <p>说明：{completion.content.note}</p>}
         {completion.content.report && <p>用户报告的原验证：{completion.content.report.method} · 结果：{completion.content.report.result}。平台未核验此结果。</p>}
         {completion.content.material && <details><summary>查看{completion.content.material.kind === 'work' ? '原始作答或作品' : '验证结果材料'}：{completion.content.material.label}</summary><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{completion.content.material.text}</pre></details>}
@@ -134,8 +137,8 @@ export default function LearningCompletion({ delegationId, allowCreate = true, o
           {item.status === 'succeeded' && <div><label className="field"><span>回应这次审查</span><textarea maxLength={4000} value={responses[item.id] ?? ''} onChange={event => setResponses(previous => ({ ...previous, [item.id]: event.target.value }))} /></label><button className="button button--quiet" type="button" disabled={busy || !(responses[item.id] ?? '').trim()} onClick={() => void respond(item.id)}>保存回应</button></div>}
         </article>)}</div>}
         <button className="button button--quiet" type="button" disabled={busy} onClick={() => void purge()}>删除完成记录内容</button>
-        <p className="form-hint">此处删除当前完成记录的内容；受管理副本的完整清除仍是后续功能。</p>
       </>}
+      {completion.purged_at && <PurgeStatus kind="completion" objectId={completion.id} onRetry={purge} busy={busy} />}
     </>}
     {!loading && !loadFailed && !completion && allowCreate && <form onSubmit={save}>
       <p>明确记录这次委托的执行已完成。完成不代表目标已达成或能力已掌握，也无需先进行 AI 验证。</p>
