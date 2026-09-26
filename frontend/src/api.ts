@@ -1,5 +1,6 @@
 import type { SearchSelection } from "./SearchControls";
 import type { SearchTrace } from "./SearchResults";
+import type { GenerationTrace } from "./AssistantResponse";
 export type Health = {
   status: string;
   service: string;
@@ -394,6 +395,7 @@ export type AiMessage = {
   parent_message_id?: string | null;
   question_version_id?: string;
   search_trace?: SearchTrace | null;
+  generation_trace?: GenerationTrace | null;
 };
 
 export type AiRunStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
@@ -440,19 +442,21 @@ export type AiStreamStartPayload = {
   content: string;
   reasoning_content: string;
   search_trace?: SearchTrace | null;
+  generation_trace?: GenerationTrace | null;
 };
 
 export type AiStreamEvent =
   | { type: "start"; data: AiStreamStartPayload }
   | { type: "delta"; data: { kind: "content" | "reasoning"; text: string } }
   | { type: "search"; data: { run_id: string; message_id: string | null; trace: SearchTrace } }
+  | { type: "process"; data: { run_id: string; message_id: string | null; trace: GenerationTrace } }
   | {
       type: "done";
-      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace">;
+      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace" | "generation_trace">;
     }
   | {
       type: "error";
-      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace"> & {
+      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace" | "generation_trace"> & {
         kind: string | null;
         message: string;
       };
@@ -1914,7 +1918,7 @@ export type QuestionDiscussion = {
   id: string; verification_id: string; submission_id: string; question_id: string; purged: boolean;
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
   provider_protocol?: AiApiProtocol | null;
-  turns: Array<{ search_trace?: SearchTrace | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+  turns: Array<{ search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };

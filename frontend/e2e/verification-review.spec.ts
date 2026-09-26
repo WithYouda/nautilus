@@ -80,23 +80,23 @@ test('saved answers → per-question discussion with local sources → completed
   expect(userBubble!.x).toBeGreaterThan(messagePane!.x);
   releaseSend();
   const answer = discussion.locator('.ai-message--assistant .ai-message-content');
-  const thinking = discussion.locator('.ai-reasoning');
-  await expect(thinking).toHaveAttribute('open', '');
-  await expect(thinking.locator('pre')).toHaveText('先识别题目条件。');
+  const thinking = discussion.locator('.ai-process-reasoning');
+  await expect(thinking.getByRole('button', { name: /思考中/ })).toHaveAttribute('aria-expanded', 'true');
+  await expect(thinking.locator('.ai-process-reasoning-text')).toHaveText('先识别题目条件。');
   await expect(answer).toHaveText('…');
   await page.reload(); // Recover reasoning before any answer has arrived.
-  await expect(thinking).toHaveAttribute('open', '');
-  await expect(thinking.locator('pre')).toContainText('先识别题目条件。');
+  await expect(thinking.getByRole('button', { name: /思考中/ })).toHaveAttribute('aria-expanded', 'true');
+  await expect(thinking.locator('.ai-process-reasoning-text')).toContainText('先识别题目条件。');
   await expect(answer).toHaveText('合成续学讲解：');
   await expect(discussion.getByRole('button', { name: '取消生成' })).toBeVisible();
   await page.reload(); // Resume while still generating, without duplicating the question.
   await expect(discussion.locator('.ai-message--user')).toHaveCount(1);
   await expect(answer).toHaveText('合成续学讲解：可以继续分析不同输入；此前的记录见[记录1]。');
   await expect(discussion.getByRole('button', { name: '取消生成' })).toBeHidden();
-  await expect(thinking).not.toHaveAttribute('open', '');
-  await thinking.locator('summary').click();
-  await expect(thinking.locator('pre')).toHaveText('先识别题目条件。再核对推导路径。');
-  await thinking.locator('summary').click();
+  await expect(thinking.getByRole('button', { name: /已思考/ })).toHaveAttribute('aria-expanded', 'false');
+  await thinking.getByRole('button', { name: /已思考/ }).click();
+  await expect(thinking.locator('.ai-process-reasoning-text')).toHaveText('先识别题目条件。再核对推导路径。');
+  await thinking.getByRole('button', { name: /已思考/ }).click();
   await discussion.getByText(/实际查阅的 \d+ 段记录/).click();
   const excerpts = discussion.locator('.discussion-source__excerpt');
   expect(await excerpts.count()).toBeGreaterThanOrEqual(2);
@@ -147,7 +147,7 @@ test('saved answers → per-question discussion with local sources → completed
   await expect(answer.last()).toHaveText('合成续学讲解：');
   await discussion.getByRole('button', { name: '取消生成' }).click();
   await expect(discussion.getByText('已取消生成，已收到的内容保留。')).toBeVisible();
-  await expect(thinking.last()).not.toHaveAttribute('open', '');
+  await expect(thinking.last().getByRole('button', { name: /已思考/ })).toHaveAttribute('aria-expanded', 'false');
   await expect(answer.last()).toHaveText('合成续学讲解：');
   await discussion.getByRole('button', { name: '重新生成', exact: true }).last().click();
   await expect(answer.last()).toHaveText('合成续学讲解：可以继续分析不同输入；此前的记录见[记录1]。');
@@ -175,9 +175,9 @@ test('saved answers → per-question discussion with local sources → completed
   await page.reload();
   await expect(discussion.getByText('合成追问：我这样补充边界说明可以吗？', { exact: true })).toBeVisible();
   await expect(thinking).toHaveCount(2);
-  await expect(thinking.first()).not.toHaveAttribute('open', '');
-  await thinking.first().locator('summary').click();
-  await expect(thinking.first().locator('pre')).toHaveText('先识别题目条件。再核对推导路径。');
+  await expect(thinking.first().getByRole('button', { name: /已思考/ })).toHaveAttribute('aria-expanded', 'false');
+  await thinking.first().getByRole('button', { name: /已思考/ }).click();
+  await expect(thinking.first().locator('.ai-process-reasoning-text')).toHaveText('先识别题目条件。再核对推导路径。');
   await discussion.getByRole('button', { name: '返回验证记录' }).click();
   await page.getByRole('checkbox', { name: /我已核对结果/ }).check();
   await page.getByRole('button', { name: '确认完成本次委托' }).click();

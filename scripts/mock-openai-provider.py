@@ -120,7 +120,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
-        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools"} else "mock-success"
+        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools", "mock-process-tools"} else "mock-success"
         is_title_request = payload.get("stream") is not True and int(payload.get("max_tokens") or 0) >= 256
         STATE.requested(f"title:{scenario}" if is_title_request else scenario)
 
@@ -186,6 +186,23 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             messages = payload.get("messages", [])
             last_user = max((i for i, message in enumerate(messages) if message.get("role") == "user"), default=-1)
             has_result = any(message.get("role") == "tool" for message in messages[last_user + 1:])
+            if scenario == "mock-process-tools":
+                results = [message for message in messages[last_user + 1:] if message.get("role") == "tool"]
+                phase = len(results)
+                thought = ["先核对这个问题需要哪些外部依据。", "第一份资料还不充分，需要补查发布日期。", "两次搜索的依据已到齐，现在整理回答。"][min(phase, 2)]
+                for piece in [thought[:8], thought[8:16], thought[16:]]:
+                    self.wfile.write(("data: " + json.dumps({"choices": [{"delta": {"reasoning_content": piece}}]}, ensure_ascii=False) + "\n\n").encode())
+                    self.wfile.flush()
+                    time.sleep(.35)
+                if payload.get("tools") and payload.get("tool_choice") != "none" and phase < 2:
+                    if phase == 0:
+                        self.wfile.write(('data: ' + json.dumps({"choices": [{"delta": {"content": "我先查阅相关资料。"}}]}, ensure_ascii=False) + '\n\n').encode())
+                    query = ["Nautilus process reference", "Nautilus publication date"][phase]
+                    call = {"index": 0, "id": f"mock-process-{phase}", "type": "function", "function": {"name": "search_web", "arguments": json.dumps({"query": query})}}
+                    self.wfile.write(('data: ' + json.dumps({"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": "tool_calls"}]}) + '\n\ndata: [DONE]\n\n').encode())
+                    self.wfile.flush()
+                    return
+                chunks = ["这是根据实际资料整理的合成回答。", "思考与工具步骤已按发生顺序保留。"]
             if scenario == "mock-search-tools" and payload.get("tools") and payload.get("tool_choice") != "none" and not has_result:
                 arguments = json.dumps({"query": "Nautilus search reference"})
                 for delta in [

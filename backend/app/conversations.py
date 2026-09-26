@@ -1443,6 +1443,7 @@ class ConversationService:
             reply = snapshot.get("reply", {})
             if item["role"] == "assistant":
                 item["search_trace"] = snapshot.get("search_trace")
+                item["generation_trace"] = snapshot.get("generation_trace")
             request_id = item.pop("request_message_id")
             item["parent_message_id"] = (
                 reply.get("parent_answer_id") if item["role"] == "user" and reply
@@ -1653,7 +1654,7 @@ class ConversationService:
                     question_version_id = question.get("question_version_id", question["id"])
                 if parent_id and (parent_id not in by_id or by_id[parent_id]["role"] != "assistant"):
                     raise ConversationError("回答上下文不存在")
-                history = [{"role": item["role"], "content": item["content"]}
+                history = [self._history_message(connection, item, bool(search_run and search_run.selection["mode"] == "external"))
                            for item in self.message_path(messages, parent_id)
                            if item["status"] == "complete" and item["content"]][-HISTORY_LIMIT:]
                 # Append-only run lineage: retries have no new user message. The
@@ -1784,13 +1785,34 @@ class ConversationService:
             )
             return cursor.rowcount == 1
 
+    @staticmethod
+    def _history_message(connection, item, with_tools):
+        message = {"role": item["role"], "content": item["content"]}
+        if with_tools and item["role"] == "assistant":
+            message["reasoning_content"] = item.get("reasoning_content", "") or ""
+            row = connection.execute("SELECT config_snapshot_json FROM ai_run WHERE response_message_id=?", (item["id"],)).fetchone()
+            if row:
+                turn = json.loads(row["config_snapshot_json"] or "{}").get("model_turn")
+                if turn:
+                    message["_model_turn"] = turn
+        return message
+
+    def save_generation_trace(self, run_id, trace):
+        return self._save_runtime_value(run_id, "generation_trace", trace)
+
+    def save_model_turn(self, run_id, turn):
+        return self._save_runtime_value(run_id, "model_turn", turn)
+
     def save_search_trace(self, run_id, trace):
+        return self._save_runtime_value(run_id, "search_trace", trace)
+
+    def _save_runtime_value(self, run_id, key, trace):
         with self.database.transaction() as connection:
             row = connection.execute("SELECT config_snapshot_json FROM ai_run WHERE id=? AND status IN ('queued','running')", (run_id,)).fetchone()
             if row is None:
                 return False
             snapshot = json.loads(row["config_snapshot_json"] or "{}")
-            snapshot["search_trace"] = trace
+            snapshot[key] = trace
             connection.execute("UPDATE ai_run SET config_snapshot_json=? WHERE id=?", (json.dumps(snapshot, ensure_ascii=False), run_id))
             return True
 

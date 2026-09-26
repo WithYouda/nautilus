@@ -13,6 +13,7 @@ import httpx
 from .conversations import ConversationError, ConversationService
 from .providers import ProviderChunk, ProviderConfig, ProviderError, build_provider
 from .search_runtime import external_stream, apply_native_event
+from .generation_trace import GenerationRecorder, interrupt_trace
 
 logger = logging.getLogger("nautilus.ai")
 
@@ -49,6 +50,9 @@ class RunState:
     cancel_requested: bool = False
     task: asyncio.Task | None = None
     search_trace: dict = field(default_factory=lambda: {"mode": "off", "status": "off", "items": []})
+
+    generation_trace: dict | None = None
+    recorder: GenerationRecorder | None = None
 
     @property
     def text(self) -> str:
@@ -163,6 +167,7 @@ class AiRunManager:
                     self._broadcast(state, None)
                     return
                 state.status = "running"
+                state.recorder = GenerationRecorder(lambda trace: self._publish_generation(state, trace))
                 async with asyncio.timeout(float(config.timeout_seconds)):
                     if search_run is not None and search_run.selection["mode"] == "external":
                         stream = external_stream(self.conversations.search_service, search_run, messages, provider,
@@ -175,6 +180,13 @@ class AiRunManager:
                         if chunk.kind in {"search_status", "search_sources"}:
                             apply_native_event(state.search_trace, chunk)
                             self._publish_search(state, state.search_trace)
+                            state.recorder.native_event(state.search_trace, chunk.kind)
+                            continue
+                        if chunk.kind == "model_turn":
+                            self.conversations.save_model_turn(state.run_id, json.loads(chunk.text))
+                            continue
+                        if chunk.kind in {"tool_start", "tool_end", "turn_end"}:
+                            state.recorder.observe(chunk)
                             continue
                         remaining = MAX_RESPONSE_CHARS - state.response_chars
                         if remaining <= 0:
@@ -186,6 +198,7 @@ class AiRunManager:
                             else:
                                 state.chunks.append(accepted)
                             state.response_chars += len(accepted)
+                            state.recorder.observe(ProviderChunk(chunk.kind, accepted))
                             self._broadcast(
                                 state,
                                 sse_event(
@@ -212,6 +225,15 @@ class AiRunManager:
             if stream is not None:
                 with suppress(Exception, asyncio.CancelledError):
                     await stream.aclose()
+
+    def _publish_generation(self, state, trace):
+        if state.finished or (state.cancel_requested and trace['status'] == 'running'):
+            raise asyncio.CancelledError()
+        save = getattr(self.conversations, 'save_generation_trace', None)
+        if save and not save(state.run_id, trace):
+            raise asyncio.CancelledError()
+        state.generation_trace = trace
+        self._broadcast(state, sse_event('process', {'run_id': state.run_id, 'message_id': state.response_message_id, 'trace': trace}))
 
     def _publish_search(self, state, trace):
         if state.cancel_requested or state.finished:
@@ -340,6 +362,8 @@ class AiRunManager:
         if state.finished:
             return
         try:
+            if state.recorder:
+                state.recorder.finish(status)
             if state.search_trace.get("status") in {"queued", "running"} and status in {"failed", "canceled"}:
                 state.search_trace.update(status="failed", message="搜索已取消" if status == "canceled" else (message or "本轮搜索未完成"))
                 self.conversations.save_search_trace(state.run_id, state.search_trace)
@@ -403,7 +427,18 @@ class AiRunManager:
                 self._finish(state, "canceled")
         elif run["status"] in {"queued", "running"}:
             # 进程重启后遗留的运行记录：直接收敛，不让它永远挂着。
-            self.conversations.finalize_run(run_id, "canceled")
+            snapshot = json.loads(run.get("config_snapshot_json") or "{}")
+            process = interrupt_trace(snapshot.get("generation_trace"), "canceled")
+            content = reasoning = ""
+            if process:
+                self.conversations.save_generation_trace(run_id, process)
+                content = "".join(part.get("text", "") for part in process["parts"] if part["type"] == "text")
+                reasoning = "\n\n".join(part.get("text", "") for part in process["parts"] if part["type"] == "reasoning")
+            search = snapshot.get("search_trace")
+            if search and search.get("status") in {"queued", "running"}:
+                search.update(status="failed", message="搜索已取消")
+                self.conversations.save_search_trace(run_id, search)
+            self.conversations.finalize_run(run_id, "canceled", content=content, reasoning_content=reasoning)
         return self.conversations.owned_run(identity_id, run_id)
 
     # ------------------------------------------------------------------
@@ -431,6 +466,7 @@ class AiRunManager:
                     "content": replay,
                     "reasoning_content": state.reasoning_text,
                     "search_trace": state.search_trace,
+                    "generation_trace": state.generation_trace,
                 },
             )
             if not finished:
@@ -454,6 +490,7 @@ class AiRunManager:
                                 "content": state.text,
                                 "reasoning_content": state.reasoning_text,
                                 "search_trace": state.search_trace,
+                                "generation_trace": state.generation_trace,
                             },
                         )
                         return
@@ -476,6 +513,7 @@ class AiRunManager:
                     "content": state.text,
                     "reasoning_content": state.reasoning_text,
                     "search_trace": state.search_trace,
+                    "generation_trace": state.generation_trace,
                 },
             )
         return sse_event(
@@ -487,6 +525,7 @@ class AiRunManager:
                 "content": state.text,
                 "reasoning_content": state.reasoning_text,
                 "search_trace": state.search_trace,
+                "generation_trace": state.generation_trace,
             },
         )
 
@@ -502,7 +541,14 @@ class AiRunManager:
                 content = row["content"]
                 reasoning_content = row["reasoning_content"]
         status = run["status"]
-        search_trace = json.loads(run.get("config_snapshot_json") or "{}").get("search_trace")
+        snapshot = json.loads(run.get("config_snapshot_json") or "{}")
+        search_trace = snapshot.get("search_trace")
+        generation_trace = snapshot.get("generation_trace")
+        if status in {"queued", "running"} and generation_trace:
+            generation_trace = interrupt_trace(generation_trace)
+            self.conversations.save_generation_trace(run["id"], generation_trace)
+            content = "".join(part.get("text", "") for part in generation_trace["parts"] if part["type"] == "text")
+            reasoning_content = "\n\n".join(part.get("text", "") for part in generation_trace["parts"] if part["type"] == "reasoning")
         if status in {"queued", "running"} and search_trace and search_trace.get("status") in {"queued", "running"}:
             search_trace.update(status="failed", message="服务已重启，本轮搜索被中断")
             self.conversations.save_search_trace(run["id"], search_trace)
@@ -516,6 +562,7 @@ class AiRunManager:
                 "content": content,
                 "reasoning_content": reasoning_content,
                 "search_trace": search_trace,
+                "generation_trace": generation_trace,
             },
         )
         if status in {"queued", "running"}:
@@ -539,6 +586,7 @@ class AiRunManager:
                     "content": content,
                     "reasoning_content": reasoning_content,
                     "search_trace": search_trace,
+                    "generation_trace": generation_trace,
                 },
             )
             return
@@ -554,6 +602,7 @@ class AiRunManager:
                     "content": content,
                     "reasoning_content": reasoning_content,
                     "search_trace": search_trace,
+                    "generation_trace": generation_trace,
                 },
             )
             return
@@ -566,6 +615,7 @@ class AiRunManager:
                 "content": content,
                 "reasoning_content": reasoning_content,
                 "search_trace": search_trace,
+                "generation_trace": generation_trace,
             },
         )
 

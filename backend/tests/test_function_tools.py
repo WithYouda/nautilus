@@ -162,3 +162,150 @@ async def test_incomplete_or_bad_call_never_yields_turn(mode):
             emitted.append(item)
     assert not any(isinstance(item, ToolTurn) for item in emitted)
     assert "sk-private-test-secret" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_chat_export_restores_final_reasoning_and_empty_call_reasoning():
+    seen = []
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append(body)
+        if len(seen) == 1:
+            return sse(("", {"choices": [{"delta": {"reasoning_content": "", "tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "search", "arguments": '{"q":"x"}'}}]}, "finish_reason": "tool_calls"}]}))
+        if len(seen) == 2:
+            return sse(("", {"choices": [{"delta": {"reasoning_content": "final thought", "content": "final"}, "finish_reason": "stop"}]}))
+        return sse(("", {"choices": [{"delta": {"content": "next"}, "finish_reason": "stop"}]}))
+    provider = OpenAICompatibleProvider(cfg("openai_compatible"), httpx.MockTransport(handler))
+    session = ToolSession(provider, [{"role": "user", "content": "q"}])
+    turn = (await collect(session))[-1]
+    session.append_results(turn, [{"call_id": "call_1", "content": "found"}])
+    assert (await collect(session))[-1].calls == []
+    assert seen[1]["messages"][-2]["reasoning_content"] == ""
+    exported = session.export_turn()
+    assert exported["messages"][-1]["reasoning_content"] == "final thought"
+    restored = ToolSession(provider, [{"role": "user", "content": "q"},
+                                      {"role": "assistant", "content": "final", "_model_turn": exported},
+                                      {"role": "user", "content": "next?"}])
+    await collect(restored)
+    assert seen[2]["messages"][-2]["reasoning_content"] == "final thought"
+    assert seen[2]["messages"][-4]["tool_calls"][0]["id"] == "call_1"
+    assert restored.export_turn()["messages"][-1]["content"] == "next"
+
+
+@pytest.mark.asyncio
+async def test_responses_export_restores_final_encrypted_reasoning():
+    seen = []
+    reasoning = {"type": "reasoning", "id": "rs_final", "encrypted_content": "opaque-final"}
+    final = {"type": "message", "id": "msg_final", "content": [{"type": "output_text", "text": "answer"}]}
+    def handler(request):
+        seen.append(json.loads(request.content))
+        output = [reasoning, final] if len(seen) == 1 else []
+        return sse(("response.completed", {"type": "response.completed", "response": {"output": output}}))
+    provider = OpenAIResponsesProvider(cfg("openai_responses"), httpx.MockTransport(handler))
+    session = ToolSession(provider, [{"role": "user", "content": "q"}])
+    assert (await collect(session))[-1].calls == []
+    saved = session.export_turn()
+    assert saved["messages"][0] == reasoning
+    restored = ToolSession(provider, [{"role": "user", "content": "q"},
+                                      {"role": "assistant", "content": "answer", "_model_turn": saved},
+                                      {"role": "user", "content": "again"}])
+    await collect(restored)
+    assert seen[1]["input"][1:3] == [reasoning, final]
+
+
+@pytest.mark.asyncio
+async def test_google_export_restores_signed_final_part():
+    seen = []
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return sse(("", {"candidates": [{"content": {"parts": [{"text": "answer", "thoughtSignature": "signed"}]}, "finishReason": "STOP"}]}))
+    provider = GoogleProvider(cfg("google"), httpx.MockTransport(handler))
+    session = ToolSession(provider, [{"role": "user", "content": "q"}])
+    await collect(session)
+    saved = session.export_turn()
+    restored = ToolSession(provider, [{"role": "user", "content": "q"},
+                                      {"role": "assistant", "content": "answer", "_model_turn": saved},
+                                      {"role": "user", "content": "again"}])
+    await collect(restored)
+    assert seen[1]["contents"][1]["parts"][0]["thoughtSignature"] == "signed"
+
+
+@pytest.mark.asyncio
+async def test_mismatched_marker_falls_back_to_clean_text():
+    seen = []
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return sse(("", {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}))
+    marker = {"provider_kind": "google", "model": "test", "base_url": "https://api.example.test/v1",
+              "messages": [{"role": "model", "parts": [{"functionCall": {"name": "bad"}}]}]}
+    session = ToolSession(OpenAICompatibleProvider(cfg("openai_compatible"), httpx.MockTransport(handler)),
+                          [{"role": "assistant", "content": "plain", "_model_turn": marker, "reasoning_content": ""},
+                           {"role": "user", "content": "q"}])
+    await collect(session)
+    assert seen[0]["messages"][0] == {"role": "assistant", "content": "plain", "reasoning_content": ""}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_export_restores_final_thinking_signature():
+    seen = []
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return sse(("content_block_start", {"type": "content_block_start", "index": 0,
+                                            "content_block": {"type": "thinking", "thinking": "", "signature": ""}}),
+                   ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                            "delta": {"type": "thinking_delta", "thinking": "summary"}}),
+                   ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                            "delta": {"type": "signature_delta", "signature": "opaque"}}),
+                   ("content_block_start", {"type": "content_block_start", "index": 1,
+                                            "content_block": {"type": "text", "text": "answer"}}),
+                   ("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}),
+                   ("message_stop", {"type": "message_stop"}))
+    provider = AnthropicProvider(cfg("anthropic"), httpx.MockTransport(handler))
+    session = ToolSession(provider, [{"role": "user", "content": "q"}])
+    await collect(session)
+    saved = session.export_turn()
+    restored = ToolSession(provider, [{"role": "user", "content": "q"},
+                                      {"role": "assistant", "content": "answer", "_model_turn": saved},
+                                      {"role": "user", "content": "again"}])
+    await collect(restored)
+    assert seen[1]["messages"][1]["content"][0] == {"type": "thinking", "thinking": "summary", "signature": "opaque"}
+
+
+@pytest.mark.asyncio
+async def test_replay_budget_keeps_recent_whole_turn_and_falls_back_for_older(monkeypatch):
+    import app.function_tools as function_tools
+
+    older_native = [{"role": "assistant", "content": None,
+                     "tool_calls": [{"id": "old_call", "type": "function",
+                                     "function": {"name": "search", "arguments": '{"q":"old"}'}}]},
+                    {"role": "tool", "tool_call_id": "old_call", "content": "old result"},
+                    {"role": "assistant", "content": "old final", "reasoning_content": "old thought"}]
+    recent_native = [{"role": "assistant", "content": None,
+                      "tool_calls": [{"id": "new_call", "type": "function",
+                                      "function": {"name": "search", "arguments": '{"q":"new"}'}}]},
+                     {"role": "tool", "tool_call_id": "new_call", "content": "new result"},
+                     {"role": "assistant", "content": "new final", "reasoning_content": "new thought"}]
+    monkeypatch.setattr(function_tools, "MAX_REPLAY_BYTES",
+                        len(json.dumps(recent_native, ensure_ascii=False).encode("utf-8")))
+    base = {"provider_kind": "openai_compatible", "model": "test",
+            "base_url": "https://api.example.test/v1"}
+    messages = [{"role": "user", "content": "q1"},
+                {"role": "assistant", "content": "old final", "reasoning_content": "old saved",
+                 "_model_turn": {**base, "messages": older_native}},
+                {"role": "user", "content": "q2"},
+                {"role": "assistant", "content": "new final",
+                 "_model_turn": {**base, "messages": recent_native}},
+                {"role": "user", "content": "q3"}]
+    seen = []
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return sse(("", {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}))
+    provider = OpenAICompatibleProvider(cfg("openai_compatible"), httpx.MockTransport(handler))
+    session = ToolSession(provider, messages)
+    await collect(session)
+    wire = seen[0]["messages"]
+    assert [m["content"] for m in wire if m["role"] == "user"] == ["q1", "q2", "q3"]
+    assert wire[1] == {"role": "assistant", "content": "old final", "reasoning_content": "old saved"}
+    assert wire[3:6] == recent_native
+    assert not any("_model_turn" in m for m in wire)
+    assert not any(m.get("tool_call_id") == "old_call" for m in wire)

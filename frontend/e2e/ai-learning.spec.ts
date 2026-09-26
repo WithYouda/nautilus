@@ -556,15 +556,15 @@ test("reasoning returned by provider is visible while streaming and folded after
   await page.getByLabel("输入学习问题").fill("请展示推理与答案。");
   await page.getByLabel("输入学习问题").press("Enter");
   const { conversationId } = await sent;
-  const reasoning = page.locator(".ai-reasoning");
-  await expect(reasoning).toHaveAttribute("open", "");
+  const reasoning = page.locator(".ai-process-reasoning");
+  await expect(reasoning.getByRole('button', { name: /思考中/ })).toHaveAttribute('aria-expanded', 'true');
   await expect(reasoning).toContainText("先识别题目条件");
-  await expect(reasoning).not.toHaveAttribute("open", "", { timeout: 10_000 });
-  await expect(reasoning.getByText("已思考 · 点击展开")).toBeVisible();
+  await expect(reasoning.getByRole('button', { name: /已思考/ })).toHaveAttribute('aria-expanded', 'false', { timeout: 10_000 });
 
   await page.reload();
-  await expect(page.locator(".ai-reasoning")).toContainText("先识别题目条件");
-  await expect(page.locator(".ai-reasoning")).not.toHaveAttribute("open", "");
+  await expect(reasoning.getByRole('button', { name: /已思考/ })).toHaveAttribute('aria-expanded', 'false');
+  await reasoning.getByRole('button', { name: /已思考/ }).click();
+  await expect(reasoning).toContainText("先识别题目条件");
   const detail = await getConversation(page.context().request, conversationId);
   expect(detail.messages[1].reasoning_content).toContain("再核对推导路径");
 });

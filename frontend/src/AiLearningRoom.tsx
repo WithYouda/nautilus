@@ -1,12 +1,13 @@
 import useReplyHistory from "./useReplyHistory";
-import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions, ReasoningBlock } from "./LearningRoomLayout";
+import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
 import { setReviewLocation } from "./LearningRecords";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
 import { ArrowLeft, Bot, Check, CircleAlert, History, MapPin, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
 import LearningMarkdown from "./LearningMarkdown";
 import SearchControls, { type SearchSelection } from "./SearchControls";
-import SearchResults, { type SearchTrace } from "./SearchResults";
+import type { SearchTrace } from "./SearchResults";
+import AssistantResponse, { type GenerationTrace } from "./AssistantResponse";
 import {
   ApiError,
   recordLearningRoomEntry,
@@ -165,6 +166,7 @@ function upsertAssistantMessage(
   status: AiMessage["status"],
   reasoningContent?: string,
   searchTrace?: SearchTrace | null,
+  generationTrace?: GenerationTrace | null,
 ): AiMessage[] {
   if (!messageId) return messages;
   let found = false;
@@ -176,6 +178,7 @@ function upsertAssistantMessage(
       content,
       reasoning_content: reasoningContent ?? message.reasoning_content,
       search_trace: searchTrace === undefined ? message.search_trace : searchTrace,
+      generation_trace: generationTrace === undefined ? message.generation_trace : generationTrace,
       status,
       updated_at: new Date().toISOString(),
     };
@@ -400,6 +403,7 @@ export default function AiLearningRoom({
               "streaming",
               event.data.reasoning_content,
               event.data.search_trace,
+              event.data.generation_trace,
             ),
           } : previous);
           return;
@@ -407,6 +411,11 @@ export default function AiLearningRoom({
         if (event.type === "search") {
           if (event.data.run_id !== run.id) return;
           setDetail(previous => previous ? { ...previous, messages: previous.messages.map(message => message.id === event.data.message_id ? { ...message, search_trace: event.data.trace } : message) } : previous);
+          return;
+        }
+        if (event.type === "process") {
+          if (event.data.run_id !== run.id) return;
+          setDetail(previous => previous ? { ...previous, messages: previous.messages.map(message => message.id === event.data.message_id ? { ...message, generation_trace: event.data.trace } : message) } : previous);
           return;
         }
         if (event.type === "delta") {
@@ -446,6 +455,7 @@ export default function AiLearningRoom({
             event.type === "done" && event.data.status === "succeeded" ? "complete" : event.type === "done" ? "canceled" : "failed",
             event.data.reasoning_content,
             event.data.search_trace,
+            event.data.generation_trace,
           ),
         } : previous);
         persistSession({ conversationId: run.conversation_id, runId: null });
@@ -1279,11 +1289,7 @@ function MessageBubble({ message, automatic = false, onRetry, retryDisabled, ver
     onStartEdit={onStartEdit} onCancelEdit={onCancelEdit} onSendEdit={onSendEdit} />;
   return (
     <LearningMessage role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
-      {message.reasoning_content && <ReasoningBlock content={message.reasoning_content} streaming={message.status === "streaming"} />}
-      <div className="ai-message-content ai-markdown">
-        {message.content ? <LearningMarkdown>{message.content}</LearningMarkdown> : message.status === "streaming" ? "…" : ""}
-      </div>
-      {message.search_trace && message.search_trace.mode !== "off" && <SearchResults trace={message.search_trace} />}
+      <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
       <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} />
     </LearningMessage>
   );

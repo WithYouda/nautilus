@@ -503,6 +503,18 @@ def task_context(
 # ======================================================================
 # 发送、流式与取消
 # ======================================================================
+def _public_run(run):
+    # Protocol continuations contain opaque reasoning/signatures for the provider,
+    # not a public response field. Keep the existing run metadata contract.
+    clean = dict(run)
+    if clean.get('config_snapshot_json'):
+        import json
+        snapshot = json.loads(clean['config_snapshot_json'])
+        snapshot.pop('model_turn', None)
+        clean['config_snapshot_json'] = json.dumps(snapshot, ensure_ascii=False)
+    return clean
+
+
 @router.post("/conversations/{conversation_id}/messages", status_code=status.HTTP_202_ACCEPTED)
 async def send_message(
     conversation_id: str,
@@ -527,7 +539,7 @@ async def send_message(
         _raise(error)
     service = conversation_service(request)
     return {
-        "run": started["run"],
+        "run": _public_run(started["run"]),
         "created": started["created"],
         "messages": service.list_messages(identity["id"], conversation_id),
     }
@@ -563,4 +575,4 @@ async def cancel_run(
         run = await manager.cancel(identity["id"], run_id)
     except ConversationError as error:
         _raise(error)
-    return {"run": run}
+    return {"run": _public_run(run)}

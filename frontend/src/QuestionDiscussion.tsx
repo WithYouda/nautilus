@@ -1,12 +1,12 @@
 import useReplyHistory from './useReplyHistory';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Bot, Square } from 'lucide-react';
-import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions, ReasoningBlock } from './LearningRoomLayout';
+import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from './LearningRoomLayout';
 import DiscussionSources from './DiscussionSources';
 import QuestionFeedbackContent from './QuestionFeedbackContent';
 import LearningMarkdown from './LearningMarkdown';
 import SearchControls, { type SearchSelection } from './SearchControls';
-import SearchResults from './SearchResults';
+import AssistantResponse from './AssistantResponse';
 import { ApiError, getQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, type QuestionDiscussion as Discussion } from './api';
 
 const requestId = (): string => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
@@ -51,7 +51,7 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
             setError('');
             setDiscussion(previous => previous && (update.purged
               ? { ...previous, purged: true, source: null, turns: [] }
-              : { ...previous, turns: previous.turns.map(turn => turn.id === update.turn.id ? { ...update.turn, search_trace: update.turn.search_trace === undefined ? turn.search_trace : update.turn.search_trace } : turn) }));
+              : { ...previous, turns: previous.turns.map(turn => turn.id === update.turn.id ? { ...update.turn, search_trace: update.turn.search_trace === undefined ? turn.search_trace : update.turn.search_trace, generation_trace: update.turn.generation_trace === undefined ? turn.generation_trace : update.turn.generation_trace } : turn) }));
           }, controller.signal);
           return;
         } catch {
@@ -87,7 +87,7 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
       const saved = await sendDiscussionMessage(id, text, requestKey, retry, { regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, ...(frozenSearch.mode === 'off' ? {} : { search: frozenSearch }) });
       if (generation.current !== currentGeneration) return false;
       searchByRequestKey.current.delete(requestKey);
-      setDiscussion(previous => ({ ...saved, turns: saved.turns.map(turn => ({ ...turn, search_trace: turn.search_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.search_trace : turn.search_trace })) })); setPending(null); key.current = requestId();
+      setDiscussion(previous => ({ ...saved, turns: saved.turns.map(turn => ({ ...turn, search_trace: turn.search_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.search_trace : turn.search_trace, generation_trace: turn.generation_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.generation_trace : turn.generation_trace })) })); setPending(null); key.current = requestId();
       const sent = saved.turns.find(turn => turn.request_key === requestKey);
       if (sent) replyHistory.select(sent.id);
       return true;
@@ -168,13 +168,10 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
                 onPrevious: () => { const target = questionVersions[questionIndex - 1]; replyHistory.switchVersion(replyHistory.preferredVersion(target.question_id, target.id)); },
                 onNext: () => { const target = questionVersions[questionIndex + 1]; replyHistory.switchVersion(replyHistory.preferredVersion(target.question_id, target.id)); } }} />
             <LearningMessage role="assistant" state={turn.status === 'running' ? 'streaming' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? 'canceled' : 'failed') : undefined} status={turn.status === 'running' ? '生成中' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? '已取消' : '失败') : undefined}>
-              {turn.reasoning_content && <ReasoningBlock content={turn.reasoning_content} streaming={turn.status === 'running'} />}
-              {turn.assistant_content && <div className="ai-message-content ai-markdown"><LearningMarkdown>{turn.assistant_content}</LearningMarkdown></div>}
+              <AssistantResponse key={turn.id} trace={turn.generation_trace} content={turn.assistant_content ?? ''} reasoningContent={turn.reasoning_content} searchTrace={turn.search_trace} streaming={turn.status === 'running'} />
               {turn.status === 'failed' && <div role="status"><p>{turn.reason === 'cancelled' ? '已取消生成，已收到的内容保留。' : '这次回复未完成，问题和已收到的内容已保存。'}</p></div>}
-              {turn.status === 'running' && !turn.assistant_content && <p className="ai-message-content" role="status">…</p>}
               {turn.status === 'succeeded' && turn.sources.length === 0 && <p className="form-hint">{turn.history_searched ? '本轮检索没有找到匹配的历史记录。' : '本轮依据这道题和当前讨论回答，未检索其他历史。'}</p>}
               {turn.sources.length > 0 && <DiscussionSources sources={turn.sources} />}
-              {turn.search_trace && turn.search_trace.mode !== "off" && <SearchResults trace={turn.search_trace} />}
               <LearningReplyActions content={turn.assistant_content ?? ''} retryDisabled={busy || running || Boolean(pending) || Boolean(editingTurnId) || !turn.user_content}
                 onRetry={() => void send(turn.user_content ?? '', requestId(), false, true, turn.id)}
                 version={{ disabled: busy || running || Boolean(pending) || Boolean(editingTurnId), index: discussion.turns.filter(item => item.question_id === turn.question_id).findIndex(item => item.id === turn.id), count: discussion.turns.filter(item => item.question_id === turn.question_id).length,

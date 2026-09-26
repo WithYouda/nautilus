@@ -139,10 +139,12 @@ async def external_stream(service, run, messages, provider, publish):
         content_emitted = content_emitted or round_content
         if turn is None:
             raise ProviderError("模型工具响应未完整结束", kind="invalid_response")
+        yield ProviderChunk("turn_end", "")
         if not turn.calls:
             if not trace["requests"]:
                 trace["status"] = "not_used"
             publish(copy.deepcopy(trace))
+            yield ProviderChunk("model_turn", json.dumps(session.export_turn(), ensure_ascii=False))
             return
         if not allow_tools:
             raise ProviderError("模型未遵守工具调用次数限制", kind="tool_limit")
@@ -153,10 +155,11 @@ async def external_stream(service, run, messages, provider, publish):
                 continue
             attempts += 1
             fetch = call.name == "scrape_web"
-            entry = {"action": "scrape" if fetch else "search", "status": "running"}
+            entry = {"action": "scrape" if fetch else "search", "status": "running", "call_id": call.id}
             trace["requests"].append(entry)
             trace["status"] = "running"
             publish(copy.deepcopy(trace))
+            tool_started = False
             try:
                 if call.name not in schemas:
                     raise SearchError("模型请求了未授权的工具", "invalid_tool")
@@ -192,12 +195,21 @@ async def external_stream(service, run, messages, provider, publish):
                     raise SearchError("同一轮请勿重复相同检索，改写关键词或使用已有结果", "duplicate_request")
                 seen.add(fingerprint)
                 publish(copy.deepcopy(trace))
+                yield ProviderChunk("tool_start", json.dumps({"call_id": call.id, "name": call.name, "query": entry.get("query"), "url": entry.get("url"), "service_name": run.service["name"]}, ensure_ascii=False))
+                tool_started = True
                 result = await service.invoke(run, params, fetch=fetch)
                 entry.update(status="succeeded", retrieved_at=result["retrieved_at"])
                 _add_results(trace, result, fetch)
+                tool_result = run.initial_trace()
+                _add_results(tool_result, result, fetch)
+                tool_result.update(status="succeeded", query=entry.get("query"), requests=[copy.deepcopy(entry)])
+                yield ProviderChunk("tool_end", json.dumps({"call_id": call.id, "status": "succeeded", "result": tool_result}, ensure_ascii=False))
                 succeeded = True
                 results.append({"call_id": call.id, "content": _tool_result(result, fetch)})
             except SearchError as error:
+                if not tool_started:
+                    yield ProviderChunk("tool_start", json.dumps({"call_id": call.id, "name": call.name, "service_name": run.service["name"]}, ensure_ascii=False))
+                yield ProviderChunk("tool_end", json.dumps({"call_id": call.id, "status": "failed", "message": str(error)}, ensure_ascii=False))
                 entry.update(status="failed", message=str(error))
                 results.append({"call_id": call.id, "content": json.dumps({"error": str(error), "instruction": "No evidence was obtained for this call. Correct the request within the remaining budget, or explain the limitation."}, ensure_ascii=False)})
             trace["status"] = "succeeded" if succeeded else "failed"

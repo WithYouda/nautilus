@@ -33,7 +33,7 @@ npm --prefix frontend install
 
 在工作区页头或输入框工具栏的搜索按钮中打开“搜索设置”，可添加/测试19种外部服务，配置密钥、搜索深度、地址和各服务高级参数。默认有无需密钥的Bing，进入会话默认关闭搜索；点击输入框内搜索图标选择外部服务或模型内置，选择后面板收起，也可点击外部、关闭按钮或按Esc收起。启用外部搜索后，AI按对话判断是否需要，生成关键词并实际调用工具，收到结果后继续查阅或回答；不会先把整条消息拿去搜索。DeepSeek等支持函数工具的聊天模型可继续使用原提供方。付费服务需要自己的账户，设置页连接测试会实际调用配置的服务。
 
-“模型内置”需要在AI提供方设置选择支持的API协议：OpenAI Responses、Google Gemini或Anthropic Messages，并使用支持搜索工具的模型/账户；普通OpenAI兼容协议不能仅靠开关获得厂商搜索。来源和检索状态随每版回答保存，结果默认折叠。Custom JS需要后端requirements中的QuickJS，在隔离进程执行。服务字段、协议、运行限制与尚未完成的真实账户验收见[联网搜索规格](docs/superpowers/specs/2026-09-26-nautilus-web-search.md)。
+“模型内置”需要在AI提供方设置选择支持的API协议：OpenAI Responses、Google Gemini或Anthropic Messages，并使用支持搜索工具的模型/账户；普通OpenAI兼容协议不能仅靠开关获得厂商搜索。思考与工具调用按发生顺序显示，思考带实际耗时；较早步骤可展开，搜索步骤中查看来源详情。过程与来源随每版回答保存，旧记录不补造耗时。Custom JS需要后端requirements中的QuickJS，在隔离进程执行。服务字段、协议、运行限制与尚未完成的真实账户验收见[联网搜索规格](docs/superpowers/specs/2026-09-26-nautilus-web-search.md)。
 
 ## 数据库、升级与恢复
 

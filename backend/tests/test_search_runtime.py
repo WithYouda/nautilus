@@ -288,6 +288,7 @@ def test_external_selection_is_frozen_while_settings_are_removed(tmp_path):
         assert detail["messages"][-1]["search_trace"]["status"] == "succeeded"
         assert detail["messages"][-1]["search_trace"]["items"][0]["url"] == SEARCH_URL
         assert "event: search" in frames and SEARCH_URL in frames
+        assert "event: process" in frames and '"generation_trace"' in frames
         assert calls.count("https://api.tavily.com/search") == 1
 
 
@@ -383,6 +384,7 @@ async def test_discussion_purge_while_search_waits_cannot_resurrect_trace(learni
     assert after["turns"][0]["status"] == "purged"
     assert after["turns"][0]["assistant_content"] is None
     assert after["turns"][0]["search_trace"] is None
+    assert after["turns"][0]["generation_trace"] is None
     assert private not in json.dumps(after, ensure_ascii=False)
     stored = learning_database.fetchone("SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?", (turn_id,))
     assert private not in stored[0] and SEARCH_URL not in stored[0]
@@ -429,8 +431,12 @@ async def test_discussion_keeps_completed_search_if_answer_stream_fails(learning
     assert turn["status"] == "failed"
     assert turn["search_trace"]["status"] == "succeeded"
     assert turn["search_trace"]["items"][0]["url"] == SEARCH_URL
+    assert turn["generation_trace"]["status"] == "failed"
+    assert [part["type"] for part in turn["generation_trace"]["parts"]] == ["tool"]
+    assert turn["generation_trace"]["parts"][0]["status"] == "succeeded"
     replay = discussion.turn_snapshot(IDENTITY, created["id"], turn["id"])["turn"]
     assert replay["search_trace"] == turn["search_trace"]
+    assert replay["generation_trace"] == turn["generation_trace"]
 
 
 @pytest.mark.asyncio
@@ -481,6 +487,10 @@ async def test_discussion_cancel_while_search_waits_finalizes_trace(learning_dat
     assert turn["reason"] == "cancelled"
     assert turn["search_trace"]["status"] == "failed"
     assert "取消" in turn["search_trace"]["message"]
+    assert turn["generation_trace"]["status"] == "canceled"
+    assert [part["type"] for part in turn["generation_trace"]["parts"]] == ["tool"]
+    assert turn["generation_trace"]["parts"][0]["status"] == "canceled"
     replay = discussion.turn_snapshot(IDENTITY, created["id"], turn_id)["turn"]
     assert replay["search_trace"] == turn["search_trace"]
+    assert replay["generation_trace"] == turn["generation_trace"]
     assert SEARCH_URL not in json.dumps(replay, ensure_ascii=False)

@@ -22,14 +22,18 @@ function Excerpt({ text }: { text: string }) {
 }
 const requestStatus = (status: string) => ({ queued: '等待中', running: '进行中', succeeded: '成功', failed: '失败', not_used: '未执行' }[status] ?? '未知状态');
 const time = (value?: string) => { const date = value ? new Date(value) : null; return date && !Number.isNaN(date.valueOf()) ? date.toLocaleString() : null; };
-export default function SearchResults({ trace }: { trace: SearchTrace | null | undefined }) {
+export function SearchSuggestions({ html }: { html?: string | null }) {
+  const suggestions = html?.slice(0, 65_536);
+  if (!suggestions) return null;
+  const suggestionDoc = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https://www.gstatic.com; base-uri 'none'; form-action 'none'"><base target="_blank">${suggestions}`;
+  return <div className="search-suggestions"><strong>Google 搜索建议</strong><iframe title="Google 搜索建议" className="search-suggestions-frame" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={suggestionDoc} /></div>;
+}
+export default function SearchResults({ trace, expanded = false, showSuggestions = true }: { trace: SearchTrace | null | undefined; expanded?: boolean; showSuggestions?: boolean }) {
   if (!trace || trace.mode === 'off' || trace.status === 'off') return null;
   const labels: Record<SearchTrace['status'], string> = { queued: '等待搜索', running: '正在搜索', succeeded: '已取得搜索响应', failed: '搜索失败', not_used: '本轮未执行搜索', off: '搜索已关闭' };
   const items = trace.items ?? [];
   const images = trace.images ?? [];
-  const suggestions = trace.search_suggestions_html?.slice(0, 65_536);
-  const suggestionDoc = suggestions ? `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https://www.gstatic.com; base-uri 'none'; form-action 'none'"><base target="_blank">${suggestions}` : undefined;
-  return <div className="search-result-block"><details className="search-results" aria-label="联网搜索结果">
+  return <div className="search-result-block"><details className="search-results" aria-label="联网搜索结果" open={expanded || undefined}>
     <summary><strong>{labels[trace.status]}</strong>{trace.service_name && <span> · {trace.service_name}</span>}<span> · {items.length} 条来源</span></summary>
     <div className="search-results-body">
       {trace.retrieved_at && time(trace.retrieved_at) && <time dateTime={trace.retrieved_at}>检索于 {time(trace.retrieved_at)}</time>}
@@ -50,5 +54,5 @@ export default function SearchResults({ trace }: { trace: SearchTrace | null | u
         <p className="form-hint">检索时间不等于发布日期。</p>
       </>}
     </div>
-  </details>{suggestionDoc && <div className="search-suggestions"><strong>Google 搜索建议</strong><iframe title="Google 搜索建议" className="search-suggestions-frame" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={suggestionDoc} /></div>}</div>;
+  </details>{showSuggestions && <SearchSuggestions html={trace.search_suggestions_html} />}</div>;
 }

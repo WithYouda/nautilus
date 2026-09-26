@@ -162,18 +162,3 @@ export function LearningComposer({ id, label = '输入学习问题', value, onCh
     </div>
   </form>;
 }
-
-export function ReasoningBlock({ content, streaming }: { content: string; streaming: boolean }) {
-  const [open, setOpen] = useState(streaming);
-
-  useEffect(() => {
-    setOpen(streaming);
-  }, [streaming]);
-
-  return (
-    <details className="ai-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>{streaming ? "思考中" : "已思考 · 点击展开"}</summary>
-      <pre>{content}</pre>
-    </details>
-  );
-}

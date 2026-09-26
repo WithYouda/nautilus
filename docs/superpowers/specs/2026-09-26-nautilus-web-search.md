@@ -4,11 +4,17 @@
 
 ## 参考与范围
 
-参考 [RikkaHub 固定版本](https://github.com/rikkahub/rikkahub/tree/8b696c0cfc301754689c0bb04e965fe60af6277c) 的 SearchService、设置页、SearchPicker 与 SearchTools。该项目为 AGPL-3.0；本项目独立实现 Python/React 适配与界面，使用公开协议与功能事实，不移植 Kotlin 代码、原提示词或 Android 运行时。
+参考 [RikkaHub 固定版本](https://github.com/rikkahub/rikkahub/tree/8b696c0cfc301754689c0bb04e965fe60af6277c) 的 SearchService、设置页、SearchPicker、SearchTools，以及 ChatMessageCot / ChainOfThought / ChatMessageReasoning / ChatMessageTools。该项目为 AGPL-3.0；本项目独立实现 Python/React 适配与界面，使用公开协议与功能事实，不移植 Kotlin 代码、原提示词或 Android 运行时。
 
 普通学习室及题目讨论支持关闭、外部搜索服务、模型内置搜索。新进入会话默认关闭，启用后按当前选择发送；自动学习提示、标题生成、验证出题/评分不因此自动联网。09-26按作者纠正：搜索按钮融入输入框工具栏，点击打开桌面浮层/手机底部面板；选择后自动收起，点击外部、再点图标、关闭按钮或Esc均可关闭。普通对话不再放置手动查询输入框；高级筛选保留在面板内折叠区。启用仅授予工具，AI结合完整对话先判断是否需要搜索、解析追问指代并生成关键词，不先自动搜索整条消息；不自动把历史对话、原验证材料或整份学习记录发送给新搜索服务。原生搜索由当前模型厂商在既有对话请求中执行。
 
 全局可设置结果数量（默认10，1–50）、单次外部请求超时（默认30秒，5–120）、每轮外部检索次数（默认3，1–5）。支持同类型多个实例、命名、修改、删除、排序、稳定ID选择、能力标识、未保存配置的查询测试和网页读取测试。高级工具参数也在界面中提供，不能只有后端支持。
+
+## 思考、工具与回答的呈现（09-26再次纠正）
+
+普通学习室与题目讨论共用按原始事件顺序渲染的回答组件。相邻思考/工具组成步骤组，正文保留在其实际位置；移除回答下方固定的搜索响应卡片。超过两步时默认只显示最近两步，其余可展开；思考流式预览有高度限制，完成后折叠。搜索步骤显示实际搜索词、服务、来源数量和域名，点击可看查询、日期、摘要与原始URL；Google要求的搜索建议继续单独安全展示。
+
+每段思考显示服务端实际观测的流式耗时：从该段开始到正文/工具边界，使用单调时钟，工具等待时间另计；这不是模型内部GPU耗时。客户端只在运行时补计显示，完成、取消、失败、刷新或重启后使用保存值，不能把停机时间算进思考。旧记录没有的阶段边界或时间不补造；无显式思考的模型只显示实际工具/正文。
 
 ## 外部服务覆盖
 
@@ -56,10 +62,12 @@ Custom JS默认空，不把虚构示例当成搜索成功。脚本用独立Quick
 2. 外部服务以真实`search_web`和按能力开放的`scrape_web`函数工具提供给当前模型。先调用模型，只有收到完整工具调用才执行；结果按调用ID回填，模型可直接回答、改写关键词或读取已有结果/用户给定URL。Chat Completions（含DeepSeek）、Responses、Gemini、Anthropic分别保持原生工具结果和思考/签名；不用JSON决策模拟工具，不混用厂商内置搜索。无调用标记`not_used`；用户设置的筛选优先于模型参数。未知/重复/无效参数不会出站且占用有界尝试次数，超额调用收到工具错误，耗尽后禁用工具完成回答；截断或无法解析的协议响应失败，不执行残缺调用。模型不能选择服务、密钥或扩大权限。资料始终按不可信内容处理，并要求评估相关性、优先一手来源、区分发布日期和检索时间。
 3. 每版回答单独保存搜索模式、实际查询、请求过程、来源URL/摘要、检索时间、执行结果。检索时间与发布日期分开，搜索成功不构成用户掌握证据。关闭时不执行外部检索；调用失败把工具错误交回模型，允许生成说明受限的回答，不虚构来源。
 4. 搜索配置复用按owner隔离的加密CredentialStore，读回密钥仅有掩码；不进入SQLite、localStorage或错误正文。高级参数按服务目录校验。配置revision防止旧页面覆盖新设置。
-5. API协议复用provider_model.overrides_json；运行轨迹复用ai_run.config_snapshot_json、题目讨论provider_snapshot_json，无数据库结构变更。历史回答切换保留各版来源，取消不允许迟到结果写回；讨论清除仍沿原级联屏障清空快照。
+5. API协议复用provider_model.overrides_json；搜索来源、generation_trace与私有model_turn复用ai_run.config_snapshot_json、题目讨论provider_snapshot_json，无数据库结构变更。generation_trace按顺序保存思考/工具/正文、单调时钟耗时及终态，SSE process与快照提供同一视图。model_turn仅存本轮生成的原生assistant/tool结果与最终输出，保留DeepSeek reasoning_content（含空字段）、Responses加密reasoning、Google/Anthropic签名，供后续外部工具请求续接；不把它作为公开运行字段返回。只回放当前选中版本路径及相同协议/端点/模型的完整轮次，最近优先且总回放预算256KiB，超额整轮回退文本，不拆断tool/result配对；不是完整token压缩器。历史回答切换保留各版来源/过程；取消和清除拒绝迟到写回，讨论快照随现有清除边界删除。
 6. 原生搜索的内部请求数与收费由厂商控制；外部次数上限不是金额预算。Custom JS每次执行另有fetch次数限制。账户、付费套餐和真实使用费用由用户配置承担，本次不购买、不使用现有私密学习内容作供应商验收。
 
 函数工具协议依据：[OpenAI函数调用](https://developers.openai.com/api/docs/guides/function-calling)、[DeepSeek工具调用](https://api-docs.deepseek.com/guides/tool_calls/)、[DeepSeek思考模式续轮](https://api-docs.deepseek.com/guides/thinking_mode/)、[Gemini函数调用](https://ai.google.dev/gemini-api/docs/function-calling)、[Anthropic工具调用](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview)。
+
+成熟Agent运行方式对照：[Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/)与[Claude Code工作原理](https://code.claude.com/docs/en/how-claude-code-works)都把工具结果回到模型上下文，持续观察后续行动。本轮据此修补协议续接与过程可观察性；DeepSeek依据其当前公开API文档，不声称读取闭源网页或厂商内部harness。未引入通用shell、文件执行、多Agent产品运行时或全站改版。
 
 ## 验收边界
 

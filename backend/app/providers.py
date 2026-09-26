@@ -43,7 +43,7 @@ class ProviderConfig:
 
 @dataclass(frozen=True)
 class ProviderChunk:
-    kind: Literal["content", "reasoning", "search_status", "search_sources"]
+    kind: Literal["content", "reasoning", "search_status", "search_sources", "turn_end", "tool_start", "tool_end", "model_turn"]
     text: str
 
 
