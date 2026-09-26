@@ -10,6 +10,7 @@ from ..learning_domain import DomainError, Principal
 PROJECTION_VERSION = 1
 SUPPORTED_EVENT_VERSIONS = frozenset({1})
 SUPPORTED_EVENT_TYPES = frozenset({
+    "goal.status_changed",
     "setup.confirmed",
     "plan.step_added",
     "action.created",
@@ -141,7 +142,19 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
     occurred_at = event["occurred_at"]
     event_type = event["event_type"]
 
-    if event_type in ("setup.confirmed", "plan.step_added"):
+    if event_type == 'goal.status_changed':
+        if event['aggregate_type'] != 'goal' or payload.get('id') != event['aggregate_id']:
+            raise DomainError('event_scope_invalid')
+        previous, target = payload.get('previous_status'), payload.get('status')
+        if not ((previous in ('hypothesis', 'active') and target in ('completed', 'paused', 'archived'))
+                or (previous in ('completed', 'paused', 'archived') and target == 'active')):
+            raise DomainError('event_scope_invalid')
+        changed = connection.execute('''UPDATE learning_goal SET status=?,version=?,updated_at=?
+            WHERE owner_id=? AND id=? AND status=? AND version=?''',
+            (target, version + 1, occurred_at, owner, payload['id'], previous, version)).rowcount
+        if changed != 1:
+            raise DomainError('event_scope_invalid')
+    elif event_type in ("setup.confirmed", "plan.step_added"):
         if event["aggregate_type"] != "setup" or payload.get("id") != event["aggregate_id"]:
             raise DomainError("event_scope_invalid")
         goal = payload.get("goal")

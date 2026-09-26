@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+from pydantic import BaseModel, Field
 
 from fastapi.responses import StreamingResponse
 
@@ -23,6 +24,8 @@ from ..dependencies import (
     verification_service,
 )
 from ..learning_domain import DomainError
+from ..goal_lifecycle import goal_review
+from ..core.commands import ChangeGoalStatus
 from ..learning_room import LearningRoomService
 from ..learning_position import LearningPositionService
 from ..learning_records import LearningRecords
@@ -74,6 +77,9 @@ router = APIRouter(prefix="/api/learning", dependencies=[Depends(_private_respon
 
 def _raise_learning_error(error: DomainError) -> None:
     messages = {
+        "goal_not_active": "这个目标已收尾或暂停，请先在学习计划中重新开启目标。",
+        "goal_review_changed": "目标下的任务或会话已变化，请刷新收尾信息后重新确认。",
+        "goal_invalid_transition": "目标状态已变化，请刷新后选择可用操作。",
         "delayed_invalid_time": "请选择有效的日期、时间和时区。",
         "delayed_standard_unavailable": "这份回访标准当前不可用，请保留答案后联系维护者。",
         "delayed_source_unavailable": "关联的产出或已批准标准当前不可用。",
@@ -175,6 +181,35 @@ def learning_state(
     identity: dict[str, Any] = Depends(current_identity),
 ) -> dict[str, Any]:
     return learning_service(request).overview(identity)
+
+
+class GoalStatusRequest(BaseModel):
+    status: Literal['completed', 'paused', 'archived', 'active']
+    expected_version: int = Field(ge=1)
+    review_key: str
+    idempotency_key: str
+
+
+@router.get('/goals/{goal_id}/review')
+def review_learning_goal(goal_id: str, request: Request, identity=Depends(current_identity)):
+    service = learning_service(request)
+    principal = service.principal(identity)
+    try:
+        with service.database.transaction() as connection:
+            return goal_review(connection, principal.owner_id, goal_id)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post('/goals/{goal_id}/status')
+def change_learning_goal_status(goal_id: str, payload: GoalStatusRequest, request: Request,
+                                identity=Depends(current_identity)):
+    service = learning_service(request)
+    try:
+        return service.core.execute(service.principal(identity), ChangeGoalStatus(
+            goal_id=goal_id, **payload.model_dump(exclude={'idempotency_key'})), payload.idempotency_key)
+    except DomainError as error:
+        _raise_learning_error(error)
 
 
 @router.post("/setup/draft")

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { chooseReturnReview, getLearningRoom, reviewEvidenceClaim, type LearningRoomBrief, type ReturnReview } from './api';
+import { goalIsClosed, goalStatusLabel } from './GoalClosure';
 
 export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged, onOpenRecord, onOpenPlan }: {
   card: ReturnReview; onContinue: (brief: LearningRoomBrief) => void; onSetup: (reviewId?: string, planId?: string) => void; onChanged: () => Promise<void>;
@@ -40,14 +41,19 @@ export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged,
   const status = completed ? '已完成' : saved || !started ? '已保存' : '正在学习';
   const completion = card.what_happened.completion;
   const completionLabel = completion?.verification_kind === 'unverified' ? '未经过验证' : completion?.verification_kind === 'external_material' ? completion.purged_at ? '用户报告非 AI 验证 · 曾附材料，内容已删除 · 平台未核验' : '用户报告非 AI 验证 · 已附材料 · 平台未核验' : completion?.verification_kind === 'external_report' ? '用户报告外部验证 · 未附材料 · 平台未核验' : null;
+  const closedGoal = card.position.goal_status && goalIsClosed(card.position.goal_status);
+  const displayedStatus = closedGoal ? `目标${goalStatusLabel(card.position.goal_status!)}` : status;
   return <section className="return-review" aria-label="当前学习">
-    <span className={`learning-state-label learning-state-label--${completed ? 'complete' : 'active'}`}>{status}</span>
+    <span className={`learning-state-label learning-state-label--${completed || closedGoal ? 'complete' : 'active'}`}>{displayedStatus}</span>
     <h2>{card.position.action}</h2>
     {card.position.goal && <p className="return-review__route">{card.position.goal}{card.position.plan && ` · ${card.position.plan}`}</p>}
-    <p className="return-review__fact">{completed ? completionLabel ? `本次执行已完成 · ${completionLabel}${completion?.purged_at ? ' · 内容已删除' : ''}。` : card.what_happened.verification_id ? '本次学习已完成，作答和验证反馈已保存。' : '本次学习已完成，学习记录已保留。' : saved ? '作答已保存，可以查看反馈并继续验证。' : card.what_happened.session_status === 'interrupted' ? '学习位置已保存，可以接着上次的内容继续。' : started ? '接着当前任务学习，对话和验证记录会保留。' : '学习安排已保存，可以开始这项任务。'}</p>
-    <p className="return-review__next"><span>下一步建议的理由</span><br />{card.recommendation.explanation}</p>
+    <p className="return-review__fact">{closedGoal ? `目标${goalStatusLabel(card.position.goal_status!)}，本项任务${completed ? '已完成' : '尚未完成'}；已有任务记录保留。` : completed ? completionLabel ? `本次执行已完成 · ${completionLabel}${completion?.purged_at ? ' · 内容已删除' : ''}。` : card.what_happened.verification_id ? '本次学习已完成，作答和验证反馈已保存。' : '本次学习已完成，学习记录已保留。' : saved ? '作答已保存，可以查看反馈并继续验证。' : card.what_happened.session_status === 'interrupted' ? '学习位置已保存，可以接着上次的内容继续。' : started ? '接着当前任务学习，对话和验证记录会保留。' : '学习安排已保存，可以开始这项任务。'}</p>
+    {closedGoal ? <p>目标{goalStatusLabel(card.position.goal_status!)}。学习记录仍可查看；如需继续，请先在目标页面重新开启。</p> : <p className="return-review__next"><span>下一步建议的理由</span><br />{card.recommendation.explanation}</p>}
     <div className="return-review__actions">
-      {completed ? <>
+      {closedGoal ? <>
+        <button className="button button--accent" onClick={() => onOpenRecord(card.position.delegation_id, card.what_happened.verification_id)}>查看记录</button>
+        {card.position.plan_id && <button className="button button--quiet" onClick={() => onOpenPlan(card.position.plan_id!)}>查看目标</button>}
+      </> : completed ? <>
         <button className="button button--accent" onClick={() => onOpenRecord(card.position.delegation_id, card.what_happened.verification_id)}>{card.what_happened.verification_id ? '查看验证记录' : '查看记录'}</button>
         {card.position.plan_id && <button className="button button--quiet" disabled={busy} onClick={() => card.recommendation.kind === 'choose_next' ? void choose('continue') : onSetup(undefined, card.position.plan_id!)}>添加下一步</button>}
       </> : <>
@@ -55,7 +61,7 @@ export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged,
         {saved && <button className="button button--quiet" onClick={() => onOpenRecord(card.position.delegation_id, card.what_happened.verification_id)}>查看作答与反馈</button>}
         {card.what_happened.session_status === 'running' && <button className="text-button" disabled={busy} onClick={() => void choose('stop_for_now')}>暂停学习</button>}
       </>}
-      {card.position.plan_id && <button className="text-button" onClick={() => onOpenPlan(card.position.plan_id!)}>查看计划</button>}
+      {!closedGoal && card.position.plan_id && <button className="text-button" onClick={() => onOpenPlan(card.position.plan_id!)}>查看计划</button>}
     </div>
     {stopped && <p role="status">学习位置已保存。</p>}
     {error && <p role="alert" className="workspace-alert">{error}</p>}

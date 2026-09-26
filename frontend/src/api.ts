@@ -1297,6 +1297,24 @@ export type LearningGoal = {
   updated_at: string;
 };
 
+export type GoalStatus = LearningGoal['status'];
+export type GoalReview = {
+  goal: LearningGoal;
+  plans: Array<{ id: string; title: string; status: string }>;
+  tasks: Array<{ id: string; title: string; status: string; plan_id: string; delegations: Array<{ id: string; status: string }>; running_session_ids: string[] }>;
+  counts: { total_tasks: number; completed_tasks: number; open_tasks: number; running_sessions: number };
+  review_key: string;
+  history: Array<{ id: string; status: GoalStatus; previous_status: GoalStatus; occurred_at: string }>;
+};
+
+export function getGoalReview(goalId: string): Promise<GoalReview> {
+  return request(`/api/learning/goals/${encodeURIComponent(goalId)}/review`);
+}
+
+export function changeGoalStatus(goalId: string, status: GoalStatus, expectedVersion: number, reviewKey: string, idempotencyKey: string): Promise<{ id: string; version: number; status: GoalStatus; interrupted_session_ids: string[] }> {
+  return request(`/api/learning/goals/${encodeURIComponent(goalId)}/status`, { method: 'POST', body: JSON.stringify({ status, expected_version: expectedVersion, review_key: reviewKey, idempotency_key: idempotencyKey }) });
+}
+
 export type LearningPlan = {
   id: string;
   goal_id: string | null;
@@ -1969,7 +1987,7 @@ export function getAgentContext(targetId?: string): Promise<AgentContext> {
 
 export type ReturnReview = {
   id: string;
-  position: { goal: string; plan: string; plan_id: string | null; action: string; action_id: string; delegation_id: string; last_session: string | null; last_activity_at: string | null };
+  position: { goal: string; goal_id?: string | null; goal_status?: GoalStatus | null; plan: string; plan_id: string | null; action: string; action_id: string; delegation_id: string; last_session: string | null; last_activity_at: string | null };
   what_happened: { summary: string; action_status: string; delegation_status: string; verification_status: string | null; verification_id: string | null; has_saved_answer: boolean; session_status: string | null; completion?: CompletionFact | null };
   supported: Array<{ claim_id: string; label: string; basis_kind: string; scope: string; user_facing_explanation: string }>;
   unknowns: Array<{ reason_code: string; label: string }>;

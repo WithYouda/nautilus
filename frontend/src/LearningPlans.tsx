@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { chooseReturnReview, getLearningRoom, getLearningState, getReturnReview, type LearningRoomBrief, type LearningState } from './api';
 import LearningPageHeader from './LearningPageHeader';
+import GoalClosure, { goalIsClosed, goalStatusLabel } from './GoalClosure';
 
 export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   onCreate: (planId?: string) => void; onOpenRecord: (delegationId: string) => void; onLearning: (brief: LearningRoomBrief) => void;
@@ -9,14 +10,16 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   const [planId, setPlanId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('plan'));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [reviewGoalId, setReviewGoalId] = useState<string | null>(null);
   useEffect(() => { getLearningState().then(setState).catch(reason => setError(reason.message)); }, []);
   const plans = state?.plans ?? [];
   const selected = plans.find(plan => plan.id === planId) ?? (planId ? null : plans[0]);
   const goal = state?.goals.find(item => item.id === selected?.goal_id);
+  const closedGoal = goal ? goalIsClosed(goal.status) : false;
   const taskIds = new Set(state?.action_links.filter(link => link.plan_id === selected?.id).map(link => link.action_id));
   const tasks = state?.actions.filter(action => taskIds.has(action.id)).sort((a, b) => a.created_at.localeCompare(b.created_at)) ?? [];
   async function continueTask(delegationId: string) {
-    if (busy) return;
+    if (busy || closedGoal) return;
     setBusy(true); setError('');
     try {
       const card = await getReturnReview();
@@ -43,19 +46,22 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
       <nav className="learning-plans__list" aria-label="计划列表">{plans.map(plan => {
         const ids = new Set(state!.action_links.filter(link => link.plan_id === plan.id).map(link => link.action_id));
         const actions = state!.actions.filter(action => ids.has(action.id));
-        return <button key={plan.id} aria-pressed={selected?.id === plan.id} onClick={() => select(plan.id)}><strong>{plan.title}</strong><span>{state!.goals.find(item => item.id === plan.goal_id)?.title}</span><small>{actions.filter(action => action.status === 'completed').length} / {actions.length} 项任务已完成</small></button>;
+        const planGoal = state!.goals.find(item => item.id === plan.goal_id);
+        return <button key={plan.id} aria-pressed={selected?.id === plan.id} onClick={() => select(plan.id)}><strong>{plan.title}</strong><span>{planGoal?.title}{planGoal && ` · ${goalStatusLabel(planGoal.status)}`}</span><small>{actions.filter(action => action.status === 'completed').length} / {actions.length} 项任务已完成</small></button>;
       })}</nav>
       {selected ? <section className="learning-plan-detail" aria-label="计划详情">
-        <header><p className="eyebrow">学习目标</p><h2>{goal?.title || selected.title}</h2>{goal?.description && <p>{goal.description}</p>}<p className="learning-plan-detail__route">{selected.title}</p></header>
-        <div className="learning-plan-detail__heading"><h3>学习任务</h3>{selected.status === 'active' && <button className="button button--accent" onClick={() => onCreate(selected.id)}>添加下一步</button>}</div>
+        <header><p className="eyebrow">学习目标</p><h2>{goal?.title || selected.title}</h2>{goal && <span className="learning-state-label">{goalStatusLabel(goal.status)}</span>}{goal?.description && <p>{goal.description}</p>}<p className="learning-plan-detail__route">{selected.title}</p>{goal && <button className="text-button" onClick={() => setReviewGoalId(goal.id)}>{closedGoal ? '查看收尾 / 重新开启' : '收尾目标'}</button>}</header>
+        <div className="learning-plan-detail__heading"><h3>学习任务</h3>{selected.status === 'active' && !closedGoal && <button className="button button--accent" onClick={() => onCreate(selected.id)}>添加下一步</button>}</div>
+        {closedGoal && <p>目标{goalStatusLabel(goal!.status)}。已有任务和学习记录仍可查看；重新开启目标后可继续安排学习。</p>}
         {tasks.map((task, index) => {
           const delegations = state!.delegations.filter(item => item.action_id === task.id);
-          return <article className="learning-plan-task" key={task.id}><div className="learning-plan-task__title"><span className="learning-plan-task__number">{String(index + 1).padStart(2, '0')}</span><h4>{task.title}</h4><span className="learning-state-label">{task.status === 'completed' ? '已完成' : delegations.some(item => item.status === 'active') ? '正在学习' : '已保存'}</span></div>
-            {delegations.map(delegation => <div className="learning-plan-task__body" key={delegation.id}><p>{delegation.behavior}</p><div className="learning-action-row">{task.status === 'open' && ['ready', 'active'].includes(delegation.status) && <button className="button button--quiet" disabled={busy} onClick={() => void continueTask(delegation.id)}>{delegation.status === 'ready' ? '开始学习' : '继续学习'}</button>}<button className="text-button" onClick={() => onOpenRecord(delegation.id)}>查看记录</button></div></div>)}
+          return <article className="learning-plan-task" key={task.id}><div className="learning-plan-task__title"><span className="learning-plan-task__number">{String(index + 1).padStart(2, '0')}</span><h4>{task.title}</h4><span className="learning-state-label">{task.status === 'completed' ? '已完成' : closedGoal ? '未完成' : delegations.some(item => item.status === 'active') ? '正在学习' : '已保存'}</span></div>
+            {delegations.map(delegation => <div className="learning-plan-task__body" key={delegation.id}><p>{delegation.behavior}</p><div className="learning-action-row">{!closedGoal && task.status === 'open' && ['ready', 'active'].includes(delegation.status) && <button className="button button--quiet" disabled={busy} onClick={() => void continueTask(delegation.id)}>{delegation.status === 'ready' ? '开始学习' : '继续学习'}</button>}<button className="text-button" onClick={() => onOpenRecord(delegation.id)}>查看记录</button></div></div>)}
           </article>;
         })}
-        {!tasks.length && <p>还没有任务，添加下一步开始学习。</p>}
+        {!tasks.length && <p>{closedGoal ? '这个目标尚无任务。' : '还没有任务，添加下一步开始学习。'}</p>}
       </section> : <p>这个计划不存在或当前不可查看，请从左侧重新选择。</p>}
     </div>}
+    {reviewGoalId && <GoalClosure key={reviewGoalId} goalId={reviewGoalId} onClose={() => setReviewGoalId(null)} onChanged={async () => { setState(await getLearningState()); }} onOpenRecord={onOpenRecord} />}
   </section>;
 }

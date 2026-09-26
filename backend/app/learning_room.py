@@ -20,7 +20,7 @@ class LearningRoomService:
         action = repository.action(delegation["action_id"])
         row = self.learning.database.fetchone(
             """SELECT c.boundaries, c.stop_conditions, o.object_description, o.behavior,
-                      g.title AS goal_title, p.title AS plan_title
+                      g.title AS goal_title, g.status AS goal_status, p.title AS plan_title
                FROM learning_contract_version c
                JOIN learning_outcome o ON o.owner_id=c.owner_id AND o.id=?
                LEFT JOIN learning_action_link l ON l.owner_id=c.owner_id AND l.action_id=?
@@ -50,6 +50,7 @@ class LearningRoomService:
                 "goal_title": row["goal_title"] or "", "plan_title": row["plan_title"] or "",
                 "outcome_object": row["object_description"], "outcome_behavior": row["behavior"],
                 "boundaries": row["boundaries"], "stop_conditions": row["stop_conditions"],
+                **({'history_only': True} if row['goal_status'] in ('completed', 'paused', 'archived') else {}),
             },
             "conversation_id": conversations[0] if conversations else None,
             "conversation_ids": conversations,

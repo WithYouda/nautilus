@@ -7,8 +7,10 @@ from uuid import uuid4
 
 from ..db import Database
 from ..learning_domain import DomainError, LearningRepository, Principal
+from ..goal_lifecycle import goal_review, require_goal_active, OPEN_GOAL_STATUSES
 from .commands import (
     Command,
+    ChangeGoalStatus,
     CorrectArtifact,
     CompleteLearningAction,
     CreateDelegation,
@@ -147,7 +149,10 @@ class LearningCore:
             event_type = "outcome.created"
         elif isinstance(command, ConfirmLearningSetup):
             return self._dispatch_setup(connection, principal, command, command_id, key, now, repository)
+        elif isinstance(command, ChangeGoalStatus):
+            return self._dispatch_goal(connection, principal, command, command_id, key, now)
         elif isinstance(command, CreateDelegation):
+            require_goal_active(connection, principal.owner_id, command.action_id)
             action = repository.action(command.action_id)
             if action["status"] != "open":
                 raise DomainError("action_not_open")
@@ -157,6 +162,7 @@ class LearningCore:
         elif isinstance(command, StartSession):
             delegation = repository.delegation(command.delegation_id)
             action = repository.action(delegation["action_id"])
+            require_goal_active(connection, principal.owner_id, action['id'])
             if action["status"] != "open":
                 raise DomainError("action_not_open")
             if delegation["status"] not in {"ready", "active"}:
@@ -176,6 +182,7 @@ class LearningCore:
             }
             event_type = "session.started"
         elif isinstance(command, CompleteLearningAction):
+            require_goal_active(connection, principal.owner_id, command.action_id)
             action = repository.action(command.action_id)
             if action["status"] != "open":
                 raise DomainError("action_not_open")
@@ -342,6 +349,34 @@ class LearningCore:
             "event_id": event["event_id"],
         }
 
+    def _dispatch_goal(self, connection, principal, command, command_id, key, now):
+        review = goal_review(connection, principal.owner_id, command.goal_id)
+        goal = review['goal']
+        if goal['version'] != command.expected_version:
+            raise DomainError('version_conflict')
+        if review['review_key'] != command.review_key:
+            raise DomainError('goal_review_changed')
+        closing = goal['status'] in OPEN_GOAL_STATUSES
+        if (closing and command.status == 'active') or (not closing and command.status != 'active'):
+            raise DomainError('goal_invalid_transition')
+        interrupted = []
+        for task in review['tasks']:
+            for session_id in task['running_session_ids']:
+                if command.status == 'active':
+                    continue
+                version = connection.execute('SELECT version FROM learning_action WHERE owner_id=? AND id=?',
+                                             (principal.owner_id, task['id'])).fetchone()[0]
+                append_event(connection, principal, command_id=command_id, key=key,
+                             aggregate_type='action', aggregate_id=task['id'], expected_version=version,
+                             event_type='session.ended', payload=dict(session_id=session_id, disposition='interrupted'), now=now)
+                interrupted.append(session_id)
+        event = append_event(connection, principal, command_id=command_id, key=key,
+                             aggregate_type='goal', aggregate_id=goal['id'], expected_version=goal['version'] - 1,
+                             event_type='goal.status_changed',
+                             payload=dict(id=goal['id'], previous_status=goal['status'], status=command.status), now=now)
+        return dict(id=goal['id'], version=goal['version'] + 1, status=command.status,
+                    event_id=event['event_id'], interrupted_session_ids=interrupted)
+
     def _dispatch_setup(self, connection, principal, command, command_id, key, now, repository):
         existing_plan = existing_goal = None
         if command.plan_id:
@@ -349,6 +384,8 @@ class LearningCore:
             if existing_plan["status"] != "active":
                 raise DomainError("plan_not_active")
             existing_goal = repository._owned("learning_goal", existing_plan["goal_id"])
+            if existing_goal['status'] not in OPEN_GOAL_STATUSES:
+                raise DomainError('goal_not_active')
         if command.criterion_id and not command.outcome_id:
             raise DomainError("criterion_outcome_required")
         if command.outcome_id:

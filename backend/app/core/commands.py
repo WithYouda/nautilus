@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
 
 class Command(BaseModel):
@@ -10,6 +11,13 @@ class Command(BaseModel):
 class CreateLearningAction(Command):
     title: str = Field(min_length=1, max_length=300)
     context_key: str = Field(min_length=1, max_length=200)
+
+
+class ChangeGoalStatus(Command):
+    goal_id: str
+    status: Literal['completed', 'paused', 'archived', 'active']
+    expected_version: int = Field(ge=1)
+    review_key: str
 
 
 class CreateOutcome(Command):
