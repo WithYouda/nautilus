@@ -120,6 +120,24 @@ def _erase_practices(connection, owner, practice_ids, now):
             finished_at=now, purged_at=now), 'owner_id=? AND practice_id=?', (owner, practice_id))
 
 
+def _erase_delayed(connection, owner, follow_up_ids, now):
+    """Explicitly scrub children, including snapshots without the 032 triggers."""
+    if not columns(connection, 'learning_delayed_follow_up'):
+        return
+    for follow_up_id in follow_up_ids:
+        _update(connection, 'learning_delayed_follow_up', dict(
+            standard_snapshot_json=None, request_fingerprint=None, history_json=None,
+            due_at=None, timezone=None, arranged_at=None, started_at=None,
+            status='purged', purged_at=now), 'owner_id=? AND id=?', (owner, follow_up_id))
+        _update(connection, 'learning_delayed_attempt', dict(
+            answers_json=None, user_report=None, condition_json=None,
+            submit_fingerprint=None, result_json=None, check_status='not_checked',
+            purged_at=now), 'owner_id=? AND follow_up_id=?', (owner, follow_up_id))
+        _update(connection, 'learning_delayed_view', dict(
+            provided_at=None, displayed_at=None, after_arranging=None, purged_at=now),
+            'owner_id=? AND follow_up_id=?', (owner, follow_up_id))
+
+
 def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifact_ids=()):
     """Keeps unrelated rows, object identities and execution facts intact."""
     if kind == 'completion':
@@ -132,6 +150,10 @@ def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifac
 
     if kind == 'practice':
         _erase_practices(connection, owner, {object_id}, now)
+        return
+
+    if kind == 'delayed':
+        _erase_delayed(connection, owner, {object_id}, now)
         return
 
     artifacts = {object_id} if kind == 'artifact' else set()
@@ -157,6 +179,12 @@ def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifac
         if 'latest_submission_id' in columns(connection, 'learning_verification'):
             _update(connection, 'learning_verification', dict(submission_json=None, result_json=None),
                     'owner_id=? AND latest_submission_id=?', (owner, submission))
+    if artifacts and columns(connection, 'learning_delayed_follow_up'):
+        delayed_ids = set()
+        for artifact in artifacts:
+            delayed_ids.update(_ids(connection, 'learning_delayed_follow_up', 'id',
+                'owner_id=? AND source_artifact_id=?', (owner, artifact)))
+        _erase_delayed(connection, owner, delayed_ids, now)
     if kind == 'verification':
         _update(connection, 'learning_verification', dict(answer_key_json='{}', challenge_json='{}',
             submission_json=None, result_json=None, contract_snapshot_json='{"version":0,"stop_conditions":""}', purged_at=now),

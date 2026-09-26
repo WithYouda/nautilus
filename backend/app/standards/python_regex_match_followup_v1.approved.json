@@ -1,0 +1,116 @@
+{
+  "id": "python-regex-match-followup-v1",
+  "version": 1,
+  "title": "Python 正则字符类与有限量词匹配判断",
+  "source": "https://docs.python.org/3/library/re.html",
+  "review_status": "approved",
+  "reviewed_by": "product-owner",
+  "reviewed_at": "2026-09-26",
+  "source_context": "python-regex-basics",
+  "minimum_interval_seconds": 86400,
+  "suggested_interval_seconds": 259200,
+  "executor_version": "python-re-fullmatch-fixed-v1",
+  "limitations": "只记录固定题组的同范围表现；自报未独立核实，不证明稳定掌握或迁移。",
+  "banks": {
+    "initial": [
+      {
+        "id": "initial-1",
+        "pattern": "[A-Z]{2}[0-9]{2}",
+        "text": "AB12",
+        "expected": true
+      },
+      {
+        "id": "initial-2",
+        "pattern": "[A-Z]{2}[0-9]{2}",
+        "text": "A12",
+        "expected": false
+      },
+      {
+        "id": "initial-3",
+        "pattern": "[A-Z]{2}[0-9]{2}",
+        "text": "Ab12",
+        "expected": false
+      },
+      {
+        "id": "initial-4",
+        "pattern": "[A-Z]{2}[0-9]{2}",
+        "text": "AB123",
+        "expected": false
+      },
+      {
+        "id": "initial-5",
+        "pattern": "x[0-9]{1,2}",
+        "text": "x7",
+        "expected": true
+      },
+      {
+        "id": "initial-6",
+        "pattern": "x[0-9]{1,2}",
+        "text": "x42",
+        "expected": true
+      },
+      {
+        "id": "initial-7",
+        "pattern": "x[0-9]{1,2}",
+        "text": "x",
+        "expected": false
+      },
+      {
+        "id": "initial-8",
+        "pattern": "x[0-9]{1,2}",
+        "text": "x123",
+        "expected": false
+      }
+    ],
+    "followup": [
+      {
+        "id": "followup-1",
+        "pattern": "[A-Z]{2}[0-9]{2}",
+        "text": "CD34",
+        "expected": true
+      },
+      {
+        "id": "followup-2",
+        "pattern": "[A-Z]{2}[0-9]{2}",
+        "text": "C34",
+        "expected": false
+      },
+      {
+        "id": "followup-3",
+        "pattern": "[A-Z]{2}[0-9]{2}",
+        "text": "Cd34",
+        "expected": false
+      },
+      {
+        "id": "followup-4",
+        "pattern": "[A-Z]{2}[0-9]{2}",
+        "text": "CD345",
+        "expected": false
+      },
+      {
+        "id": "followup-5",
+        "pattern": "x[0-9]{1,2}",
+        "text": "x8",
+        "expected": true
+      },
+      {
+        "id": "followup-6",
+        "pattern": "x[0-9]{1,2}",
+        "text": "x56",
+        "expected": true
+      },
+      {
+        "id": "followup-7",
+        "pattern": "x[0-9]{1,2}",
+        "text": "x",
+        "expected": false
+      },
+      {
+        "id": "followup-8",
+        "pattern": "x[0-9]{1,2}",
+        "text": "x456",
+        "expected": false
+      }
+    ]
+  }
+}

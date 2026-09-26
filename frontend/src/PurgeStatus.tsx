@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getLearningPurgeReport, type PurgeReport } from './api';
 
 export default function PurgeStatus({ kind, objectId, onRetry, busy = false, refreshKey }: {
-  kind: 'verification' | 'completion' | 'artifact' | 'practice';
+  kind: 'verification' | 'completion' | 'artifact' | 'practice' | 'delayed';
   objectId: string;
   onRetry: () => Promise<void>;
   busy?: boolean;

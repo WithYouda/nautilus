@@ -24,7 +24,7 @@ from .layouts import LayoutService
 from .learning_service import LearningService
 from .completion import CompletionService
 from .practice import PracticeService
-from .routers import practice
+from .routers import practice, delayed_follow_up
 from .learning_setup import LearningSetupService
 from .measurements import MeasurementService
 from .review import ReviewService
@@ -167,6 +167,7 @@ def create_app(
     app.include_router(layouts.router)
     app.include_router(learning.router)
     app.include_router(practice.router)
+    app.include_router(delayed_follow_up.router)
     app.include_router(ai.router)
     app.include_router(search.router)
     return app

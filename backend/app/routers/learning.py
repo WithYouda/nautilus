@@ -74,6 +74,16 @@ router = APIRouter(prefix="/api/learning", dependencies=[Depends(_private_respon
 
 def _raise_learning_error(error: DomainError) -> None:
     messages = {
+        "delayed_invalid_time": "请选择有效的日期、时间和时区。",
+        "delayed_standard_unavailable": "这份回访标准当前不可用，请保留答案后联系维护者。",
+        "delayed_source_unavailable": "关联的产出或已批准标准当前不可用。",
+        "delayed_stale_answer": "作答已保存或已在另一处更新，请刷新后继续。",
+        "delayed_not_started": "请先开始这次回访，再保存作答。",
+        "delayed_incomplete_answer": "请完成本组所有匹配判断后提交。",
+        "delayed_not_submitted": "请先保存完整作答，再检查或查看结果。",
+        "delayed_schedule_unavailable": "请先保存并检查初次作答；已完成的回访不能再次安排。",
+        "delayed_too_early": "回访时间须晚于现在，且距初次作答至少24小时。",
+        "delayed_not_due": "这次回访尚未到期，请在安排的时间开始。",
         "practice_source_unavailable": "原题、作答或复核依据当前不可用，暂不能继续这项补练。",
         "practice_objection_required": "请先说明你对原反馈的具体疑问。",
         "practice_recheck_required": "请先复核有争议的反馈，再选择是否出练习。",

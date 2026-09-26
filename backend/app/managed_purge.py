@@ -20,7 +20,8 @@ EXTERNAL_LIMITS = [
 ]
 TABLES = {'artifact': ('learning_raw_artifact', 'artifact_id'),
           'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id'),
-          'practice': ('learning_practice', 'id')}
+          'practice': ('learning_practice', 'id'),
+          'delayed': ('learning_delayed_follow_up', 'id')}
 
 
 def compact(connection):

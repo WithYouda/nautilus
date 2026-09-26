@@ -205,6 +205,9 @@ def _backup_loses_purge_barriers(
         ("learning_practice", ("owner_id", "id")),
         ("learning_practice_attempt", ("owner_id", "id")),
         ("learning_practice_run", ("owner_id", "id")),
+        ("learning_delayed_follow_up", ("owner_id", "id")),
+        ("learning_delayed_attempt", ("owner_id", "id")),
+        ("learning_delayed_view", ("owner_id", "id")),
     )
     for table, keys in barriers:
         current_columns = {row[1] for row in current.execute(f"PRAGMA table_info({table})")}
@@ -349,6 +352,33 @@ def _backup_restores_verification_content(current, backup):
                 (owner_id, practice_id),
             ).fetchone():
                 return True
+    if current.execute("SELECT 1 FROM sqlite_master WHERE name='learning_delayed_follow_up'").fetchone():
+        for owner_id, follow_up_id in current.execute(
+            "SELECT owner_id,id FROM learning_delayed_follow_up WHERE purged_at IS NOT NULL"
+        ):
+            if 'learning_delayed_follow_up' in backup_tables and backup.execute(
+                """SELECT 1 FROM learning_delayed_follow_up WHERE owner_id=? AND id=? AND
+                   (standard_snapshot_json IS NOT NULL OR request_fingerprint IS NOT NULL OR
+                    history_json IS NOT NULL OR due_at IS NOT NULL OR timezone IS NOT NULL OR
+                    arranged_at IS NOT NULL OR started_at IS NOT NULL OR status <> 'purged')""",
+                (owner_id, follow_up_id),
+            ).fetchone():
+                return True
+            if 'learning_delayed_attempt' in backup_tables and backup.execute(
+                """SELECT 1 FROM learning_delayed_attempt WHERE owner_id=? AND follow_up_id=? AND
+                   (answers_json IS NOT NULL OR user_report IS NOT NULL OR condition_json IS NOT NULL OR
+                    submit_fingerprint IS NOT NULL OR result_json IS NOT NULL OR check_status <> 'not_checked'
+                    OR purged_at IS NULL)""",
+                (owner_id, follow_up_id),
+            ).fetchone():
+                return True
+            if 'learning_delayed_view' in backup_tables and backup.execute(
+                """SELECT 1 FROM learning_delayed_view WHERE owner_id=? AND follow_up_id=? AND
+                   (provided_at IS NOT NULL OR displayed_at IS NOT NULL OR after_arranging IS NOT NULL
+                    OR purged_at IS NULL)""",
+                (owner_id, follow_up_id),
+            ).fetchone():
+                return True
     return False
 
 
@@ -422,7 +452,8 @@ def _check_purge_receipts(target_path, candidate_path):
         kind, owner, object_id = (receipt[key] for key in ('kind', 'owner', 'object_id'))
         table, key = {'artifact': ('learning_raw_artifact', 'artifact_id'),
                       'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id'),
-                      'practice': ('learning_practice', 'id')}[kind]
+                      'practice': ('learning_practice', 'id'),
+                      'delayed': ('learning_delayed_follow_up', 'id')}[kind]
         with closing(sqlite3.connect(candidate_path)) as connection:
             connection.row_factory = sqlite3.Row
             if 'purged_at' not in columns(connection, table):
@@ -430,6 +461,13 @@ def _check_purge_receipts(target_path, candidate_path):
             rows = connection.execute(f'SELECT purged_at FROM {table} WHERE owner_id=? AND {key}=?', (owner, object_id)).fetchall()
             if not rows or any(not row[0] for row in rows):
                 raise ProductionLearningDatabaseError('backup would lose deletion barriers for purged content')
+            if kind == 'delayed':
+                for child in ('learning_delayed_attempt', 'learning_delayed_view'):
+                    if 'purged_at' not in columns(connection, child) or connection.execute(
+                        f'SELECT 1 FROM {child} WHERE owner_id=? AND follow_up_id=? AND purged_at IS NULL',
+                        (owner, object_id),
+                    ).fetchone():
+                        raise ProductionLearningDatabaseError('backup would lose deletion barriers for purged content')
             for artifact_id in receipt.get('artifact_ids', []) + ([object_id] if kind == 'artifact' else []):
                 if not connection.execute("SELECT 1 FROM learning_event WHERE owner_id=? AND event_type='artifact.purged' AND json_extract(payload_json,'$.artifact_id')=?", (owner, artifact_id)).fetchone():
                     raise ProductionLearningDatabaseError('backup would lose deletion facts for purged content')
@@ -446,6 +484,11 @@ def _check_purge_receipts(target_path, candidate_path):
                 'learning_practice': ['request_json', 'request_fingerprint', 'contract_snapshot_json', 'content_json', 'provider_name', 'model'],
                 'learning_practice_attempt': ['answer', 'condition_json', 'request_fingerprint'],
                 'learning_practice_run': ['result_json', 'provider_name', 'model', 'displayed_at'],
+                'learning_delayed_follow_up': ['standard_snapshot_json', 'request_fingerprint', 'history_json',
+                                               'due_at', 'timezone', 'arranged_at', 'started_at'],
+                'learning_delayed_attempt': ['answers_json', 'user_report', 'condition_json',
+                                             'submit_fingerprint', 'result_json'],
+                'learning_delayed_view': ['provided_at', 'displayed_at', 'after_arranging'],
             }
             def snapshot():
                 result = {}

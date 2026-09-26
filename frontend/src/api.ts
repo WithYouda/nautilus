@@ -1612,7 +1612,7 @@ export type PurgeReport = {
   external_limits: string[];
 };
 
-export function getLearningPurgeReport(kind: 'verification' | 'completion' | 'artifact' | 'practice', objectId: string): Promise<PurgeReport> {
+export function getLearningPurgeReport(kind: 'verification' | 'completion' | 'artifact' | 'practice' | 'delayed', objectId: string): Promise<PurgeReport> {
   return request<PurgeReport>(`/api/learning/purges/${kind}/${objectId}`);
 }
 
@@ -2032,6 +2032,28 @@ export function recordReferenceHelpDisplay(verificationId: string, evaluationId:
 }
 
 export type PracticeKind = 'redo' | 'new_situation';
+export type DelayedStandard = { id: string; version: number; title: string; source: string; review_status: 'approved'; reviewed_by: string; reviewed_at: string; minimum_interval_seconds: number; suggested_interval_seconds: number; executor_version: string; limitations: string; content_hash: string };
+export type DelayedSource = { artifact_id: string; content_version: number; delegation_id: string; criterion_id: string; action_title: string; created_at: string };
+export type DelayedItem = { id: string; pattern: string; text: string };
+export type DelayedAnswers = Record<string, boolean | null>;
+export type DelayedReport = 'none' | 'used' | 'unknown';
+export type DelayedCondition = { user_report: DelayedReport; observed_views: Array<{ attempt_id: string; provided_at: string | null; displayed_at: string | null; after_arranging: boolean }>; independence: 'unverified' };
+export type DelayedAttempt = { id: string; phase: 'initial' | 'followup'; revision: number; answers: DelayedAnswers | null; user_report: DelayedReport | null; condition: DelayedCondition | null; submitted_at: string | null; check_status: 'not_checked' | 'succeeded' | 'failed'; checked_at: string | null; purged_at: string | null };
+export type DelayedDetail = { id: string; outcome_id: string; delegation_id: string; source_artifact_id: string; source_content_version: number; source_criterion_id: string; standard: DelayedStandard | null; status: 'initial' | 'scheduled' | 'started' | 'completed' | 'skipped' | 'purged'; available: boolean; created_at: string; due_at: string | null; timezone: string | null; arranged_at: string | null; started_at: string | null; purged_at: string | null; server_now: string; is_due: boolean; history: Array<{ operation: string; at: string; due_at?: string; timezone?: string }>; items: DelayedItem[]; active_attempt_id: string | null; attempts: DelayedAttempt[]; comparison: null | { interval_seconds: number; minimum_interval_seconds: number; interval_met: boolean; initial_correct: number; followup_correct: number; description: string }; purge?: PurgeReport };
+export type DelayedReveal = { view_id: string; attempt_id: string; phase: 'initial' | 'followup'; items: DelayedItem[]; answers: Record<string, boolean>; result: null | { executor_version: string; standard_hash: string; python_version: string; correct: number; total: number; items: Array<{ id: string; pattern: string; text: string; answer: boolean; expected: boolean; correct: boolean }>; description: string }; condition: DelayedCondition | null; submitted_at: string };
+const delayedPath = (id: string) => `/api/learning/delayed-follow-ups/${id}`;
+export function listOutcomeDelayed(outcomeId: string): Promise<{ standard: DelayedStandard; sources: DelayedSource[]; items: DelayedDetail[] }> { return request(`/api/learning/outcomes/${outcomeId}/delayed-follow-ups`); }
+export function listHomeDelayed(): Promise<{ items: DelayedDetail[]; server_now: string }> { return request('/api/learning/delayed-follow-ups'); }
+export function createDelayed(outcomeId: string, source: DelayedSource, requestKey: string): Promise<DelayedDetail> { return request(`/api/learning/outcomes/${outcomeId}/delayed-follow-ups`, { method: 'POST', body: JSON.stringify({ source_artifact_id: source.artifact_id, source_content_version: source.content_version, request_key: requestKey }) }); }
+export function getDelayed(id: string): Promise<DelayedDetail> { return request(delayedPath(id)); }
+export function saveDelayedDraft(id: string, attemptId: string, revision: number, answers: DelayedAnswers, userReport: DelayedReport): Promise<DelayedDetail> { return request(`${delayedPath(id)}/attempts/${attemptId}/draft`, { method: 'PUT', body: JSON.stringify({ revision, answers, user_report: userReport }) }); }
+export function submitDelayed(id: string, attemptId: string, revision: number, answers: Record<string, boolean>, userReport: DelayedReport, requestKey: string): Promise<DelayedDetail> { return request(`${delayedPath(id)}/attempts/${attemptId}/submit`, { method: 'POST', body: JSON.stringify({ revision, answers, user_report: userReport, request_key: requestKey }) }); }
+export function checkDelayed(id: string, attemptId: string): Promise<DelayedDetail> { return request(`${delayedPath(id)}/attempts/${attemptId}/check`, { method: 'POST', body: '{}' }); }
+export function revealDelayed(id: string, attemptId: string): Promise<DelayedReveal> { return request(`${delayedPath(id)}/attempts/${attemptId}/reveal`, { method: 'POST', body: '{}' }); }
+export function displayDelayed(id: string, viewId: string): Promise<{ id: string; displayed_at: string }> { return request(`${delayedPath(id)}/views/${viewId}/display`, { method: 'POST', body: '{}' }); }
+export function scheduleDelayed(id: string, dueAt: string, timezone: string, requestKey: string): Promise<DelayedDetail> { return request(`${delayedPath(id)}/schedule`, { method: 'POST', body: JSON.stringify({ due_at: dueAt, timezone, request_key: requestKey }) }); }
+export function chooseDelayed(id: string, choice: 'start' | 'skip', requestKey: string): Promise<DelayedDetail> { return request(`${delayedPath(id)}/choice`, { method: 'POST', body: JSON.stringify({ choice, request_key: requestKey }) }); }
+export function purgeDelayed(id: string): Promise<DelayedDetail> { return request(`${delayedPath(id)}/purge`, { method: 'POST', body: '{}' }); }
 export type Practice = {
   id: string; verification_id: string; submission_id: string; evaluation_id: string; question_id: string;
   available?: boolean;

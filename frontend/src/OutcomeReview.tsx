@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { getLearningArtifact, getOutcomeReview, type LearningArtifact, type OutcomeReview as Review } from './api';
 import LearningMarkdown from './LearningMarkdown';
 import { PracticeDetail } from './Practice';
+import { DelayedOutcomePanel } from './DelayedFollowUp';
 import './styles/outcome-review.css';
 
 const stateLabels: Record<string, string> = {
@@ -120,6 +121,7 @@ export default function OutcomeReview({ id, refreshKey, onBack, onOpenVerificati
         }}>查看关联的作答与评估</button>}
         {!!claim.reviews.length && <details><summary>质疑与复核记录（{claim.reviews.length}）</summary><ul>{claim.reviews.map(action => <li key={action.id}>{time(action.created_at)} · {reviewLabels[action.action] ?? action.action}{action.reason ? ` · ${action.reason}` : ''}</li>)}</ul></details>}
       </article>)}</div> : <p>暂无明确关联的证据判断。</p>}</section>
+      <DelayedOutcomePanel key={id} outcomeId={id} refreshKey={refreshKey} />
       <section aria-label="后续安排"><h4>后续安排</h4><p className="form-hint">安排记录，不等于实际验证结果。当前没有关联的实际回访结果时，结果仍待判断。</p>{review.follow_ups.length ? <ul className="outcome-review__plain-list">{review.follow_ups.map(item => <li key={item.id}><strong>{item.kind === 'human_review' ? '人工复核' : '补充验证'} · {item.status === 'pending' ? '待处理' : item.status === 'completed' ? '安排已处理' : '已取消'}</strong><span>创建于 {time(item.created_at)}{item.due_at ? ` · 计划 ${time(item.due_at)}` : ''}</span>{item.note && <p>{item.note}</p>}</li>)}</ul> : <p>暂无后续安排记录。</p>}</section>
     </>}
   </section>;

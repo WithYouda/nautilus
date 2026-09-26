@@ -9,6 +9,7 @@ import DialogPortal from "./DialogPortal";
 import FactWorkspace from "./FactWorkspace";
 import LearningPlans from "./LearningPlans";
 import LearningRecords from "./LearningRecords";
+import { DelayedHomePanel } from "./DelayedFollowUp";
 
 type WorkspaceView = "home" | "plans" | "records";
 type AiRoomEntry = { scope: AiContextScope; targetId: string | null; initialDraft?: string; learningBrief?: LearningRoomBrief };
@@ -190,7 +191,7 @@ export default function Workspace({ health, identity, onLogout }: {
       </header>
       {error && <div className="workspace-alert" role="alert">{error}</div>}
       {mode === "ai" ? <AiLearningRoom task={null} contextScope={aiEntry.scope} targetId={aiEntry.targetId} initialDraft={aiEntry.initialDraft} learningBrief={aiEntry.learningBrief} provider={aiProvider} onBack={closeAiLearning} onProviderOpen={() => setProviderDialogOpen(true)} />
-        : view === "home" ? <FactWorkspace key={pageKey} creation={creation} onOpenPlans={id => chooseView("plans", id ? { plan: id } : {})} onOpenRecord={openRecord} onOpenLearningRoom={openRoom} />
+        : view === "home" ? <><DelayedHomePanel key={`delayed-${pageKey}`} /><FactWorkspace key={pageKey} creation={creation} onOpenPlans={id => chooseView("plans", id ? { plan: id } : {})} onOpenRecord={openRecord} onOpenLearningRoom={openRoom} /></>
         : view === "plans" ? <LearningPlans key={pageKey} onCreate={create} onOpenRecord={openRecord} onLearning={brief => openRoom("", brief)} />
         : <LearningRecords key={pageKey} onClose={() => chooseView("home")} onLearning={brief => openRoom("", brief)} />}
       <SearchSettings open={searchSettingsOpen} onClose={() => setSearchSettingsOpen(false)} />
