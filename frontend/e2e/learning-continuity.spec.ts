@@ -218,3 +218,72 @@ test('creating a goal after continuing an active goal opens an isolated teaching
   await expect(page.locator('.ai-learning-prompt')).toContainText('隔离旅程：旧目标任务');
   await expect(page.locator('.ai-learning-prompt')).not.toContainText('隔离旅程：全新目标任务');
 });
+
+
+test('outcome review: history versions, raw artifact and deletion stay connected', async ({ page }) => {
+  await authorize(page);
+  await provider(page);
+  await page.reload();
+  await setup(page, '合成成果依据旅程');
+  const card = await (await page.request.get('/api/learning/return-review')).json();
+  const state = await (await page.request.get('/api/learning/state')).json();
+  const action = state.actions.find(item => item.id === card.position.action_id);
+  const savedArtifact = await page.request.post('/api/learning/artifacts', { data: {
+    session_id: card.position.last_session, content: '合成原始产出：第一次边界分析',
+    expected_version: action.version, idempotency_key: 'outcome-artifact',
+  }});
+  expect(savedArtifact.ok()).toBeTruthy();
+  await page.getByRole('button', { name: '进入验证', exact: true }).click();
+  await page.getByRole('button', { name: '开始验证', exact: true }).click();
+  await page.getByPlaceholder('写出你的判断、过程或结果').fill('合成第一版作答：空输入仍待检查');
+  await page.getByRole('button', { name: '保存作答并验证' }).click();
+  await expect(page.getByText('作答已保存。', { exact: false })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: /我已核对结果/ })).toBeVisible();
+  const record = await (await page.request.get(`/api/learning/records/${card.position.delegation_id}`)).json();
+  const vid = record.verifications[0].id;
+  const firstResponse = await page.request.get(`/api/learning/verifications/${vid}`);
+  expect(firstResponse.ok()).toBeTruthy();
+  const first = await firstResponse.json();
+  const submitted = await page.request.post(`/api/learning/verifications/${vid}/submit`, { data: {
+    responses: { q1: '合成第二版作答：已对照参考解法' }, evidence_condition: 'with_materials', request_key: 'outcome-second',
+  }});
+  expect(submitted.ok()).toBeTruthy();
+  const second = await submitted.json();
+  expect((await page.request.post(`/api/learning/verifications/${vid}/evaluate`, { data: {
+    submission_id: second.latest_submission_id, request_key: 'outcome-evaluate-second',
+  }})).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '返回学习室', exact: true }).click();
+  await page.getByRole('button', { name: '返回工作区', exact: true }).click();
+  await page.getByRole('button', { name: '学习记录', exact: true }).click();
+  await page.getByRole('button', { name: /合成成果依据旅程.*次验证/ }).click();
+  await page.getByRole('button', { name: '查看这个成果的依据' }).click();
+  const outcome = page.getByRole('region', { name: '单成果依据回看' });
+  await expect(outcome).toContainText('目前没有可用的已批准标准');
+  await expect(outcome.getByRole('button', { name: '查看当时作答与评估版本' })).toHaveCount(2);
+  await outcome.getByRole('button', { name: '查看这个版本的原始产出' }).click();
+  await expect(outcome.locator('.outcome-review__raw')).toContainText('合成原始产出：第一次边界分析');
+  await outcome.getByRole('button', { name: '查看当时作答与评估版本' }).last().click();
+  const review = page.getByRole('region', { name: '验证回看' });
+  await expect(review.getByLabel('查看哪次作答')).toHaveValue(first.selected_submission_id);
+  await expect(review).toContainText('合成第一版作答：空输入仍待检查');
+  expect(new URL(page.url()).searchParams.get('evaluation')).toBe(first.selected_evaluation_id);
+  await page.reload();
+  await expect(review.getByLabel('查看哪次作答')).toHaveValue(first.selected_submission_id);
+  await expect(review).toContainText('合成第一版作答：空输入仍待检查');
+  await review.getByLabel('查看哪次作答').selectOption(second.latest_submission_id);
+  await expect(review).toContainText('合成第二版作答：已对照参考解法');
+  await page.getByRole('button', { name: '返回成果依据' }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(outcome).toContainText('有资料');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.screenshot({ path: '/tmp/nautilus-outcome-preview.png', fullPage: true });
+  await outcome.getByRole('button', { name: '查看当时作答与评估版本' }).first().click();
+  await review.getByText('更多操作', { exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await review.getByRole('button', { name: '彻底删除本次验证内容' }).click();
+  await expect(review).toContainText('本次作答内容已彻底删除');
+  await page.getByRole('button', { name: '返回成果依据' }).click();
+  await expect(outcome.getByRole('button', { name: '查看当时作答与评估版本' })).toHaveCount(0);
+  await expect(outcome.getByText('查看 AI 反馈', { exact: true })).toHaveCount(0);
+  await expect(outcome).toContainText('内容已删除');
+});

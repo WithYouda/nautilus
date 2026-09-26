@@ -26,6 +26,7 @@ from ..learning_domain import DomainError
 from ..learning_room import LearningRoomService
 from ..learning_position import LearningPositionService
 from ..learning_records import LearningRecords
+from ..outcome_review import OutcomeReview
 from ..question_discussion import QuestionDiscussionService
 from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest
 from ..schemas import (
@@ -380,6 +381,14 @@ def list_learning_verifications(
 @router.get("/records")
 def list_learning_records(request: Request, identity: dict[str, Any] = Depends(current_identity)):
     return LearningRecords(verification_service(request)).list(identity)
+
+
+@router.get("/outcomes/{outcome_id}/review")
+def get_outcome_review(outcome_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return OutcomeReview(verification_service(request)).get(identity, outcome_id)
+    except DomainError as error:
+        _raise_learning_error(error)
 
 
 @router.get("/records/{delegation_id}")

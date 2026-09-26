@@ -1,0 +1,19 @@
+.outcome-review { display: grid; gap: 22px; margin-block: 24px; padding: clamp(16px, 3vw, 28px); border: 1px solid var(--line); border-radius: 16px; background: var(--paper); min-width: 0; }
+.outcome-review h3, .outcome-review h4, .outcome-review h5, .outcome-review p { margin-block: 0; }
+.outcome-review section { display: grid; gap: 12px; min-width: 0; }
+.outcome-review__heading, .outcome-review__item-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.outcome-review__identity { display: grid; gap: 8px; padding: 18px; border-radius: 12px; background: var(--surface, #f4f3ef); }
+.outcome-review__identity strong { font-size: 1.2rem; }
+.outcome-review__states { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.outcome-review__states > div { padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.outcome-review__states h5 { margin-bottom: 10px; }
+.outcome-review__states ul, .outcome-review__plain-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.outcome-review__states li, .outcome-review__plain-list li { display: grid; gap: 4px; }
+.outcome-review small, .outcome-review time { color: var(--muted); }
+.outcome-review__timeline { display: grid; gap: 10px; }
+.outcome-review__timeline article, .outcome-review__raw { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.outcome-review__timeline .button { justify-self: start; }
+.outcome-review details { min-width: 0; }
+.outcome-review summary { cursor: pointer; }
+.outcome-review__raw .ai-markdown, .outcome-review__timeline .ai-markdown { overflow-wrap: anywhere; }
+@media (max-width: 700px) { .outcome-review__states { grid-template-columns: 1fr; } }

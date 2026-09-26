@@ -3,16 +3,18 @@ import QuestionFeedbackContent from './QuestionFeedbackContent';
 import LearningMarkdown from './LearningMarkdown';
 import { createQuestionDiscussion, getVerificationReview, purgeVerification, type VerificationReview as Review, type LearningVerification } from './api';
 
-export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged, onReadSolution }: {
+export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged, onReadSolution, initialSubmissionId, initialEvaluationId, onSelectionChange }: {
   id: string; refreshKey?: string; onDiscuss: (id: string) => void;
   onPurged?: (verification: LearningVerification) => void; onReadSolution?: () => void;
+  initialSubmissionId?: string | null; initialEvaluationId?: string | null;
+  onSelectionChange?: (submissionId: string | null, evaluationId: string | null) => void;
 }) {
   const [review, setReview] = useState<Review | null>(null);
-  const [submission, setSubmission] = useState<string>();
-  const [evaluation, setEvaluation] = useState<string>();
+  const [submission, setSubmission] = useState<string | undefined>(initialSubmissionId ?? undefined);
+  const [evaluation, setEvaluation] = useState<string | undefined>(initialEvaluationId ?? undefined);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setSubmission(undefined); setEvaluation(undefined); }, [id]);
+  useEffect(() => { setSubmission(initialSubmissionId ?? undefined); setEvaluation(initialEvaluationId ?? undefined); }, [id, initialSubmissionId, initialEvaluationId]);
   useEffect(() => {
     let active = true;
     setReview(null); setError('');
@@ -36,8 +38,10 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
     try {
       const value = await purgeVerification(id);
       setSubmission(undefined); setEvaluation(undefined);
-      setReview(await getVerificationReview(id));
+      setReview(null);
+      onSelectionChange?.(null, null);
       onPurged?.(value);
+      setReview(await getVerificationReview(id));
     } catch (reason) { setError(reason instanceof Error ? reason.message : '删除未完成'); }
     finally { setBusy(false); }
   }
@@ -47,10 +51,10 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
     {!review && !error && <p role="status">正在读取保存的验证…</p>}
     {review && <>
       <p className="form-hint">题目、已提交作答和评估自动保存。继续讨论不会改写原验证结果。</p>
-      {review.submissions.length > 0 && <label className="field"><span>查看哪次作答</span><select value={review.selected_submission_id ?? ''} onChange={event => { setEvaluation(undefined); setSubmission(event.target.value); }}>
+      {review.submissions.length > 0 && <label className="field"><span>查看哪次作答</span><select value={review.selected_submission_id ?? ''} onChange={event => { setEvaluation(undefined); setSubmission(event.target.value); onSelectionChange?.(event.target.value, null); }}>
         {review.submissions.map((s, i) => <option key={s.id} value={s.id}>第 {review.submissions.length - i} 次 · {new Date(s.created_at).toLocaleString()}{s.purged_at ? ' · 内容已删除' : ''}</option>)}
       </select></label>}
-      {review.evaluations.length > 1 && <label className="field"><span>查看哪次评估</span><select value={review.selected_evaluation_id ?? ''} onChange={event => setEvaluation(event.target.value)}>
+      {review.evaluations.length > 1 && <label className="field"><span>查看哪次评估</span><select value={review.selected_evaluation_id ?? ''} onChange={event => { setEvaluation(event.target.value); onSelectionChange?.(review.selected_submission_id, event.target.value); }}>
         {review.evaluations.map((e, i) => <option key={e.id} value={e.id}>第 {review.evaluations.length - i} 次评估 · {e.status === 'succeeded' ? '已完成' : e.status === 'running' ? '处理中' : '未完成'}</option>)}
       </select></label>}
       {!review.content ? <p>{review.verification.content_purged || review.submissions.find(s => s.id === review.selected_submission_id)?.purged_at ? '本次作答内容已彻底删除。完成事实仍保留。' : '尚未保存作答。'}</p> : <>

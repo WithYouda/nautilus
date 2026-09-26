@@ -57,7 +57,10 @@ class LearningRecords:
 
     def list(self, identity):
         owner = self.learning.principal(identity).owner_id
-        return [dict(r) for r in self.db.fetchall('''SELECT d.id, d.status, d.action_id, a.title,
+        return self.list_owned(owner)
+
+    def list_owned(self, owner):
+        return [dict(r) for r in self.db.fetchall('''SELECT d.id, d.status, d.action_id, d.outcome_id, a.title,
             COALESCE(g.title,'') AS goal_title, COALESCE(p.title,'') AS plan_title, d.created_at,
             (SELECT id FROM learning_session s WHERE s.owner_id=d.owner_id AND s.delegation_id=d.id ORDER BY s.rowid DESC LIMIT 1) AS session_id,
             (SELECT COUNT(*) FROM learning_verification v WHERE v.owner_id=d.owner_id AND v.delegation_id=d.id) AS verification_count

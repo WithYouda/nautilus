@@ -1958,8 +1958,18 @@ export type QuestionDiscussion = {
   provider_protocol?: AiApiProtocol | null;
   turns: Array<{ search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
-export type LearningRecord = { id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
+export type LearningRecord = { id: string; outcome_id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
+export type OutcomeReview = {
+  outcome: { id: string; object_description: string; behavior: string; context_key: string };
+  records: LearningRecord[];
+  standards: Array<{ id: string; title: string; version: number; review_status: string; availability: string | null; dimensions: Array<{ id: string; label: string; state: LearningDerivedState | null }> }>;
+  attempts: Array<{ verification_id: string; submission_id: string | null; evaluation_id: string | null; delegation_id: string; action_title: string; mode: string; created_at: string; criterion_id: string | null; standard_version: number | null; contract_version: number | null; evaluation_status: string | null; condition: string | null; condition_basis: 'submission_record' | null; feedback: string | null; passed: boolean | null; available: boolean; unavailable_reason: 'purged' | 'hidden' | 'not_submitted' | null; artifact_id: string | null }>;
+  artifacts: Array<{ artifact_id: string; content_version: number; created_at: string; delegation_id: string; action_title: string; criterion_id: string | null; visibility: string; evidence_status: string; available: boolean }>;
+  claims: Array<{ id: string; criterion_id: string; dimension_id: string; status: string; stance: string; source: string; verification_method: string; evidence_condition: string; condition_basis: string | null; statement: string | null; created_at: string; artifact_id: string; content_version: number; available: boolean; reviews: Array<{ id: string; action: string; reason: string | null; created_at: string }> }>;
+  follow_ups: Array<{ id: string; claim_id: string; kind: string; status: string; due_at: string | null; created_at: string; note: string | null }>;
+};
+export function getOutcomeReview(id: string): Promise<OutcomeReview> { return request(`/api/learning/outcomes/${id}/review`); }
 export function getVerificationReview(id: string, submissionId?: string, evaluationId?: string): Promise<VerificationReview> {
   const query = new URLSearchParams();
   if (submissionId) query.set('submission_id', submissionId);
