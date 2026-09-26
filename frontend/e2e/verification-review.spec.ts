@@ -26,16 +26,19 @@ test('saved answers → per-question discussion with local sources → completed
   await page.getByRole('button', { name: '进入学习室并开始这项任务' }).click();
   await expect(page.locator('.ai-message--assistant').first()).toBeVisible();
   const historyText = '合成历史：我想比较编号的边界情况\n\n' + '合成长段记录：比较空输入、不同前缀、字符边界以及多个编号的情况。'.repeat(16);
-  await page.getByRole('button', { name: '给个提示', exact: true }).click();
-  const teachingSent = page.waitForResponse(response => /\/api\/ai\/conversations\/[^/]+\/messages$/.test(response.url()) && response.request().method() === 'POST');
   await page.getByPlaceholder(/输入关于/).fill(historyText);
-  await page.getByRole('button', { name: '发送问题', exact: true }).click();
+  const teachingSent = page.waitForResponse(response => /\/api\/ai\/conversations\/[^/]+\/messages$/.test(response.url()) && response.request().method() === 'POST');
+  await page.getByRole('button', { name: '给个提示', exact: true }).click();
   const teachingResult = await (await teachingSent).json();
+  expect((await page.getByPlaceholder(/输入关于/).inputValue())).toBe(historyText);
+  expect((await teachingSent).request().postDataJSON()).toMatchObject({ content: '给个提示', help_request: 'hint' });
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: '发送问题', exact: true }).click();
   const teachingId = teachingResult.run.conversation_id;
   await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeHidden();
   await expect.poll(async () => {
     const detail = await (await page.request.get(`/api/ai/conversations/${teachingId}`)).json();
-    return detail.messages.at(-1)?.help_record;
+    return detail.messages.find((message: { id: string }) => message.id === teachingResult.run.response_message_id)?.help_record;
   }).toMatchObject({ request: { kind: 'hint' }, provided: { partial: false }, display: { basis: 'client_report' } });
   await page.getByRole('button', { name: '进入验证', exact: true }).click();
   await page.getByRole('button', { name: '开始验证', exact: true }).click();
@@ -84,11 +87,10 @@ test('saved answers → per-question discussion with local sources → completed
   const sendGate = new Promise<void>(resolve => { releaseSend = resolve; });
   await page.route('**/api/learning/discussions/*/messages', async route => { await sendGate; await route.continue(); });
   const input = discussion.getByLabel('继续提问或回答拓展问题');
-  await discussion.getByRole('button', { name: '换个例子', exact: true }).click();
   await input.fill('合成追问：我这样补充边界说明可以吗？');
-  await input.press('Enter');
-  await expect(discussion.locator('.ai-message--user')).toContainText('合成追问：我这样补充边界说明可以吗？');
-  await expect(input).toHaveValue('');
+  await discussion.getByRole('button', { name: '换个例子', exact: true }).click();
+  await expect(discussion.locator('.ai-message--user')).toContainText('换个例子');
+  await expect(input).toHaveValue('合成追问：我这样补充边界说明可以吗？');
   await expect(discussion.getByText('发送中', { exact: true })).toBeVisible();
   const userBubble = await discussion.locator('.ai-message--user').boundingBox();
   const messagePane = await discussion.locator('.ai-message-list').boundingBox();
@@ -144,7 +146,7 @@ test('saved answers → per-question discussion with local sources → completed
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
   await page.screenshot({ path: '/tmp/nautilus-message-edit-mobile.png', fullPage: true });
   await editForm.getByRole('button', { name: '取消', exact: true }).click();
-  await expect(originalQuestion).toContainText('合成追问：我这样补充边界说明可以吗？');
+  await expect(originalQuestion).toContainText('换个例子');
   await originalQuestion.getByRole('button', { name: '修改', exact: true }).click();
   await editInput.fill('合成修改追问：先单独检查空输入');
   await editInput.press('Enter');
@@ -153,10 +155,10 @@ test('saved answers → per-question discussion with local sources → completed
   await expect(input).toHaveValue('保留在底部的讨论草稿');
   await expect(originalQuestion.getByLabel('消息 2/2')).toBeVisible();
   await originalQuestion.getByRole('button', { name: '上一个消息' }).click();
-  await expect(originalQuestion).toContainText('合成追问：我这样补充边界说明可以吗？');
+  await expect(originalQuestion).toContainText('换个例子');
   await expect(originalQuestion.getByLabel('消息 1/2')).toBeVisible();
   await page.reload();
-  await expect(discussion.locator('.ai-message--user').first()).toContainText('合成追问：我这样补充边界说明可以吗？');
+  await expect(discussion.locator('.ai-message--user').first()).toContainText('换个例子');
   await expect(discussion.locator('.ai-message--user').first().getByLabel('消息 1/2')).toBeVisible();
   await input.fill('');
   await input.fill('合成追问：验证取消后重试。');
@@ -190,7 +192,7 @@ test('saved answers → per-question discussion with local sources → completed
   await discussion.getByRole('button', {name:'下一个回答',exact:true}).click();
   await expect(answer.last()).toHaveText('合成续学讲解：可以继续分析不同输入；此前的记录见[记录1]。');
   await page.reload();
-  await expect(discussion.getByText('合成追问：我这样补充边界说明可以吗？', { exact: true })).toBeVisible();
+  await expect(discussion.locator('.ai-message--user').first()).toBeVisible();
   await expect(thinking).toHaveCount(2);
   await expect(thinking.first().getByRole('button', { name: /已思考/ })).toHaveAttribute('aria-expanded', 'false');
   await thinking.first().getByRole('button', { name: /已思考/ }).click();
@@ -212,7 +214,7 @@ test('saved answers → per-question discussion with local sources → completed
     await page.screenshot({ path: `/tmp/nautilus-review-${viewport.width}.png`, fullPage: true });
   }
   await review.getByRole('button', { name: '打开题目讨论 1' }).click();
-  await expect(discussion.getByText('合成追问：我这样补充边界说明可以吗？', { exact: true })).toBeVisible();
+  await expect(discussion.locator('.ai-message--user').first()).toBeVisible();
   const composer = await discussion.locator('.ai-composer').boundingBox();
   expect(composer!.y + composer!.height).toBeLessThanOrEqual(1000);
   await page.screenshot({ path: '/tmp/nautilus-discussion-from-records.png', fullPage: true });

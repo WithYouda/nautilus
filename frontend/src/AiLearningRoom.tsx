@@ -8,7 +8,7 @@ import LearningMarkdown from "./LearningMarkdown";
 import SearchControls, { type SearchSelection } from "./SearchControls";
 import type { SearchTrace } from "./SearchResults";
 import AssistantResponse, { type GenerationTrace } from "./AssistantResponse";
-import HelpControls, { prefillHelpInstruction } from "./HelpControls";
+import HelpControls from "./HelpControls";
 import HelpRecord from "./HelpRecord";
 import {
   ApiError,
@@ -270,7 +270,6 @@ export default function AiLearningRoom({
   const [completionOpen, setCompletionOpen] = useState(false);
   useEffect(() => { setCompletionOpen(false); }, [learningBrief?.delegation_id]);
   const [draft, setDraft] = useState("");
-  const [helpRequest, setHelpRequest] = useState<HelpRequestKind | null>(null);
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [conversations, setConversations] = useState<AiConversation[]>([]);
@@ -722,7 +721,7 @@ export default function AiLearningRoom({
     await submitMessage(draft.trim());
   }
 
-  async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string): Promise<boolean> {
+  async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
     if (!entryReady || !content || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
     const unresolved = pendingSubmissionRef.current;
     if (unresolved && (pendingContentRef.current !== content || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
@@ -753,7 +752,7 @@ export default function AiLearningRoom({
       const clientMessageId = canReusePending ? savedPending!.clientMessageId : `${automatic ? LEARNING_PROMPT_ID_PREFIX : ""}${makeClientMessageId()}`;
       const parentMessageId = canReusePending ? savedPending!.parentMessageId : (!regenerateMessageId && !editMessageId ? replyHistory.leaf ?? undefined : undefined);
       const frozenSearch = canReusePending ? savedPending!.search ?? { mode: "off" as const } : automatic ? { mode: "off" as const } : structuredClone(searchSelection);
-      const frozenHelp = canReusePending ? savedPending!.helpRequest ?? null : regenerateMessageId ? detail?.messages.find(message => message.id === regenerateMessageId)?.help_record?.request?.kind ?? null : editMessageId || automatic ? null : helpRequest;
+      const frozenHelp = canReusePending ? savedPending!.helpRequest ?? null : requestedHelp !== undefined ? requestedHelp : regenerateMessageId ? detail?.messages.find(message => message.id === regenerateMessageId)?.help_record?.request?.kind ?? null : null;
       const pending: PendingSubmission = { search: frozenSearch, helpRequest: frozenHelp, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
@@ -764,7 +763,6 @@ export default function AiLearningRoom({
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
       pendingSubmissionRef.current = null;
       pendingContentRef.current = null;
-      setHelpRequest(null);
       const localTitle = fallbackConversationTitle(content);
       setDetail((previous) => {
         const current = previous ?? conversation;
@@ -863,7 +861,6 @@ export default function AiLearningRoom({
     setTitleBusy(false);
     setError("");
     setDraft("");
-    setHelpRequest(null);
     setStatus("idle");
     persistSession({ conversationId: null, runId: null, draftConfig: null });
   }
@@ -881,7 +878,6 @@ export default function AiLearningRoom({
     setOpenLayer(null);
     setError("");
     setDraft("");
-    setHelpRequest(null);
     setStatus("loading");
     try {
       await activateConversation(id);
@@ -1142,13 +1138,14 @@ export default function AiLearningRoom({
 
       <LearningChatPanel title={conversationTitle} autoFollow={!editingMessageId && (replyHistory.following || status === "submitting")} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
           {error && <div className="ai-room-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div>}
-          {status === "failed" && !editingMessageId && !pendingSubmissionRef.current?.editMessageId && detail?.messages.some((message) => message.role === "user") && (
+          {status === "failed" && pendingSubmissionRef.current?.helpRequest && pendingContentRef.current && <button className="button button--quiet ai-retry-button button--with-icon" type="button" onClick={() => void submitMessage(pendingContentRef.current!, true, undefined, undefined, pendingSubmissionRef.current!.helpRequest)}><RefreshCw size={15} />重试发送帮助请求</button>}
+          {status === "failed" && !pendingSubmissionRef.current && !editingMessageId && detail?.messages.some((message) => message.role === "user") && (
             <button className="button button--quiet ai-retry-button button--with-icon" onClick={() => void handleRetry()}><RefreshCw size={15} />重新生成</button>
           )}
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
-        value={draft} onChange={value => { setDraft(value); if (!value.trim()) setHelpRequest(null); }} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
+        value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => { setHelpRequest(kind); setDraft(value => prefillHelpInstruction(value, label)); composerRef.current?.focus(); }} />} tools={<SearchControls value={searchSelection} onChange={setSearchSelection} disabled={!canSend || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} />} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<SearchControls value={searchSelection} onChange={setSearchSelection} disabled={!canSend || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} />} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
               const versions = message.role === 'user'
