@@ -127,6 +127,60 @@ async def _request(method, url, *, common, transport=None, headers=None, body=No
         raise SearchError("无法连接搜索服务。", "service_failure") from None
 
 
+async def _bing_request(query, *, common, transport=None, headers=None):
+    """Bing's public page may redirect; keyed service requests must not follow it.
+
+    Keep cookies within this one request chain, and allow only known Bing HTTPS
+    hosts. The configured timeout covers the whole chain, not each redirect.
+    """
+    timeout = _timeout(common)
+    allowed_hosts = {"www.bing.com", "cn.bing.com", "bing.com"}
+    headers = dict(headers or {})
+    headers.pop("Cookie", None)
+    try:
+        async with asyncio.timeout(timeout):
+            async with httpx.AsyncClient(transport=transport, timeout=timeout, follow_redirects=False, trust_env=False) as client:
+                client.cookies.set("SRCHHPGUSR", "ULSR=1", domain=".bing.com", path="/")
+                target = httpx.URL("https://www.bing.com/search", params={"q": query})
+                for redirect_count in range(4):
+                    async with client.stream("GET", target, headers=headers) as response:
+                        if response.status_code in {301, 302, 303, 307, 308}:
+                            if redirect_count == 3:
+                                raise SearchError("Bing 搜索重定向次数过多。", "redirect_limit")
+                            location = response.headers.get("location")
+                            if not location:
+                                raise SearchError("Bing 搜索重定向缺少目标地址。", "invalid_redirect")
+                            try:
+                                redirected = target.join(location)
+                            except httpx.InvalidURL:
+                                raise SearchError("Bing 搜索重定向地址格式不正确。", "invalid_redirect") from None
+                            if (redirected.scheme != "https" or redirected.host not in allowed_hosts
+                                    or redirected.port not in {None, 443} or redirected.userinfo):
+                                raise SearchError("Bing 搜索重定向到了不受支持的地址。", "invalid_redirect")
+                            target = redirected
+                            continue
+                        if response.status_code == 429:
+                            raise SearchError("Bing 请求过于频繁（HTTP 429），请稍后重试。", "rate_limited")
+                        if response.status_code == 403:
+                            raise SearchError("Bing 拒绝了搜索请求（HTTP 403）。", "service_blocked")
+                        if not 200 <= response.status_code < 300:
+                            raise SearchError(f"Bing 搜索请求失败（HTTP {response.status_code}）。", "service_failure")
+                        content = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            content.extend(chunk)
+                            if len(content) > MAX_RESPONSE_BYTES:
+                                raise SearchError("搜索服务返回的数据超过大小限制。", "response_too_large")
+                        return bytes(content)
+    except SearchError:
+        raise
+    except (TimeoutError, httpx.TimeoutException):
+        raise SearchError("Bing 搜索请求超时，请稍后重试。", "timeout") from None
+    except httpx.ConnectError:
+        raise SearchError("无法建立到 Bing 的连接，请检查服务端网络。", "connection_failure") from None
+    except (httpx.HTTPError, ValueError, UnicodeError):
+        raise SearchError("Bing 搜索响应传输失败。", "service_failure") from None
+
+
 async def _json(method, url, *, common, transport=None, headers=None, body=None, params=None):
     raw = await _request(method, url, common=common, transport=transport, headers=headers, body=body, params=params)
     try:
@@ -302,8 +356,7 @@ async def search(kind: str, params: dict, common: dict, options: dict, *, transp
         }
         if language:
             bing_headers["Accept-Language"] = language
-        raw = await _request("GET", "https://www.bing.com/search", common=common, transport=transport,
-                             params={"q": query}, headers=bing_headers)
+        raw = await _bing_request(query, common=common, transport=transport, headers=bing_headers)
         parser = _BingParser()
         parser.feed(raw.decode("utf-8", "replace"))
         for item in parser.items:

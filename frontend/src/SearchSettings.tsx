@@ -6,7 +6,15 @@ import { getSearchCatalog, getSearchSettings, putSearchSettings, testSearchServi
 
 const initial: SearchSettingsDraft = { revision: 0, services: [], selected_service_id: null, result_size: 10, timeout_seconds: 30, max_requests: 1 };
 const limitFields = [{ key: 'result_size', label: '结果数', min: 1, max: 50 }, { key: 'timeout_seconds', label: '超时秒数', min: 5, max: 120 }, { key: 'max_requests', label: '每轮外部检索次数', min: 1, max: 5 }] as const;
-const fresh = (item: SearchCatalogItem): SearchServiceDraft => ({ id: crypto.randomUUID(), kind: item.kind, name: item.label, options: Object.fromEntries(item.fields.filter(field => field.type !== 'secret').map(field => [field.key, field.default ?? (field.type === 'boolean' ? false : '')])), has_secrets: {}, masked_secrets: {}, secret_updates: {} });
+function newServiceId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+const fresh = (item: SearchCatalogItem): SearchServiceDraft => ({ id: newServiceId(), kind: item.kind, name: item.label, options: Object.fromEntries(item.fields.filter(field => field.type !== 'secret').map(field => [field.key, field.default ?? (field.type === 'boolean' ? false : '')])), has_secrets: {}, masked_secrets: {}, secret_updates: {} });
 export default function SearchSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [catalog, setCatalog] = useState<SearchCatalogItem[]>([]);
   const [draft, setDraft] = useState<SearchSettingsDraft>(initial);

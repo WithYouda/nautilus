@@ -1,3 +1,4 @@
+import asyncio
 import json
 import base64
 from urllib.parse import quote
@@ -144,6 +145,102 @@ async def test_bing_rejects_invalid_language_before_outbound(language):
         await search("bing", {"query": "example"}, {}, {"language": language},
                      transport=httpx.MockTransport(lambda request: pytest.fail("unexpected request")))
     assert caught.value.kind == "invalid_config"
+
+
+@pytest.mark.asyncio
+async def test_bing_follows_scoped_redirects_and_keeps_response_cookies():
+    requests = []
+    query = "合成查询 multiple words"
+
+    def handler(request):
+        requests.append(request)
+        if len(requests) == 1:
+            assert request.url.params['q'] == query
+            return httpx.Response(302, headers={
+                'Location': '/search?stage=2&q=' + quote(query),
+                'Set-Cookie': 'synthetic_bing_session=synthetic; Path=/; Secure',
+            })
+        if len(requests) == 2:
+            assert request.url.params['q'] == query
+            assert 'synthetic_bing_session=synthetic' in request.headers['Cookie']
+            return httpx.Response(301, headers={'Location': 'https://cn.bing.com/search?q=' + quote(query)})
+        assert request.url.host == 'cn.bing.com'
+        assert request.url.params['q'] == query
+        assert 'synthetic_bing_session' not in request.headers.get('Cookie', '')
+        return httpx.Response(200, text='<li class="b_algo"><h2><a href="https://example.com/a">Relevant</a></h2><p>Summary</p></li>')
+
+    result = await search('bing', {'query': query}, {}, {}, transport=httpx.MockTransport(handler))
+    assert len(requests) == 3
+    assert result['items'][0]['title'] == 'Relevant'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('location', ['http://www.bing.com/search', 'https://other.example/search',
+                                     'https://127.0.0.1/search', 'https://www.bing.com:444/search',
+                                     'https://user:password@www.bing.com/search'])
+async def test_bing_rejects_unscoped_redirect_before_second_request(location):
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(302, headers={'Location': location})
+    with pytest.raises(SearchError) as caught:
+        await search('bing', {'query': 'example'}, {}, {}, transport=httpx.MockTransport(handler))
+    assert caught.value.kind == 'invalid_redirect'
+    assert len(requests) == 1
+    assert location not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_bing_redirect_chain_is_bounded():
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(302, headers={'Location': '/search?q=example'})
+    with pytest.raises(SearchError) as caught:
+        await search('bing', {'query': 'example'}, {}, {}, transport=httpx.MockTransport(handler))
+    assert caught.value.kind == 'redirect_limit'
+    assert len(requests) == 4
+
+
+@pytest.mark.asyncio
+async def test_bing_timeout_covers_whole_redirect_chain():
+    async def handler(request):
+        await asyncio.sleep(.02)
+        return httpx.Response(302, headers={'Location': '/search?q=example'})
+    with pytest.raises(SearchError) as caught:
+        await search('bing', {'query': 'example'}, {'timeout_seconds': .035}, {}, transport=httpx.MockTransport(handler))
+    assert caught.value.kind == 'timeout'
+
+
+@pytest.mark.asyncio
+async def test_bing_response_size_remains_bounded():
+    with pytest.raises(SearchError) as caught:
+        await search('bing', {'query': 'example'}, {}, {},
+                     transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b'x' * (2 * 1024 * 1024 + 1))))
+    assert caught.value.kind == 'response_too_large'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status,kind', [(403, 'service_blocked'), (429, 'rate_limited'), (500, 'service_failure')])
+async def test_bing_http_errors_are_distinguishable_without_echoing_body(status, kind):
+    with pytest.raises(SearchError) as caught:
+        await search('bing', {'query': 'private-query'}, {}, {},
+                     transport=httpx.MockTransport(lambda r: httpx.Response(status, text='private-response')))
+    assert caught.value.kind == kind
+    assert str(status) in str(caught.value)
+    assert 'private' not in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('error,kind', [(httpx.ConnectError('private detail'), 'connection_failure'),
+                                     (httpx.ReadTimeout('private detail'), 'timeout')])
+async def test_bing_network_errors_are_distinguishable_without_echoing_details(error, kind):
+    def handler(request):
+        raise error
+    with pytest.raises(SearchError) as caught:
+        await search('bing', {'query': 'example'}, {}, {}, transport=httpx.MockTransport(handler))
+    assert caught.value.kind == kind
+    assert 'private' not in str(caught.value)
 
 
 @pytest.mark.asyncio

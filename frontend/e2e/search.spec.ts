@@ -42,6 +42,42 @@ test.beforeEach(async ({ page }) => {
   for (const conversation of conversations) expect((await page.request.delete(`/api/ai/conversations/${conversation.id}`)).ok()).toBeTruthy();
 });
 
+test('can add services after deleting all settings when randomUUID is unavailable', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.crypto, 'randomUUID', { value: undefined, configurable: true });
+  });
+  await page.reload();
+  expect(await page.evaluate(() => typeof crypto.randomUUID)).toBe('undefined');
+  expect(await page.evaluate(() => typeof crypto.getRandomValues)).toBe('function');
+
+  let dialog = await settings(page);
+  while (await dialog.locator('.search-service-row').count()) {
+    await dialog.locator('.search-service-row').first().locator('.search-service-select').click();
+    await dialog.getByRole('button', { name: '删除实例' }).click();
+  }
+  await dialog.getByRole('button', { name: '保存设置' }).click();
+  expect((await (await page.request.get('/api/search/settings')).json()).services).toHaveLength(0);
+
+  dialog = await settings(page);
+  await dialog.getByLabel('新增服务类型').selectOption('bing');
+  await dialog.getByRole('button', { name: '新增' }).click();
+  await expect(dialog.locator('.search-service-row')).toHaveCount(1);
+  await dialog.getByRole('button', { name: '保存设置' }).click();
+  const first = await (await page.request.get('/api/search/settings')).json();
+  expect(first.services).toHaveLength(1);
+  expect(first.services[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+
+  await page.reload();
+  dialog = await settings(page);
+  await dialog.getByLabel('新增服务类型').selectOption('bing');
+  await dialog.getByRole('button', { name: '新增' }).click();
+  await expect(dialog.locator('.search-service-row')).toHaveCount(2);
+  await dialog.getByRole('button', { name: '保存设置' }).click();
+  const second = await (await page.request.get('/api/search/settings')).json();
+  expect(second.services).toHaveLength(2);
+  expect(new Set(second.services.map((service: { id: string }) => service.id)).size).toBe(2);
+});
+
 test('all 19 catalog services expose their fields and save without echoing secrets', async ({ page }) => {
   test.setTimeout(60_000);
   const catalog = await (await page.request.get('/api/search/catalog')).json() as Array<{kind:string; label:string; fields:Array<{key:string;label:string;type:string;required?:boolean}>}>;
