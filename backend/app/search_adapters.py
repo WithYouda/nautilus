@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 import ipaddress
 import json
+import re
 import socket
 from urllib.parse import parse_qs, urlsplit
 
@@ -265,6 +266,16 @@ def _bing_target(link):
         return link
 
 
+def _bing_language(options):
+    language = options.get("language", "zh-CN")
+    if not isinstance(language, str) or len(language) > 35 or (language and not re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", language)):
+        raise SearchError("Bing 首选语言格式不正确。", "invalid_config")
+    if not language:
+        return None
+    primary = language.split("-", 1)[0]
+    return language if language.lower() == primary.lower() else f"{language},{primary};q=0.9"
+
+
 async def search(kind: str, params: dict, common: dict, options: dict, *, transport: httpx.AsyncBaseTransport | None = None) -> dict:
     if kind not in KINDS:
         raise SearchError("不支持该搜索服务。", "unknown_service")
@@ -281,8 +292,18 @@ async def search(kind: str, params: dict, common: dict, options: dict, *, transp
     url = ""
     request_params = None
     if kind == "bing":
+        language = _bing_language(options)
+        bing_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Charset": "utf-8",
+            "Referer": "https://www.bing.com/",
+            "Cookie": "SRCHHPGUSR=ULSR=1",
+        }
+        if language:
+            bing_headers["Accept-Language"] = language
         raw = await _request("GET", "https://www.bing.com/search", common=common, transport=transport,
-                             params={"q": query}, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"})
+                             params={"q": query}, headers=bing_headers)
         parser = _BingParser()
         parser.feed(raw.decode("utf-8", "replace"))
         for item in parser.items:

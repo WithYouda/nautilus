@@ -116,6 +116,37 @@ async def test_bing_empty_or_blocked_page_is_not_search_success():
 
 
 @pytest.mark.asyncio
+async def test_bing_preserves_full_query_and_sets_language_preference():
+    query = "今日 中国 科技新闻 TOP companies"
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, text='<li class="b_algo"><h2><a href="https://example.com/a">A</a></h2><p>Snippet</p></li>')
+
+    for options, expected in (({}, "zh-CN,zh;q=0.9"), ({"language": "en-US"}, "en-US,en;q=0.9"), ({"language": ""}, None)):
+        await search("bing", {"query": query}, {}, options, transport=httpx.MockTransport(handler))
+        request = seen[-1]
+        assert request.url.params["q"] == query
+        assert dict(request.url.params) == {"q": query}
+        assert request.headers.get("Accept-Language") == expected
+        assert "Windows NT 10.0" in request.headers["User-Agent"]
+        assert "text/html" in request.headers["Accept"]
+        assert request.headers["Accept-Charset"] == "utf-8"
+        assert request.headers["Referer"] == "https://www.bing.com/"
+        assert request.headers["Cookie"] == "SRCHHPGUSR=ULSR=1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["zh-CN\r\nX-Injected: yes", "zh_CN", "a" * 36, "-zh", 7, None])
+async def test_bing_rejects_invalid_language_before_outbound(language):
+    with pytest.raises(SearchError) as caught:
+        await search("bing", {"query": "example"}, {}, {"language": language},
+                     transport=httpx.MockTransport(lambda request: pytest.fail("unexpected request")))
+    assert caught.value.kind == "invalid_config"
+
+
+@pytest.mark.asyncio
 async def test_bing_decodes_safe_target_and_keeps_redirect_for_dangerous_targets():
     def redirect(target):
         encoded = base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")

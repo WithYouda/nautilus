@@ -39,6 +39,8 @@ def make_service(row, index):
             options[key] = 17
         elif key in {"url", "search_url", "scrape_url", "custom_url"}:
             options[key] = f"https://example.com/{index}/{key}"
+        elif row["kind"] == "bing" and key == "language":
+            options[key] = "en-US"
         else:
             options[key] = f"test-{index}-{key}"
     return {"id": f"service_{index}", "kind": row["kind"], "name": f"Configured {row['label']}",
@@ -54,6 +56,8 @@ def test_catalog_all_19_service_fields_save_read_and_encrypt(client):
     assert len(rows) == 19
     assert all(row["search_parameters"]["required"] == ["query"] for row in rows)
     assert all(all(field["type"] == "secret" for field in row["fields"] if field["key"] in {"api_key", "password"}) for row in rows)
+    bing_language = next(field for field in rows[0]["fields"] if field["key"] == "language")
+    assert bing_language["default"] == "zh-CN"
 
     initial = client.get("/api/search/settings").json()
     services_and_secrets = [make_service(row, index) for index, row in enumerate(rows)]
@@ -82,6 +86,36 @@ def test_catalog_all_19_service_fields_save_read_and_encrypt(client):
     identity_id = client.app.state.auth.ensure_local_identity()["id"]
     decrypted = json.loads(store.get(f"search-settings:{identity_id}"))
     assert decrypted["services"][1]["secrets"]["api_key"].startswith(FAKE_SECRET)
+
+
+def test_bing_language_setting_and_legacy_default(client):
+    authorize(client)
+    initial = client.get("/api/search/settings").json()
+    assert initial["services"][0]["options"]["language"] == "zh-CN"
+    bing = {"id": "bing_language", "kind": "bing", "options": {"language": "ja-JP"}}
+    saved = client.put("/api/search/settings", json=payload(initial, [bing], bing["id"]))
+    assert saved.status_code == 200
+    assert saved.json()["services"][0]["options"]["language"] == "ja-JP"
+    assert client.get("/api/search/settings").json()["services"][0]["options"]["language"] == "ja-JP"
+
+    owner = client.app.state.auth.ensure_local_identity()["id"]
+    legacy = client.app.state.search._read(owner)
+    legacy["services"][0]["options"] = {}
+    client.app.state.credentials.set(f"search-settings:{owner}", json.dumps(legacy, ensure_ascii=False))
+    hydrated = client.get("/api/search/settings").json()
+    assert hydrated["services"][0]["options"]["language"] == "zh-CN"
+    assert hydrated["revision"] == saved.json()["revision"]
+    assert client.app.state.search._read(owner)["services"][0]["options"] == {}
+
+    blank = {**bing, "options": {"language": ""}}
+    updated = client.put("/api/search/settings", json=payload(hydrated, [blank], bing["id"]))
+    assert updated.status_code == 200
+    assert client.get("/api/search/settings").json()["services"][0]["options"]["language"] == ""
+
+    malformed = {**bing, "options": {"language": "zh-CN\r\nX-Injected: yes"}}
+    rejected = client.put("/api/search/settings", json=payload(updated.json(), [malformed], bing["id"]))
+    assert rejected.status_code == 400
+    assert client.get("/api/search/settings").json() == updated.json()
 
 
 def test_secret_keep_clear_and_api_errors_never_echo_content(client):

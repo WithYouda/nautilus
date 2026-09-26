@@ -24,7 +24,7 @@ DEPTH = lambda default, values: choice("depth", "搜索深度", default, [(v, DE
 AGE = {"type": "integer", "title": "内容缓存时效（小时）", "description": "可选；-1 表示由服务决定，最多 720 小时。", "minimum": -1, "maximum": 720}
 
 SEARCH_CATALOG: list[dict] = [
-    entry("bing", "Bing", "https://www.bing.com/", "通过 Bing 公开搜索页面获取结果；页面结构变化时可能无法使用。"),
+    entry("bing", "Bing", "https://www.bing.com/", "通过 Bing 公开搜索页面获取结果，不使用官方搜索 API；地区、反机器人策略及页面结构变化可能影响结果。", fields=[field("language", "首选语言", default="zh-CN", description="例如 zh-CN、en-US、ja-JP；表示语言偏好，不保证所有结果使用该语言。")]),
     entry("rikkahub", "RikkaHub", "https://rikka-ai.com/", "通过 RikkaHub 服务获取带来源的回答。", fields=[KEY(), DEPTH("standard", ["standard", "deep"])]),
     entry("zhipu", "智谱", "https://bigmodel.cn/", "通过智谱接口搜索网页。", fields=[KEY()]),
     entry("doubao", "豆包", "https://www.volcengine.com/", "通过豆包搜索接口获取网页结果。", fields=[KEY(), choice("mode", "搜索模式", "custom", [("custom", "定制搜索"), ("global", "全网搜索")])]),

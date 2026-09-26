@@ -10,7 +10,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from .credentials import CredentialStore, mask_secret
-from .search_adapters import SearchError, search, scrape
+from .search_adapters import SearchError, _bing_language, search, scrape
 from .search_catalog import SEARCH_CATALOG
 
 
@@ -82,6 +82,8 @@ class SearchService:
     def _public(self, settings):
         value = copy.deepcopy(settings)
         for service in value["services"]:
+            if service.get("kind") == "bing" and isinstance(service.get("options"), dict):
+                service["options"].setdefault("language", "zh-CN")
             secrets = service.pop("secrets", {})
             service["has_secrets"] = {key: bool(secret) for key, secret in secrets.items()}
             service["masked_secrets"] = {key: mask_secret(secret) for key, secret in secrets.items()}
@@ -130,6 +132,8 @@ class SearchService:
                 if field.get("options") and value not in {option["value"] for option in field["options"]}:
                     raise SearchError("搜索选项不支持", "invalid_settings")
             options[key] = value
+        if catalog["kind"] == "bing":
+            _bing_language(options)
         secrets = copy.deepcopy(existing.get("secrets", {})) if existing else {}
         for key, value in updates.items():
             if value is None:
