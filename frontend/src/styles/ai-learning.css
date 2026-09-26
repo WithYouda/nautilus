@@ -250,3 +250,11 @@
   .ai-message--editing { width: 100%; max-width: 100%; }
   .ai-user-actions .icon-button { width: 36px; height: 36px; }
 }
+.help-controls { display: flex; flex-wrap: wrap; gap: .35rem; }
+.help-controls .button { font-size: .8rem; }
+.help-record { margin-top: .5rem; font-size: .8rem; color: var(--text-muted, #686868); }
+.help-record summary { cursor: pointer; }
+.help-record p { margin: .3rem 0; }
+
+.ai-composer-suggestions { grid-column: 1 / -1; grid-row: 1; min-width: 0; }
+.ai-composer--suggestions textarea, .ai-composer--suggestions .ai-composer-actions { grid-row: 2; }

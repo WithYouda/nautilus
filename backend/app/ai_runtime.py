@@ -95,6 +95,7 @@ class AiRunManager:
         parent_message_id: str | None = None,
         edit_message_id: str | None = None,
         search: dict | None = None,
+        help_request: str | None = None,
     ) -> dict[str, Any]:
         prepared = self.conversations.prepare_run(
             identity_id,
@@ -102,6 +103,7 @@ class AiRunManager:
             content=content,
             client_message_id=client_message_id,
             search=search,
+            help_request=help_request,
             **({"regenerate_message_id": regenerate_message_id,
                 "parent_message_id": parent_message_id,
                 "edit_message_id": edit_message_id}
@@ -126,6 +128,10 @@ class AiRunManager:
                 prepared["history"], prepared["context"],
                 search_enabled=bool(prepared.get("search_run") and prepared["search_run"].selection["mode"] != "off"),
             )
+            from .help_records import HELP_PROMPTS
+            help_kind = json.loads(run.get("config_snapshot_json") or "{}").get("help_request", {}).get("kind")
+            if help_kind in HELP_PROMPTS:
+                messages[0] = {**messages[0], "content": messages[0]["content"] + "\n" + HELP_PROMPTS[help_kind]}
             state.task = asyncio.create_task(
                 self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"))
             )

@@ -15,6 +15,7 @@ from ..schemas import (
     ConversationUpdateRequest,
     ModelManualRequest,
     MessageSendRequest,
+    HelpDisplayRequest,
     ProviderModelsRequest,
     ProviderCreateRequest,
     ProviderSaveRequest,
@@ -534,6 +535,7 @@ async def send_message(
             parent_message_id=payload.parent_message_id,
             edit_message_id=payload.edit_message_id,
             search=payload.search,
+            help_request=payload.help_request,
         )
     except ConversationError as error:
         _raise(error)
@@ -543,6 +545,20 @@ async def send_message(
         "created": started["created"],
         "messages": service.list_messages(identity["id"], conversation_id),
     }
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/help-display")
+def record_help_display(
+    conversation_id: str,
+    message_id: str,
+    payload: HelpDisplayRequest,
+    request: Request,
+    identity: dict[str, Any] = Depends(current_identity),
+) -> dict[str, Any]:
+    try:
+        return conversation_service(request).record_help_display(identity["id"], conversation_id, message_id, payload.characters)
+    except ConversationError as error:
+        _raise(error)
 
 
 @router.get("/runs/{run_id}/stream")

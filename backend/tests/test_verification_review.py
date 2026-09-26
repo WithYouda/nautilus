@@ -287,7 +287,11 @@ async def test_027_upgrade_preserves_answers_and_enables_discussions_only_after_
     migrations = Path(__file__).resolve().parents[1] / 'app' / 'migrations'
     old = Database(path, migrations, migration_floor=11, migration_ceiling=27)
     verification_service(old, []).learning.principal(IDENTITY)
-    service, current = await attempt(old)
+    # Seed the pre-discussion fixture with its historical lack of help capture;
+    # current runtime correctly requires the current schema.
+    from unittest.mock import patch
+    with patch('app.verification_help.submission_help_context', return_value={'records': []}):
+        service, current = await attempt(old)
     old.close()
     with pytest.raises(DatabaseSchemaError, match='028_verification_discussions'):
         open_learning_database(path, migrate=False)

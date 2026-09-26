@@ -13,6 +13,7 @@ from .verification import _clean_json
 from .search_adapters import SearchError
 from .search_runtime import external_stream, apply_native_event
 from .generation_trace import GenerationRecorder, interrupt_trace
+from .help_records import HELP_PROMPTS, public_help, record_display
 
 
 class QuestionDiscussionService:
@@ -150,7 +151,7 @@ class QuestionDiscussionService:
     def _get(self, identity, owner, discussion_id, connection):
         discussion = self._owned(owner, discussion_id)
         source = None if discussion['purged_at'] else self._source(identity, discussion, connection)
-        turns = [dict(r) for r in self.db.fetchall('''SELECT id, request_key, user_content, assistant_content, reasoning_content, status, reason, sources_json, provider_snapshot_json, created_at
+        turns = [dict(r) for r in self.db.fetchall('''SELECT id, request_key, user_content, assistant_content, reasoning_content, status, reason, sources_json, provider_snapshot_json, created_at, finished_at
             FROM learning_discussion_turn WHERE discussion_id=? ORDER BY rowid''', (discussion_id,))]
         previous = None
         for turn in turns:
@@ -163,7 +164,11 @@ class QuestionDiscussionService:
             protocol = config.provider_kind
         except (ConversationError, DomainError):
             protocol = None
+        evaluation = connection.execute("SELECT provider_snapshot_json FROM learning_verification_evaluation WHERE owner_id=? AND id=?",
+            (owner, discussion['evaluation_id'])).fetchone() if discussion['evaluation_id'] else None
+        evaluation_snapshot = json.loads(evaluation[0] or '{}') if evaluation else {}
         return dict(id=discussion_id, verification_id=discussion['verification_id'], submission_id=discussion['submission_id'],
+                    evaluation_id=discussion['evaluation_id'], help_displays={} if discussion['purged_at'] else evaluation_snapshot.get('help_displays') or {},
                     question_id=discussion['question_id'], purged=bool(discussion['purged_at']), source=source, turns=turns, provider_protocol=protocol)
 
     def _public_turn(self, owner, delegation_id, turn):
@@ -176,12 +181,33 @@ class QuestionDiscussionService:
         turn['question_id'] = reply.get('question_id', turn['id'])
         turn['question_version_id'] = reply.get('question_version_id', turn['question_id'])
         turn['parent_turn_id'] = reply.get('parent_turn_id', turn.get('parent_turn_id'))
+        turn['help_record'] = public_help(snapshot, turn.get('assistant_content'), turn['status'], turn.get('finished_at'))
         turn['sources'] = [{**source, **(self._resolve(owner, delegation_id, source) or {'excerpt': '来源已不可用'})}
                            for source in json.loads(turn.pop('sources_json'))]
         return turn
 
+    def record_help_display(self, identity, discussion_id, turn_id, characters):
+        owner = self.learning.principal(identity).owner_id
+        discussion = self._owned(owner, discussion_id)
+        with self.db.transaction(immediate=True) as c:
+            if discussion['purged_at'] or c.execute('SELECT purged_at FROM learning_question_discussion WHERE id=?', (discussion_id,)).fetchone()[0]:
+                raise DomainError('artifact_not_eligible', 409)
+            row = c.execute('''SELECT assistant_content,status,finished_at,provider_snapshot_json
+                FROM learning_discussion_turn WHERE discussion_id=? AND id=?''', (discussion_id, turn_id)).fetchone()
+            if row is None:
+                raise DomainError('not_found', 404)
+            if row['status'] == 'purged' or not row['assistant_content'] or not row['assistant_content'].strip():
+                raise DomainError('artifact_not_eligible', 409)
+            if characters < 1 or characters > len(row['assistant_content']):
+                raise DomainError('verification_scope_invalid', 422)
+            snapshot = json.loads(row['provider_snapshot_json'] or '{}')
+            if record_display(snapshot, characters, utc_timestamp()):
+                c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
+                    (json.dumps(snapshot, ensure_ascii=False), turn_id))
+            return public_help(snapshot, row['assistant_content'], row['status'], row['finished_at'])
+
     def start(self, identity, discussion_id, content, request_key, retry=False,
-              regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None):
+              regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None, help_request=None):
         if retry:
             raise DomainError('discussion_regeneration_required', 422)
         if edit_turn_id and (regenerate_turn_id or parent_turn_id):
@@ -191,6 +217,11 @@ class QuestionDiscussionService:
         owner = self.learning.principal(identity).owner_id
         discussion = self._owned(owner, discussion_id)
         source = self._source(identity, discussion)
+        if regenerate_turn_id and help_request is None:
+            original = self.db.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE discussion_id=? AND id=?',
+                (discussion_id, regenerate_turn_id))
+            if original:
+                help_request = (json.loads(original[0] or '{}').get('help_request') or {}).get('kind')
         attempt_id = str(uuid4())
         with self.db.transaction(immediate=True) as c:
             if c.execute('SELECT purged_at FROM learning_question_discussion WHERE id=?', (discussion_id,)).fetchone()[0]:
@@ -202,7 +233,8 @@ class QuestionDiscussionService:
                 if (turn['user_content'] != content or saved_reply.get('retry_of') != regenerate_turn_id
                         or saved_reply.get('requested_parent') != parent_turn_id
                         or saved_reply.get('edit_of') != edit_turn_id
-                        or saved_snapshot.get('search_request', {'mode': 'off'}) != (search or {'mode': 'off'})):
+                        or saved_snapshot.get('search_request', {'mode': 'off'}) != (search or {'mode': 'off'})
+                        or (saved_snapshot.get('help_request') or {}).get('kind') != help_request):
                     raise DomainError('idempotency_conflict', 409)
                 turn_id = None
             else:
@@ -242,7 +274,8 @@ class QuestionDiscussionService:
                 c.execute("""INSERT INTO learning_discussion_turn (id,discussion_id,request_key,user_content,status,created_at)
                     VALUES (?,?,?,?,'running',?)""", (turn_id, discussion_id, request_key, content, utc_timestamp()))
                 c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
-                          (json.dumps({'attempt_id': attempt_id, 'reply': reply, 'search_request': search or {'mode': 'off'}}), turn_id))
+                          (json.dumps({'attempt_id': attempt_id, 'reply': reply, 'search_request': search or {'mode': 'off'},
+                                       **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
         if turn_id:
             # Resolve the search instance immediately. The task receives a copy,
             # so changing/deleting settings cannot select another service midway.
@@ -418,6 +451,9 @@ class QuestionDiscussionService:
                         assistant['_model_turn'] = json.loads(previous['provider_snapshot_json']).get('model_turn')
                     messages.extend([{'role': 'user', 'content': previous['user_content']}, assistant])
                 messages.append({'role': 'user', 'content': content})
+                help_kind = snapshot.get('help_request', {}).get('kind')
+                if help_kind in HELP_PROMPTS:
+                    messages[0] = {**messages[0], 'content': messages[0]['content'] + '\n' + HELP_PROMPTS[help_kind]}
                 if search_run is not None and search_run.selection['mode'] == 'external':
                     stream = external_stream(self.chats.search_service, search_run, messages, provider, publish_search)
                 else:

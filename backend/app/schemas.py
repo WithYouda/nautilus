@@ -311,6 +311,7 @@ class ConversationUpdateRequest(BaseModel):
 
 class MessageSendRequest(BaseModel):
     search: dict[str, Any] | None = None
+    help_request: Literal["hint", "explain_step", "example", "try_first"] | None = None
     regenerate_message_id: str | None = Field(default=None, max_length=64)
     parent_message_id: str | None = Field(default=None, max_length=64)
     edit_message_id: str | None = Field(default=None, max_length=64)
@@ -324,6 +325,10 @@ class MessageSendRequest(BaseModel):
         if not content:
             raise ValueError("消息内容不能为空")
         return content
+
+
+class HelpDisplayRequest(BaseModel):
+    characters: int = Field(ge=1)
 
 
 class LearningActionCreateRequest(BaseModel):
@@ -628,6 +633,7 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 class QuestionDiscussionMessageRequest(BaseModel):
     search: dict[str, Any] | None = None
+    help_request: Literal["hint", "explain_step", "example", "try_first"] | None = None
     regenerate_turn_id: str | None = Field(default=None, max_length=64)
     parent_turn_id: str | None = Field(default=None, max_length=64)
     edit_turn_id: str | None = Field(default=None, max_length=64)

@@ -399,6 +399,11 @@ class VerificationService:
             if connection.execute("SELECT 1 FROM learning_verification_evaluation e JOIN learning_verification_submission s ON s.id=e.submission_id WHERE s.owner_id=? AND s.verification_id=? AND e.status='succeeded'", (principal.owner_id, verification_id)).fetchone():
                 submitted["evidence_condition"] = "with_materials"
             submission_id, now = str(uuid4()), _now()
+            from .verification_help import submission_help_context
+            submitted['help_context'] = submission_help_context(connection, principal.owner_id,
+                verification_id, payload.get('evidence_condition', 'with_materials'), now)
+            if submitted['help_context']['records']:
+                submitted['evidence_condition'] = 'with_materials'
             connection.execute(
                 """INSERT INTO learning_verification_submission
                    (id, owner_id, verification_id, request_key, request_fingerprint, content_json, created_at)
@@ -684,7 +689,7 @@ class VerificationService:
                 (now, principal.owner_id, verification_id),
             )
             connection.execute(
-                """UPDATE learning_verification_evaluation SET result_json=NULL, status=CASE WHEN status='running' THEN 'failed' ELSE status END,
+                """UPDATE learning_verification_evaluation SET result_json=NULL, provider_snapshot_json=NULL, status=CASE WHEN status='running' THEN 'failed' ELSE status END,
                    reason='content_purged', finished_at=COALESCE(finished_at, ?) WHERE owner_id=? AND submission_id IN
                    (SELECT id FROM learning_verification_submission WHERE owner_id=? AND verification_id=?)""",
                 (now, principal.owner_id, principal.owner_id, verification_id),

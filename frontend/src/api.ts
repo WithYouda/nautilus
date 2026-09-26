@@ -379,6 +379,13 @@ export type AiTitleRun = {
 };
 
 export type AiMessageStatus = "complete" | "streaming" | "failed" | "canceled";
+export type HelpRequestKind = 'hint' | 'explain_step' | 'example' | 'try_first';
+export type HelpRecord = {
+  request: { kind: HelpRequestKind; at: string } | null;
+  provided: { kind: 'reply_body'; characters: number; at: string | null; partial: boolean } | null;
+  display: { characters: number; at: string; basis: 'client_report' } | null;
+};
+export type ReferenceHelpDisplay = { kind: 'reference_answer'; at: string; basis: 'client_report' };
 
 export type AiMessage = {
   id: string;
@@ -396,6 +403,7 @@ export type AiMessage = {
   question_version_id?: string;
   search_trace?: SearchTrace | null;
   generation_trace?: GenerationTrace | null;
+  help_record?: HelpRecord | null;
 };
 
 export type AiRunStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
@@ -921,12 +929,16 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
-  versions: { edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection } = {},
+  versions: { edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
     body: JSON.stringify({ content, client_message_id: clientMessageId, ...versions }),
   });
+}
+
+export function recordAiHelpDisplay(conversationId: string, messageId: string, characters: number): Promise<HelpRecord> {
+  return request(`/api/ai/conversations/${conversationId}/messages/${messageId}/help-display`, { method: 'POST', body: JSON.stringify({ characters }) });
 }
 
 export function cancelAiRun(runId: string): Promise<{ run: AiRun }> {
@@ -1952,11 +1964,13 @@ export function chooseReturnReview(id: string, kind: 'review_card_shown' | 'cont
 }
 
 export type QuestionFeedback = { question_id: string; feedback: string; reference_answer: string; follow_up_questions: string[]; unmet_requirements: string[] };
+export type HelpContext = { captured_at: string; user_report: string; coverage: 'same_verification'; records: Array<{ kind: 'reference_answer' | 'discussion_reply'; evaluation_id?: string; question_id?: string; turn_id?: string; discussion_id?: string; provided_at?: string | null; displayed_at?: string | null; characters?: number; partial?: boolean }>; independence: 'not_inferred' };
 export type VerificationReview = {
   verification: LearningVerification;
   submissions: Array<{ id: string; created_at: string; purged_at: string | null }>;
   selected_submission_id: string | null;
-  content: { responses?: Record<string, string>; material?: string; learner_work?: string; evidence_condition?: string } | null;
+  content: { responses?: Record<string, string>; material?: string; learner_work?: string; evidence_condition?: string; help_context?: HelpContext } | null;
+  help_displays?: Record<string, ReferenceHelpDisplay>;
   evaluations: Array<{ id: string; status: string; reason: string | null; created_at: string; result: (NonNullable<LearningVerification['result']> & { question_feedback?: QuestionFeedback[] }) | null }>;
   selected_evaluation_id: string | null;
   result: (NonNullable<LearningVerification['result']> & { question_feedback?: QuestionFeedback[] }) | null;
@@ -1964,10 +1978,11 @@ export type VerificationReview = {
   purge_discussion_count: number;
 };
 export type QuestionDiscussion = {
-  id: string; verification_id: string; submission_id: string; question_id: string; purged: boolean;
+  id: string; verification_id: string; submission_id: string; evaluation_id?: string | null; question_id: string; purged: boolean;
+  help_displays?: Record<string, ReferenceHelpDisplay>;
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
   provider_protocol?: AiApiProtocol | null;
-  turns: Array<{ search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+  turns: Array<{ search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; outcome_id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
@@ -2005,8 +2020,14 @@ export function createQuestionDiscussion(id: string, submissionId: string, quest
   return request(`/api/learning/verifications/${id}/discussions`, { method: 'POST', body: JSON.stringify({ submission_id: submissionId, question_id: questionId, request_key: requestKey, evaluation_id: evaluationId }) });
 }
 export function getQuestionDiscussion(id: string): Promise<QuestionDiscussion> { return request(`/api/learning/discussions/${id}`); }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection } = {}): Promise<QuestionDiscussion> {
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null } = {}): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
+}
+export function recordDiscussionHelpDisplay(discussionId: string, turnId: string, characters: number): Promise<HelpRecord> {
+  return request(`/api/learning/discussions/${discussionId}/turns/${turnId}/help-display`, { method: 'POST', body: JSON.stringify({ characters }) });
+}
+export function recordReferenceHelpDisplay(verificationId: string, evaluationId: string, questionId: string): Promise<ReferenceHelpDisplay> {
+  return request(`/api/learning/verifications/${verificationId}/evaluations/${evaluationId}/questions/${questionId}/help-display`, { method: 'POST' });
 }
 
 

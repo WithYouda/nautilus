@@ -83,6 +83,9 @@ async def test_verification_versions_discussions_and_old_snapshot_are_scrubbed(l
     db = learning_database
     service, current = await attempt(db)
     first = current['latest_submission_id']
+    from app.verification_help import record_solution_display
+    evaluation_id = db.fetchone('SELECT id FROM learning_verification_evaluation WHERE submission_id=?', (first,))[0]
+    record_solution_display(service, IDENTITY, current['id'], evaluation_id, 'q1')
     await service.submit(IDENTITY, current['id'], dict(responses={'q1': 'SECOND_PRIVATE_SENTINEL'}, request_key='second', evidence_condition='independent'))
     with db.transaction() as conn:
         conn.execute('''INSERT INTO learning_question_discussion
@@ -97,6 +100,8 @@ async def test_verification_versions_discussions_and_old_snapshot_are_scrubbed(l
     assert result['purge']['status'] == 'complete', result['purge']
     for path in (db.database_path, backup):
         absent(path, '合成原始作答', 'SECOND_PRIVATE_SENTINEL', 'DISCUSSION_PRIVATE', 'ANSWER_PRIVATE', 'THINKING_PRIVATE', 'TOOL_PRIVATE')
+        with closing(sqlite3.connect(path)) as connection:
+            assert connection.execute('SELECT provider_snapshot_json FROM learning_verification_evaluation WHERE id=?', (evaluation_id,)).fetchone()[0] is None
     # Existing facts are retained; purge appends its own factual events.
     assert [tuple(row) for row in db.fetchall('SELECT * FROM learning_event')][:len(before_events)] == before_events
     service.learning.core.replay(OWNER)

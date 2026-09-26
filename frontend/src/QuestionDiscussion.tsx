@@ -7,29 +7,32 @@ import QuestionFeedbackContent from './QuestionFeedbackContent';
 import LearningMarkdown from './LearningMarkdown';
 import SearchControls, { type SearchSelection } from './SearchControls';
 import AssistantResponse from './AssistantResponse';
-import { ApiError, getQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, type QuestionDiscussion as Discussion } from './api';
+import HelpControls, { prefillHelpInstruction } from './HelpControls';
+import HelpRecord from './HelpRecord';
+import { ApiError, getQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type QuestionDiscussion as Discussion } from './api';
 
 const requestId = (): string => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 export default function QuestionDiscussion({ id, onBack }: { id: string; onBack: () => void }) {
   const [discussion, setDiscussion] = useState<Discussion | null>(null);
   const [content, setContent] = useState('');
+  const [helpRequest, setHelpRequest] = useState<HelpRequestKind | null>(null);
   const [searchSelection, setSearchSelection] = useState<SearchSelection>({ mode: 'off' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean } | null>(null);
+  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null } | null>(null);
   const [reconnect, setReconnect] = useState(0);
   const [connectionLost, setConnectionLost] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editRequest = useRef<{ turnId: string; content: string; key: string } | null>(null);
   const key = useRef(requestId());
-  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; content: string }>());
+  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; content: string; helpRequest: HelpRequestKind | null }>());
   const sending = useRef(false);
   const generation = useRef(0);
   useEffect(() => {
     let active = true;
     generation.current += 1;
-    setEditingTurnId(null); editRequest.current = null; searchByRequestKey.current.clear(); setDiscussion(null); setContent(''); setSearchSelection({ mode: 'off' }); setError(''); setPending(null); setBusy(false); sending.current = false; key.current = requestId();
+    setEditingTurnId(null); editRequest.current = null; searchByRequestKey.current.clear(); setDiscussion(null); setContent(''); setHelpRequest(null); setSearchSelection({ mode: 'off' }); setError(''); setPending(null); setBusy(false); sending.current = false; key.current = requestId();
     getQuestionDiscussion(id).then(value => { if (active) setDiscussion(value); }).catch(reason => { if (active) setError(String(reason.message ?? reason)); });
     return () => { active = false; generation.current += 1; };
   }, [id]);
@@ -72,7 +75,7 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
     return () => controller.abort();
   }, [id, runningTurn?.id, reconnect]);
 
-  async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false, regenerateTurnId?: string, editTurnId?: string): Promise<boolean> {
+  async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false, regenerateTurnId?: string, editTurnId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
     if (!text.trim() || sending.current || running) return false;
     if (searchByRequestKey.current.size && (!searchByRequestKey.current.has(requestKey) || searchByRequestKey.current.get(requestKey)?.content !== text)) {
       setError('上次发送结果尚未确认。请先重试原消息，或重新打开讨论核对已保存的内容。');
@@ -80,14 +83,15 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
     }
     const currentGeneration = generation.current;
     sending.current = true; setBusy(true); setError('');
-    if (!retry && !regenerateTurnId && !editTurnId) { setPending({ content: text, key: requestKey, failed: false }); if (!preserveDraft) setContent(''); }
+    const frozenHelp = searchByRequestKey.current.has(requestKey) ? searchByRequestKey.current.get(requestKey)!.helpRequest : (requestedHelp !== undefined ? requestedHelp : regenerateTurnId ? discussion?.turns.find(turn => turn.id === regenerateTurnId)?.help_record?.request?.kind ?? null : editTurnId ? null : helpRequest);
+    if (!retry && !regenerateTurnId && !editTurnId) { setPending({ content: text, key: requestKey, failed: false, helpRequest: frozenHelp }); if (!preserveDraft) setContent(''); }
     try {
       const frozenSearch = searchByRequestKey.current.get(requestKey)?.search ?? structuredClone(searchSelection);
-      searchByRequestKey.current.set(requestKey, { search: frozenSearch, content: text });
-      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, ...(frozenSearch.mode === 'off' ? {} : { search: frozenSearch }) });
+      searchByRequestKey.current.set(requestKey, { search: frozenSearch, content: text, helpRequest: frozenHelp });
+      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, ...(frozenSearch.mode === 'off' ? {} : { search: frozenSearch }) });
       if (generation.current !== currentGeneration) return false;
       searchByRequestKey.current.delete(requestKey);
-      setDiscussion(previous => ({ ...saved, turns: saved.turns.map(turn => ({ ...turn, search_trace: turn.search_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.search_trace : turn.search_trace, generation_trace: turn.generation_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.generation_trace : turn.generation_trace })) })); setPending(null); key.current = requestId();
+      setDiscussion(previous => ({ ...saved, turns: saved.turns.map(turn => ({ ...turn, search_trace: turn.search_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.search_trace : turn.search_trace, generation_trace: turn.generation_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.generation_trace : turn.generation_trace })) })); setPending(null); setHelpRequest(null); key.current = requestId();
       const sent = saved.turns.find(turn => turn.request_key === requestKey);
       if (sent) replyHistory.select(sent.id);
       return true;
@@ -98,7 +102,7 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
         if (editRequest.current?.key === requestKey) editRequest.current = null;
         if (key.current === requestKey) key.current = requestId();
         if (!retry && !regenerateTurnId && !editTurnId) { setPending(null); setContent(text); }
-      } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ content: text, key: requestKey, failed: true });
+      } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ content: text, key: requestKey, failed: true, helpRequest: frozenHelp });
       setError(reason instanceof Error ? reason.message : '消息发送未确认，请重试。');
       return false;
     } finally {
@@ -128,11 +132,11 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
       notice={<>{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
       composer={discussion && !discussion.purged && <LearningComposer
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
-        onChange={value => { setContent(value); key.current = requestId(); }}
+        onChange={value => { setContent(value); if (!value.trim()) setHelpRequest(null); key.current = requestId(); }}
         onSubmit={event => { event.preventDefault(); void send(); }}
         placeholder="输入关于这道题的问题，或回答拓展问题" maxLength={12000}
         disabled={busy || running || Boolean(pending) || Boolean(editingTurnId)}
-        tools={<SearchControls value={searchSelection} onChange={setSearchSelection} disabled={busy || running || Boolean(pending) || Boolean(editingTurnId)} providerKind={discussion.provider_protocol ?? undefined} />}
+        suggestions={<HelpControls disabled={busy || running || Boolean(pending) || Boolean(editingTurnId)} onChoose={(kind, label) => { setHelpRequest(kind); setContent(value => prefillHelpInstruction(value, label)); key.current = requestId(); }} />} tools={<SearchControls value={searchSelection} onChange={setSearchSelection} disabled={busy || running || Boolean(pending) || Boolean(editingTurnId)} providerKind={discussion.provider_protocol ?? undefined} />}
         actions={running && <button className="button button--danger button--with-icon" type="button" disabled={cancelling} onClick={() => void cancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}
     >
@@ -144,7 +148,11 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
             <h3>题目</h3><div className="ai-markdown"><LearningMarkdown>{discussion.source?.question ?? ''}</LearningMarkdown></div>
             {discussion.source?.material && <details><summary>本次参考材料</summary><div className="ai-markdown"><LearningMarkdown>{discussion.source.material}</LearningMarkdown></div></details>}
             <h3>我当时的回答</h3><div className="ai-markdown review-answer"><LearningMarkdown>{discussion.source?.answer || '没有提交本人作答'}</LearningMarkdown></div>
-            {feedback && 'question_id' in feedback ? <QuestionFeedbackContent feedback={feedback} /> : <>
+            {feedback && 'question_id' in feedback ? <QuestionFeedbackContent key={`${id}:${discussion.evaluation_id}:${feedback.question_id}`} feedback={feedback} helpDisplay={discussion.help_displays?.[feedback.question_id]} onRecordDisplay={discussion.evaluation_id ? async () => {
+              const value = await recordReferenceHelpDisplay(discussion.verification_id, discussion.evaluation_id!, feedback.question_id);
+              setDiscussion(previous => previous?.id === id && previous.evaluation_id === discussion.evaluation_id ? { ...previous, help_displays: { ...previous.help_displays, [feedback.question_id]: value } } : previous);
+              return value;
+            } : undefined} /> : <>
               <p className="form-hint">这次记录未保存逐题反馈，可在讨论中请 AI 重新讲解。</p>
               {feedback?.feedback && <><h3>当时的整体验证总结</h3><div className="ai-markdown"><LearningMarkdown>{feedback.feedback}</LearningMarkdown>{'next_step' in feedback && <LearningMarkdown>{feedback.next_step}</LearningMarkdown>}</div></>}
             </>}
@@ -169,6 +177,7 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
                 onNext: () => { const target = questionVersions[questionIndex + 1]; replyHistory.switchVersion(replyHistory.preferredVersion(target.question_id, target.id)); } }} />
             <LearningMessage role="assistant" state={turn.status === 'running' ? 'streaming' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? 'canceled' : 'failed') : undefined} status={turn.status === 'running' ? '生成中' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? '已取消' : '失败') : undefined}>
               <AssistantResponse key={turn.id} trace={turn.generation_trace} content={turn.assistant_content ?? ''} reasoningContent={turn.reasoning_content} searchTrace={turn.search_trace} streaming={turn.status === 'running'} />
+              <HelpRecord key={`help:${turn.id}`} record={turn.help_record} body={turn.assistant_content ?? ''} terminal={turn.status !== 'running'} onDisplay={characters => recordDiscussionHelpDisplay(id, turn.id, characters)} />
               {turn.status === 'failed' && <div role="status"><p>{turn.reason === 'cancelled' ? '已取消生成，已收到的内容保留。' : '这次回复未完成，问题和已收到的内容已保存。'}</p></div>}
               {turn.status === 'succeeded' && turn.sources.length === 0 && <p className="form-hint">{turn.history_searched ? '本轮检索没有找到匹配的历史记录。' : '本轮依据这道题和当前讨论回答，未检索其他历史。'}</p>}
               {turn.sources.length > 0 && <DiscussionSources sources={turn.sources} />}
@@ -182,7 +191,7 @@ export default function QuestionDiscussion({ id, onBack }: { id: string; onBack:
         </div>; })}
         {pending && <>
           <LearningMessage role="user" state={pending.failed ? 'failed' : undefined} status={pending.failed ? '发送未确认' : '发送中'}><div className="ai-message-content">{pending.content}</div></LearningMessage>
-          {pending.failed ? <button className="button button--quiet ai-retry-button" type="button" onClick={() => void send(pending.content, pending.key)}>重试发送</button> : <LearningMessage role="assistant" status="生成中"><div className="ai-message-content">…</div></LearningMessage>}
+          {pending.failed ? <button className="button button--quiet ai-retry-button" type="button" onClick={() => void send(pending.content, pending.key, false, false, undefined, undefined, pending.helpRequest)}>重试发送</button> : <LearningMessage role="assistant" status="生成中"><div className="ai-message-content">…</div></LearningMessage>}
         </>}
       </>}
     </LearningChatPanel>

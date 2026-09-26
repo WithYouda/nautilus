@@ -136,11 +136,11 @@ export function LearningUserMessage({ content, automatic, editing, onStartEdit, 
   return <LearningMessage role="user" state={editing ? 'editing' : undefined}>{body}</LearningMessage>;
 }
 
-export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, tools, actions, sendLabel = '发送问题' }: {
+export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, tools, suggestions, actions, sendLabel = '发送问题' }: {
   id: string; label?: string; value: string; onChange: (value: string) => void;
   onSubmit: FormEventHandler<HTMLFormElement>; onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   placeholder: string; disabled?: boolean; maxLength?: number;
-  textareaRef?: RefObject<HTMLTextAreaElement | null>; tools?: ReactNode; actions?: ReactNode; sendLabel?: string;
+  textareaRef?: RefObject<HTMLTextAreaElement | null>; tools?: ReactNode; suggestions?: ReactNode; actions?: ReactNode; sendLabel?: string;
 }) {
   const localRef = useRef<HTMLTextAreaElement>(null);
   const ref = textareaRef ?? localRef;
@@ -148,7 +148,8 @@ export function LearningComposer({ id, label = '输入学习问题', value, onCh
     const input = ref.current;
     if (input) { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; }
   }, [value, ref]);
-  return <form className="ai-composer" onSubmit={onSubmit}>
+  return <form className={`ai-composer${suggestions ? " ai-composer--suggestions" : ""}`} onSubmit={onSubmit}>
+    {suggestions && <div className="ai-composer-suggestions">{suggestions}</div>}
     <label htmlFor={id}>{label}</label>
     <textarea ref={ref} id={id} value={value} onChange={event => onChange(event.target.value)}
       onKeyDown={onKeyDown ?? (event => {

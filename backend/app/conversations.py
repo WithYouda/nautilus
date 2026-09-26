@@ -12,6 +12,7 @@ from .credentials import CredentialError, CredentialStore
 from .db import Database
 from .plans import PlanError, PlanService
 from .providers import ProviderConfig, normalize_base_url
+from .help_records import public_help, record_display
 
 # 单次请求带入的历史消息条数上限，避免上下文无界增长。
 HISTORY_LIMIT = 20
@@ -1449,6 +1450,7 @@ class ConversationService:
             if item["role"] == "assistant":
                 item["search_trace"] = snapshot.get("search_trace")
                 item["generation_trace"] = snapshot.get("generation_trace")
+                item["help_record"] = public_help(snapshot, item["content"], item["status"], item["updated_at"] if item["status"] != "streaming" else None)
             request_id = item.pop("request_message_id")
             item["parent_message_id"] = (
                 reply.get("parent_answer_id") if item["role"] == "user" and reply
@@ -1462,6 +1464,25 @@ class ConversationService:
             messages.append(item)
             previous = item["id"]
         return messages
+
+    def record_help_display(self, identity_id: str, conversation_id: str, message_id: str, characters: int) -> dict[str, Any]:
+        self.owned_conversation(identity_id, conversation_id)
+        with self.database.transaction() as connection:
+            row = connection.execute("""SELECT m.content, m.status, m.updated_at, r.id AS run_id, r.config_snapshot_json
+                FROM message m JOIN ai_run r ON r.response_message_id=m.id
+                JOIN conversation c ON c.id=m.conversation_id
+                WHERE m.id=? AND m.conversation_id=? AND c.identity_id=? AND c.deleted_at IS NULL""",
+                (message_id, conversation_id, identity_id)).fetchone()
+            if row is None:
+                raise ConversationError("回答不存在")
+            if row["status"] not in {"complete", "failed", "canceled"} or not row["content"] or not row["content"].strip():
+                raise ConversationConflict("回答尚无可展示的正文")
+            if characters < 1 or characters > len(row["content"]):
+                raise ConversationError("展示字符数超出回答正文")
+            snapshot = json.loads(row["config_snapshot_json"] or "{}")
+            if record_display(snapshot, characters, _now()):
+                connection.execute("UPDATE ai_run SET config_snapshot_json=? WHERE id=?", (json.dumps(snapshot, ensure_ascii=False), row["run_id"]))
+            return public_help(snapshot, row["content"], row["status"], row["updated_at"])
 
     @staticmethod
     def message_path(messages, leaf_id):
@@ -1518,7 +1539,7 @@ class ConversationService:
 
     def _existing_submission(
         self, conversation_id, client_message_id, content, *, connection=None,
-        regenerate_message_id=None, parent_message_id=None, edit_message_id=None, search=None,
+        regenerate_message_id=None, parent_message_id=None, edit_message_id=None, search=None, help_request=None,
     ):
         query = connection.execute if connection is not None else self.database.connection.execute
         existing = query("SELECT * FROM message WHERE conversation_id=? AND client_message_id=?",
@@ -1532,6 +1553,8 @@ class ConversationService:
         snapshot = json.loads(run["config_snapshot_json"] or "{}")
         if snapshot.get("search_request", {"mode": "off"}) != (search or {"mode": "off"}):
             raise ConversationConflict("同一 client_message_id 已用于不同的搜索选择")
+        if (snapshot.get("help_request") or {}).get("kind") != help_request:
+            raise ConversationConflict("同一 client_message_id 已用于不同的帮助请求")
         reply = snapshot.get("reply", {})
         question = query("SELECT content FROM message WHERE id=? AND conversation_id=?",
                          (reply.get("question_id", run["request_message_id"]), conversation_id)).fetchone()
@@ -1553,6 +1576,7 @@ class ConversationService:
         parent_message_id: str | None = None,
         edit_message_id: str | None = None,
         search: dict | None = None,
+        help_request: str | None = None,
     ) -> dict[str, Any]:
         """写入用户消息、上下文快照、助手占位消息和 queued 运行记录。
 
@@ -1566,7 +1590,13 @@ class ConversationService:
         if edit_message_id and (regenerate_message_id or parent_message_id):
             raise ConversationError("编辑消息不能同时指定重新生成或回答上下文")
 
-        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search)
+        if regenerate_message_id and help_request is None:
+            original = self.database.fetchone("""SELECT r.config_snapshot_json FROM ai_run r
+                WHERE r.conversation_id=? AND r.response_message_id=?""", (conversation_id, regenerate_message_id))
+            if original:
+                help_request = (json.loads(original["config_snapshot_json"] or "{}").get("help_request") or {}).get("kind")
+
+        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request)
         if replayed:
             return replayed
 
@@ -1583,6 +1613,8 @@ class ConversationService:
             except SearchError as error:
                 raise ConversationError(str(error)) from error
         config_snapshot["search_request"] = search or {"mode": "off"}
+        if help_request:
+            config_snapshot["help_request"] = {"kind": help_request, "at": _now()}
         config_snapshot["search_trace"] = search_run.initial_trace() if search_run else {"mode": "off", "status": "off", "items": []}
         context = self.context_for_conversation(identity_id, conversation_id)
 
@@ -1598,7 +1630,7 @@ class ConversationService:
                 replayed = self._existing_submission(
                     conversation_id, client_message_id, text, connection=connection,
                     regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id,
-                    edit_message_id=edit_message_id, search=search
+                    edit_message_id=edit_message_id, search=search, help_request=help_request
                 )
                 if replayed:
                     return replayed
@@ -1758,7 +1790,7 @@ class ConversationService:
         except sqlite3.IntegrityError as error:
             # 并发提交命中唯一索引：另一个协程已经写入了同一个 client_message_id。
             # 返回对方的运行记录，不重复追加消息，也不报错。
-            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search)
+            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request)
             if replayed:
                 return replayed
             active = self.active_run(identity_id, conversation_id)

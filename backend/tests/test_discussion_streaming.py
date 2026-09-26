@@ -201,6 +201,11 @@ async def test_upgrade_028_preserves_existing_turn_and_erases_new_reasoning(lear
         legacy.execute('ALTER TABLE learning_discussion_turn DROP COLUMN reasoning_content')
         old_migration = Path('backend/app/migrations/028_verification_discussions.sql').read_text()
         legacy.executescript('CREATE TRIGGER learning_discussion_erase_turns' + old_migration.split('CREATE TRIGGER learning_discussion_erase_turns', 1)[1])
+        # Build a real 028 ceiling: a later migration cannot remain applied
+        # while 029 is absent, and its completion tables did not exist in 028.
+        legacy.execute('DROP TABLE learning_completion_review')
+        legacy.execute('DROP TABLE learning_completion')
+        legacy.execute("DELETE FROM schema_migrations WHERE version='030_learning_completion'")
         legacy.execute("DELETE FROM schema_migrations WHERE version='029_discussion_reasoning'")
     result = upgrade_learning_database(legacy_path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'

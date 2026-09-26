@@ -34,10 +34,11 @@ class LearningRecords:
             row = connection.execute('SELECT * FROM learning_verification_submission WHERE owner_id=? AND id=?', (owner, selected_id)).fetchone()
             content = submission_content(connection, owner, row)
             evaluations = [dict(r) for r in connection.execute(
-                'SELECT id, status, reason, created_at, finished_at, result_json FROM learning_verification_evaluation WHERE owner_id=? AND submission_id=? ORDER BY rowid DESC',
+                'SELECT id, status, reason, created_at, finished_at, result_json, provider_snapshot_json FROM learning_verification_evaluation WHERE owner_id=? AND submission_id=? ORDER BY rowid DESC',
                 (owner, selected_id))]
         for evaluation in evaluations:
             evaluation['result'] = json.loads(evaluation.pop('result_json') or 'null')
+            evaluation['help_displays'] = json.loads(evaluation.pop('provider_snapshot_json') or '{}').get('help_displays', {})
         chosen = next((e for e in evaluations if e['id'] == evaluation_id), None) if evaluation_id else (evaluations[0] if evaluations else None)
         if evaluation_id and chosen is None:
             raise DomainError('not_found', 404)
@@ -46,6 +47,7 @@ class LearningRecords:
         return dict(verification=public, submissions=submissions, selected_submission_id=selected_id,
                     content=content, evaluations=evaluations, selected_evaluation_id=chosen['id'] if chosen else None,
                     result=chosen['result'] if chosen else None, discussions=discussions,
+                    help_displays=chosen['help_displays'] if chosen else {},
                     purge_discussion_count=self.purge_impact(connection, owner, verification_id))
 
     @staticmethod

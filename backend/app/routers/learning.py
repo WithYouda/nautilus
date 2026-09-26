@@ -31,6 +31,8 @@ from ..completion import CompletionService, CompletionRequest, CompletionReviewR
 from ..managed_purge import ManagedPurge
 from ..question_discussion import QuestionDiscussionService
 from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest
+from ..schemas import HelpDisplayRequest
+from ..verification_help import record_solution_display
 from ..schemas import (
     AgentPermissionDenyRequest,
     EvidenceAnalysisRequest,
@@ -481,6 +483,24 @@ async def send_discussion_message(discussion_id: str, payload: QuestionDiscussio
                                   identity: dict[str, Any] = Depends(current_identity)):
     try:
         return request.app.state.discussions.start(identity, discussion_id, **payload.model_dump())
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post('/discussions/{discussion_id}/turns/{turn_id}/help-display')
+def record_discussion_display(discussion_id: str, turn_id: str, payload: HelpDisplayRequest,
+                              request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return request.app.state.discussions.record_help_display(identity, discussion_id, turn_id, payload.characters)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post('/verifications/{verification_id}/evaluations/{evaluation_id}/questions/{question_id}/help-display')
+def record_reference_display(verification_id: str, evaluation_id: str, question_id: str,
+                             request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return record_solution_display(verification_service(request), identity, verification_id, evaluation_id, question_id)
     except DomainError as error:
         _raise_learning_error(error)
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import QuestionFeedbackContent from './QuestionFeedbackContent';
 import LearningMarkdown from './LearningMarkdown';
-import { createQuestionDiscussion, getVerificationReview, purgeVerification, type VerificationReview as Review, type LearningVerification } from './api';
+import { createQuestionDiscussion, getVerificationReview, purgeVerification, recordReferenceHelpDisplay, type VerificationReview as Review, type LearningVerification } from './api';
 import PurgeStatus from './PurgeStatus';
 
 export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged, onReadSolution, initialSubmissionId, initialEvaluationId, onSelectionChange }: {
@@ -63,6 +63,15 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
         {review.evaluations.map((e, i) => <option key={e.id} value={e.id}>第 {review.evaluations.length - i} 次评估 · {e.status === 'succeeded' ? '已完成' : e.status === 'running' ? '处理中' : '未完成'}</option>)}
       </select></label>}
       {!review.content ? <p>{review.verification.content_purged || review.submissions.find(s => s.id === review.selected_submission_id)?.purged_at ? '本次作答在线内容已清除。完成事实仍保留；副本清除进度见下方结果。' : '尚未保存作答。'}</p> : <>
+        {review.content.help_context && <div className="form-hint" aria-label="提交时帮助条件">
+          <p>提交时自报：{review.content.help_context.user_report === 'independent' ? '自报独立完成' : review.content.help_context.user_report === 'with_materials' ? '自报借助资料或帮助' : '未填写'} · 截至 {new Date(review.content.help_context.captured_at).toLocaleString()}</p>
+          <p>提交时同次验证的帮助记录：{review.content.help_context.records.length ? review.content.help_context.records.map(item => {
+            const label = item.kind === 'reference_answer' ? '参考解法' : '讨论回复';
+            const generated = item.kind === 'discussion_reply' ? `已生成${item.characters ?? 0}字符${item.partial ? '（部分输出）' : ''}${item.provided_at ? `，${new Date(item.provided_at).toLocaleString()}` : ''}` : '';
+            const shown = item.displayed_at ? `页面呈现记录 ${new Date(item.displayed_at).toLocaleString()}` : '无页面呈现记录';
+            return `${label}（${[generated, shown].filter(Boolean).join('；')}）`;
+          }).join('、') : '无记录'}。无记录不证明独立完成；页面呈现不证明已阅读或理解；后续展示不会改写这次作答。</p>
+        </div>}
         {questions.map((question, index) => {
           const feedback = review.result?.question_feedback?.find(item => item.question_id === question.id);
           return <article className="verification-question" key={question.id} aria-label={`第 ${index + 1} 题回看`}>
@@ -70,7 +79,12 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
             <div className="ai-markdown"><LearningMarkdown>{question.prompt}</LearningMarkdown></div>
             {review.content?.material && <details><summary>本次参考材料</summary><div className="ai-markdown"><LearningMarkdown>{review.content.material}</LearningMarkdown></div></details>}
             <h4>我当时的回答</h4><div className="ai-markdown review-answer"><LearningMarkdown>{review.content?.responses?.[question.id] ?? review.content?.learner_work ?? '没有提交本人作答'}</LearningMarkdown></div>
-            {feedback ? <QuestionFeedbackContent feedback={feedback} onReadSolution={onReadSolution} /> : <p className="form-hint">{review.result ? '这次记录未保存逐题反馈，可在讨论中请 AI 重新讲解。' : '本题反馈尚未生成，作答已保存。'}</p>}
+            {feedback ? <QuestionFeedbackContent key={`${review.selected_evaluation_id}:${question.id}`} feedback={feedback} onReadSolution={onReadSolution} helpDisplay={review.help_displays?.[question.id]} onRecordDisplay={review.selected_evaluation_id ? async () => {
+              const selectedEvaluation = review.selected_evaluation_id!;
+              const value = await recordReferenceHelpDisplay(id, selectedEvaluation, question.id);
+              setReview(previous => previous?.selected_evaluation_id === selectedEvaluation ? { ...previous, help_displays: { ...previous.help_displays, [question.id]: value } } : previous);
+              return value;
+            } : undefined} /> : <p className="form-hint">{review.result ? '这次记录未保存逐题反馈，可在讨论中请 AI 重新讲解。' : '本题反馈尚未生成，作答已保存。'}</p>}
             {review.discussions.filter(d => d.question_id === question.id && d.submission_id === review.selected_submission_id).map((d, i) => <button type="button" key={d.id} className="text-button" onClick={() => onDiscuss(d.id)}>打开题目讨论 {i + 1}{d.purged_at ? '（内容已删除）' : ''}</button>)}
           </article>;
         })}
