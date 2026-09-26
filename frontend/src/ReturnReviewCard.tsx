@@ -43,6 +43,7 @@ export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged,
     <h2>{card.position.action}</h2>
     {card.position.goal && <p className="return-review__route">{card.position.goal}{card.position.plan && ` · ${card.position.plan}`}</p>}
     <p className="return-review__fact">{completed ? card.what_happened.verification_id ? '本次学习已完成，作答和验证反馈已保存。' : '本次学习已完成，学习记录已保留。' : saved ? '作答已保存，可以查看反馈并继续验证。' : card.what_happened.session_status === 'interrupted' ? '学习位置已保存，可以接着上次的内容继续。' : started ? '接着当前任务学习，对话和验证记录会保留。' : '学习安排已保存，可以开始这项任务。'}</p>
+    <p className="return-review__next"><span>下一步建议的理由</span><br />{card.recommendation.explanation}</p>
     <div className="return-review__actions">
       {completed ? <>
         <button className="button button--accent" onClick={() => onOpenRecord(card.position.delegation_id, card.what_happened.verification_id)}>{card.what_happened.verification_id ? '查看验证记录' : '查看记录'}</button>

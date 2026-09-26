@@ -1,8 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
+
+export function localAuthorizationCode(): string {
+  const dataDir = process.env.NAUTILUS_E2E_DATA_DIR;
+  if (!dataDir) throw new Error("E2E 隔离数据目录未配置");
+  return readFileSync(join(dataDir, "runtime", "access-token"), "utf8");
+}
 
 export async function authorize(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "填入当前授权码" }).click();
+  await page.getByLabel("授权码", { exact: true }).fill(localAuthorizationCode());
   await page.getByRole("button", { name: "进入工作区" }).click();
   await expect(page.getByRole("button", { name: "退出会话" })).toBeVisible();
 }

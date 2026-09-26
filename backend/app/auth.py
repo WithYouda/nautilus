@@ -113,10 +113,6 @@ class AuthService:
         )
         return dict(row) if row else None
 
-    def authorization_challenge(self) -> str:
-        """Return the current process code used by the local authorization screen."""
-        return self.runtime_access_token
-
     def revoke_session(self, session_token: str | None) -> None:
         if not session_token:
             return

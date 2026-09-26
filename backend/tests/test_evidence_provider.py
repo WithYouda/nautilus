@@ -17,7 +17,7 @@ FAKE_API_KEY = "sk-test-evidence-provider"
 
 
 def authorize(client: TestClient) -> dict:
-    challenge = client.get("/api/auth/challenge").json()["code"]
+    challenge = client.app.state.settings.runtime_token_path.read_text(encoding="utf-8")
     response = client.post("/api/auth/authorize", json={"access_token": challenge})
     assert response.status_code == 200
     return response.json()["identity"]

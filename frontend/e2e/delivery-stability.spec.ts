@@ -1,3 +1,4 @@
+import { localAuthorizationCode } from "./fact-helpers";
 import { expect, test } from "@playwright/test";
 
 test("production delivery excludes development clients", async ({ request }) => {
@@ -29,7 +30,7 @@ test("authorized delivery page does not open HMR sockets or navigate unexpectedl
   await expect(page.getByRole("heading", { name: "授权此设备，继续学习。" })).toBeVisible();
   mainFrameNavigations.length = 0;
 
-  await page.getByRole("button", { name: "填入当前授权码" }).click();
+  await page.getByLabel("授权码", { exact: true }).fill(localAuthorizationCode());
   await page.getByRole("button", { name: "进入工作区" }).click();
   await expect(page.getByRole("navigation", { name: "工作区视图" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "当前视角" })).toHaveCount(0);

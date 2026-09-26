@@ -1,16 +1,13 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Check, Compass, Copy } from "lucide-react";
+import { Compass } from "lucide-react";
 import {
   authorize,
-  getAuthChallenge,
   getAuthStatus,
   getHealth,
   logout,
-  type AuthChallenge,
   type AuthStatus,
   type Health,
 } from "./api";
-import { QRCodeCanvas } from "qrcode.react";
 import Workspace from "./Workspace";
 
 type LoadState = "loading" | "ready" | "error";
@@ -98,28 +95,7 @@ function AuthorizationScreen({
   onError: (message: string) => void;
 }) {
   const [accessToken, setAccessToken] = useState("");
-  const [challenge, setChallenge] = useState<AuthChallenge | null>(null);
-  const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    getAuthChallenge()
-      .then(setChallenge)
-      .catch((reason: unknown) => {
-        onError(reason instanceof Error ? reason.message : "无法获取实时授权码");
-      });
-  }, [onError]);
-
-  async function copyChallenge() {
-    if (!challenge?.code) return;
-    try {
-      await navigator.clipboard.writeText(challenge.code);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      onError("浏览器拒绝访问剪贴板，请手动复制下方授权码");
-    }
-  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -148,24 +124,14 @@ function AuthorizationScreen({
         <div className="auth-intro">
           <p className="eyebrow">LOCAL WORKSPACE</p>
           <h1>授权此设备，继续学习。</h1>
-          <p className="lead">扫码或输入本次服务启动时生成的实时授权码。授权成功后，除非主动登出，否则无需重复授权。</p>
+          <p className="lead">在运行服务的本地主机读取本次启动生成的授权码，再手动输入。授权成功后，除非主动登出，否则无需重复授权。</p>
         </div>
         <div className="auth-stack">
-          <section className="auth-code-card" aria-label="实时授权码">
+          <section className="auth-code-card" aria-label="获取授权码">
             <div className="auth-code-card__heading">
-              <div><p className="eyebrow">LIVE ACCESS</p><h2>扫码授权</h2></div>
-              <span className="live-badge"><span className="status-dot" />实时</span>
+              <div><p className="eyebrow">LOCAL ACCESS</p><h2>在服务主机获取授权码</h2></div>
             </div>
-            <div className="auth-qr" aria-label="授权二维码">
-              {challenge ? <QRCodeCanvas value={challenge.code} size={188} includeMargin bgColor="#ffffff" fgColor="#18211f" /> : <div className="auth-qr__loading" />}
-            </div>
-            <div className="auth-code-card__label">二维码内容与下方授权码完全一致</div>
-            <div className="auth-code-value">
-              <code>{challenge?.code ?? "正在生成授权码"}</code>
-              <button className="icon-button" type="button" onClick={copyChallenge} disabled={!challenge} aria-label="复制授权码" title="复制授权码">
-                {copied ? <Check size={17} /> : <Copy size={17} />}
-              </button>
-            </div>
+            <p>在运行 Nautilus 的 WSL2 终端，读取启动脚本显示的授权码文件路径；默认路径为 <code>tmp/access-token</code>。授权码仅保存在服务主机，请在下方手动输入。</p>
           </section>
 
           <form className="auth-form" onSubmit={handleSubmit}>
@@ -176,11 +142,10 @@ function AuthorizationScreen({
               type="password"
               value={accessToken}
               onChange={(event) => setAccessToken(event.target.value)}
-              placeholder="粘贴或手动输入下方授权码"
+              placeholder="粘贴或手动输入本地主机读取的授权码"
               autoComplete="off"
               required
             />
-            {challenge && <button className="button button--quiet" type="button" onClick={() => setAccessToken(challenge.code)}>填入当前授权码</button>}
             {error && <p className="form-error" role="alert">{error}</p>}
             <button className="button button--accent" disabled={submitting}>{submitting ? "正在授权" : "进入工作区"}</button>
             <p className="form-hint">服务每次启动都会轮换授权码；主动登出后需要重新授权。</p>

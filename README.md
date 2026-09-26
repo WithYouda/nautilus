@@ -27,7 +27,7 @@ npm --prefix frontend install
 
 服务绑定 `0.0.0.0`。默认脚本端口为Web5173/API8000，当前trial为Web5188/API8018；Windows访问地址用 `hostname -I` 的实际WSL2 IP。开发用HMR可单独运行 `npm --prefix frontend run dev -- --host 0.0.0.0`，用户试用使用已构建预览。
 
-授权页提供同一实时授权码的文字和二维码；浏览器会话持续到主动注销，普通服务重启不要求重新授权。令牌只保存在本机配置的运行路径（默认 `tmp/access-token`），不写入日志、文档或Git。
+首次授权时，在运行服务的 WSL2 主机本地读取授权码文件并手动输入页面。默认启动脚本使用 `tmp/access-token`；当前trial使用 `tmp/nautilus-trial-20260919/runtime/access-token`；若设置了 `NAUTILUS_RUNTIME_TOKEN_FILE`，读取该路径。父目录权限0700、文件0600；默认启动脚本只提示路径，不打印授权码。浏览器会话持续到主动注销，普通服务重启不要求重新授权。授权码不写入日志、文档或Git；网络可达不代表已授权，正式网络信任范围仍待决定。
 
 ## 数据库、升级与恢复
 
@@ -41,7 +41,9 @@ env PYTHONPATH=backend .venv/bin/python scripts/upgrade-learning-database.py   -
 
 工具拒绝默认主库和diagnostic-backups；现有库先备份，再迁移并校验完整性/外键，最后创建升级后备份和哈希清单。目前尚未把“省去后置备份”建议实现到工具中。备份是私有运行数据，权限0600，不纳入Git；普通代码修改或服务重启无需备份。一次清理旧备份不等于配置了自动保留策略。
 
-仅检查可添加 `--verify-only`；恢复使用 `--restore <backup.sqlite3> --database <target-learning.sqlite3> --authorize-production`。恢复会对照当前删除标记，拒绝复活已彻底删除内容；目标库缺失时默认拒绝，只有接受无法对照删除标记这一边界后才用 `--allow-missing-current`。恢复演练是独立验证步骤，不是每次升级命令自动执行。
+仅检查可添加 `--verify-only`；停服务后的离线恢复使用 `--restore <backup.sqlite3> --database <target-learning.sqlite3> --authorize-production`。工具对实际待安装的快照检查已知删除内容和删除标记：缺少当前任一产出版本、验证、提交、证据私文或讨论的清除标记即拒绝，候选正文为空也不能绕过；拒绝不替换当前库。目标库缺失时默认拒绝；显式 `--allow-missing-current` 是缺失库灾难恢复例外，无法证明历史删除不被复活。恢复演练是独立验证步骤，不是每次升级命令自动执行。
+
+这些保护不等于所有副本已被物理清除：旧 schema v1 事件私文、保留备份、导出、Provider 和文件系统副本仍有未完成边界；旧备份不会随运行库删除自动改写。PRD 的删除目标不因此收窄，分层保证和验收见[领域架构](docs/superpowers/specs/2026-09-05-nautilus-first-slice-domain-architecture.md#删除影响矩阵)。
 
 ## 测试
 

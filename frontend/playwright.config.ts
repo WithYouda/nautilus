@@ -32,7 +32,7 @@ export default defineConfig({
     browserName: "chromium",
     headless: true,
     launchOptions: executablePath ? { executablePath } : undefined,
-    trace: "retain-on-failure",
+    trace: "off",
     screenshot: "only-on-failure",
   },
   webServer: {

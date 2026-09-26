@@ -41,6 +41,18 @@ test('new learning → saved verification → confirmed completion → return ca
   await page.getByPlaceholder('写出你的判断、过程或结果').fill('我先定位编号，再检查字符类型。目前不知道空输入时的情况。');
   await page.getByRole('button', { name: '保存作答并验证' }).click();
   await expect(page.getByText('作答已保存。', { exact: false })).toBeVisible();
+  await page.route('**/api/learning/metrics', route => route.fulfill({ status: 500, json: { detail: 'Synthetic metrics outage' } }));
+  await page.getByRole('button', { name: '返回学习室', exact: true }).click();
+  await page.getByRole('button', { name: '返回工作区', exact: true }).click();
+  const savedCard = await (await page.request.get('/api/learning/return-review')).json();
+  const savedReview = page.getByRole('region', { name: '当前学习' });
+  await expect(savedReview).toContainText(savedCard.recommendation.explanation);
+  await savedReview.getByRole('button', { name: '继续验证', exact: true }).click();
+  await expect(page.getByText('作答已保存。', { exact: false })).toBeVisible();
+  expect(await (await page.request.get('/api/learning/return-review')).json()).toMatchObject({
+    position: { delegation_id: savedCard.position.delegation_id },
+    what_happened: { verification_id: savedCard.what_happened.verification_id },
+  });
   await page.getByRole('checkbox', { name: /我已核对结果/ }).check();
   await page.getByRole('button', { name: '确认完成本次委托' }).click();
   const card = page.getByRole('region', { name: '当前学习' });
@@ -73,7 +85,9 @@ test('new learning → saved verification → confirmed completion → return ca
   await page.getByRole('button', {name:'确认完成本次委托'}).click();
   await expect(card).toContainText('复核后确认的下一步');
   const metrics = await (await page.request.get('/api/learning/metrics')).json();
-  expect(metrics.product_metrics.review_to_next_action).toMatchObject({status:'observed',numerator:1,denominator:1});
+  // Resuming the saved verification and adding the next step each produced a
+  // confirmed recommendation choice followed by its action completion.
+  expect(metrics.product_metrics.review_to_next_action).toMatchObject({status:'observed',numerator:2,denominator:2});
 });
 
 test('interruption → reopened return card → same delegation and conversation on 390px', async ({ page }) => {
@@ -87,12 +101,15 @@ test('interruption → reopened return card → same delegation and conversation
   const before = await (await page.request.get('/api/learning/return-review')).json();
   const oldRoom = await (await page.request.get(`/api/learning/sessions/${before.position.last_session}/room`)).json();
   expect(oldRoom.conversation_id).toBeTruthy();
+  await page.route('**/api/learning/metrics', route => route.fulfill({ status: 500, json: { detail: 'Synthetic metrics outage' } }));
   await page.getByRole('button', { name: '今天先停', exact: true }).click();
   await expect(page.getByRole('region', { name: '当前学习' })).toContainText('学习位置已保存');
   await page.reload();
   await openLearning(page);
   const card = page.getByRole('region', { name: '当前学习' });
   await expect(card.getByText('正在学习', {exact:true})).toBeVisible();
+  const interrupted = await (await page.request.get('/api/learning/return-review')).json();
+  await expect(card).toContainText(interrupted.recommendation.explanation);
   for (const viewport of [{width:390,height:844},{width:1024,height:640},{width:1440,height:1000}]) {
     await page.setViewportSize(viewport);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();

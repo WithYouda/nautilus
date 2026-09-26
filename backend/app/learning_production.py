@@ -167,6 +167,45 @@ def _purged_artifacts(connection: sqlite3.Connection) -> set[str]:
     }
 
 
+def _backup_loses_purge_barriers(
+    current: sqlite3.Connection,
+    backup: sqlite3.Connection,
+) -> bool:
+    # Checking only for old text is insufficient: an even older backup may
+    # predate the object, discard its tombstone, and allow the text back on a
+    # subsequent restore. Preserve every known erasure, including shared
+    # private evidence and discussions reached through deletion propagation.
+    barriers = (
+        ("learning_raw_artifact", ("owner_id", "artifact_id", "content_version")),
+        ("learning_verification", ("owner_id", "id")),
+        ("learning_verification_submission", ("owner_id", "id")),
+        ("learning_evidence_private_content", ("owner_id", "event_id")),
+        ("learning_question_discussion", ("owner_id", "id")),
+    )
+    for table, keys in barriers:
+        current_columns = {row[1] for row in current.execute(f"PRAGMA table_info({table})")}
+        if "purged_at" not in current_columns:
+            continue
+        erased = {
+            tuple(row) for row in current.execute(
+                f"SELECT {', '.join(keys)} FROM {table} WHERE purged_at IS NOT NULL"
+            )
+        }
+        if not erased:
+            continue
+        backup_columns = {row[1] for row in backup.execute(f"PRAGMA table_info({table})")}
+        if not {*keys, "purged_at"}.issubset(backup_columns):
+            return True
+        retained = {
+            tuple(row) for row in backup.execute(
+                f"SELECT {', '.join(keys)} FROM {table} WHERE purged_at IS NOT NULL"
+            )
+        }
+        if not erased.issubset(retained):
+            return True
+    return False
+
+
 def _backup_contains_purged_content(
     backup_connection: sqlite3.Connection,
     purged_artifact_ids: set[str],
@@ -249,23 +288,12 @@ def restore_learning_backup(
     *,
     allow_missing_current: bool = False,
 ) -> dict[str, Any]:
+    """Restore an offline database; callers must stop all database users first."""
     backup_path = validate_learning_path(backup_path)
     target_path = validate_learning_path(target_path)
     backup_inspection = inspect_learning_database(backup_path)
 
-    if target_path.exists():
-        current_inspection = inspect_learning_database(target_path)
-        with closing(_connect_read_only(target_path)) as current, closing(_connect_read_only(backup_path)) as backup:
-            purged = _purged_artifacts(current)
-            conflicting = _backup_contains_purged_content(backup, purged)
-            if _backup_restores_verification_content(current, backup):
-                conflicting.append("verification_content")
-        if conflicting:
-            raise ProductionLearningDatabaseError(
-                "backup would restore content that is purged in the current database; "
-                "create a fresh post-purge backup instead"
-            )
-    elif not allow_missing_current:
+    if not target_path.exists() and not allow_missing_current:
         raise ProductionLearningDatabaseError(
             "current learning database is missing; purge verification is unavailable"
         )
@@ -273,15 +301,37 @@ def restore_learning_backup(
     temporary_path = target_path.with_name(f".{target_path.name}.restore-{os.getpid()}")
     temporary_path.unlink(missing_ok=True)
     try:
-        with closing(sqlite3.connect(backup_path)) as source, closing(sqlite3.connect(temporary_path)) as target:
+        # Validate the snapshot that will actually be installed. Reopening the
+        # source after checking it could otherwise copy a different backup.
+        temporary_path.touch(mode=0o600, exist_ok=False)
+        with closing(_connect_read_only(backup_path)) as source, closing(sqlite3.connect(temporary_path)) as target:
             source.backup(target)
         restored_inspection = inspect_learning_database(temporary_path)
         if restored_inspection["applied_migrations"] != backup_inspection["applied_migrations"]:
             raise ProductionLearningDatabaseError("restored database migration history does not match backup")
+        if target_path.exists():
+            inspect_learning_database(target_path)
+            with closing(_connect_read_only(target_path)) as current, closing(_connect_read_only(temporary_path)) as backup:
+                if _backup_loses_purge_barriers(current, backup):
+                    raise ProductionLearningDatabaseError(
+                        "backup would lose deletion barriers for content purged in the current database; "
+                        "create a fresh post-purge backup instead"
+                    )
+                conflicting = _backup_contains_purged_content(backup, _purged_artifacts(current))
+                if conflicting or _backup_restores_verification_content(current, backup):
+                    raise ProductionLearningDatabaseError(
+                        "backup would restore content that is purged in the current database; "
+                        "create a fresh post-purge backup instead"
+                    )
+        elif not allow_missing_current:
+            raise ProductionLearningDatabaseError(
+                "current learning database is missing; purge verification is unavailable"
+            )
         os.replace(temporary_path, target_path)
         os.chmod(target_path, 0o600)
     finally:
-        temporary_path.unlink(missing_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            temporary_path.with_name(temporary_path.name + suffix).unlink(missing_ok=True)
     return inspect_learning_database(target_path)
 
 

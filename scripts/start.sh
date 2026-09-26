@@ -23,7 +23,7 @@ if [[ ! -d "$ROOT_DIR/frontend/node_modules" ]]; then
 fi
 
 mkdir -p "$ROOT_DIR/tmp"
-TOKEN_FILE="$ROOT_DIR/tmp/access-token"
+TOKEN_FILE="$(realpath -m -- "${NAUTILUS_RUNTIME_TOKEN_FILE:-$ROOT_DIR/tmp/access-token}")"
 FRONTEND_BUILD_LOG="$ROOT_DIR/tmp/frontend-build.log"
 
 if ! npm --prefix "$ROOT_DIR/frontend" run build >"$FRONTEND_BUILD_LOG" 2>&1; then
@@ -95,7 +95,7 @@ printf '%s\n' "API: http://$WSL_IP:$BACKEND_PORT"
 printf '%s\n' "后端日志: $ROOT_DIR/tmp/backend.log"
 printf '%s\n' "前端构建日志: $FRONTEND_BUILD_LOG"
 printf '%s\n' "前端日志: $ROOT_DIR/tmp/frontend.log"
-printf '%s\n' "首次授权请在 Web 页面使用当前进程授权码。"
+printf '%s\n' "首次授权请仅在服务主机本地读取授权码文件，再手动输入页面: $TOKEN_FILE"
 printf '%s\n' ""
 
 wait -n "$BACKEND_PID" "$FRONTEND_PID"

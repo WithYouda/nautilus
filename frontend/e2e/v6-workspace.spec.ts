@@ -1,8 +1,9 @@
+import { localAuthorizationCode } from "./fact-helpers";
 import { expect, test, type Page } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "填入当前授权码" }).click();
+  await page.getByLabel("授权码", { exact: true }).fill(localAuthorizationCode());
   await page.getByRole("button", { name: "进入工作区" }).click();
 });
 

@@ -8,13 +8,6 @@ from ..schemas import AuthorizationRequest
 router = APIRouter(prefix="/api")
 
 
-@router.get("/auth/challenge")
-def auth_challenge(request: Request, response: Response) -> dict[str, str]:
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    return {"code": auth_service(request).authorization_challenge()}
-
-
 @router.get("/auth/status")
 def auth_status(request: Request) -> dict[str, object]:
     settings = request.app.state.settings

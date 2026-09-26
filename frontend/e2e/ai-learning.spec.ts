@@ -1,3 +1,4 @@
+import { localAuthorizationCode } from "./fact-helpers";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 const mockProviderBaseUrl =
@@ -659,7 +660,7 @@ test("refresh and repeated submission reuse the same run without appending messa
 async function authorize(page: Page) {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "授权此设备，继续学习。" })).toBeVisible();
-  await page.getByRole("button", { name: "填入当前授权码" }).click();
+  await page.getByLabel("授权码", { exact: true }).fill(localAuthorizationCode());
   await page.getByRole("button", { name: "进入工作区" }).click();
   await expect(page.getByRole("heading", { name: "学习首页" })).toBeVisible();
 }

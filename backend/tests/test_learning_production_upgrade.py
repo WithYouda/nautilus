@@ -57,9 +57,10 @@ def test_production_upgrade_requires_authorization_and_rejects_default_database(
 
 def test_restore_refuses_backup_that_would_resurrect_purged_content(client, tmp_path):
     authorize(client)
-    created = create_standard_chain(client, key_prefix="production-purge")
     database_path = Path(client.app.state.learning.database.database_path)
     backup_dir = tmp_path / "backups"
+    before_object, _, _ = create_learning_backup(database_path, backup_dir, label="before-object")
+    created = create_standard_chain(client, key_prefix="production-purge")
     before_purge, _manifest, _inspection = create_learning_backup(
         database_path,
         backup_dir,
@@ -80,8 +81,14 @@ def test_restore_refuses_backup_that_would_resurrect_purged_content(client, tmp_
     with closing(sqlite3.connect(database_path)) as source, closing(sqlite3.connect(current_copy)) as target:
         source.backup(target)
 
-    with pytest.raises(ProductionLearningDatabaseError, match="purged"):
-        restore_learning_backup(before_purge, current_copy)
+    unchanged = current_copy.read_bytes()
+    # A first restore must not erase the only knowledge of the purge. Even
+    # after that refused attempt, the second (body-containing) backup is denied.
+    for candidate in (before_object, before_purge):
+        with pytest.raises(ProductionLearningDatabaseError, match="purged"):
+            restore_learning_backup(candidate, current_copy)
+        assert current_copy.read_bytes() == unchanged
+        assert not list(tmp_path.glob(".current-copy.sqlite3.restore-*"))
 
     after_purge, _after_manifest, _after_inspection = create_learning_backup(
         current_copy,

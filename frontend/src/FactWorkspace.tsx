@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   analyzeLearningArtifact,
   confirmLearningSetup,
@@ -166,6 +166,11 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
   const [setupReviewId, setSetupReviewId] = useState<string>();
   const [state, setState] = useState<LearningState | null>(null);
   const [metrics, setMetrics] = useState<LearningMeasurementReport | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(true);
+  const [metricsError, setMetricsError] = useState("");
+  const mounted = useRef(false);
+  const stateRequest = useRef(0);
+  const metricsRequest = useRef(0);
   const [events, setEvents] = useState<LearningEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -204,26 +209,52 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
   const [correctionForm, setCorrectionForm] = useState({ content: "" });
   const [purgeConfirmation, setPurgeConfirmation] = useState("");
 
-  const loadState = useCallback(async () => {
+  const loadMetrics = useCallback(async () => {
+    const request = ++metricsRequest.current;
+    setMetricsLoading(true);
+    setMetricsError("");
     try {
-      const [nextState, nextMetrics, nextReturn] = await Promise.all([
-        getLearningState(),
-        getLearningMetrics(),
-        getReturnReview(),
-      ]);
-      setState(nextState);
-      setReturnCard(nextReturn);
-      setMetrics(nextMetrics);
-      setError("");
+      const nextMetrics = await getLearningMetrics();
+      if (mounted.current && request === metricsRequest.current) setMetrics(nextMetrics);
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "事实工作台加载失败");
+      if (mounted.current && request === metricsRequest.current) {
+        setMetrics(null);
+        setMetricsError(reason instanceof Error ? reason.message : "指标加载失败");
+      }
     } finally {
-      setLoading(false);
+      if (mounted.current && request === metricsRequest.current) setMetricsLoading(false);
     }
   }, []);
 
+  const loadState = useCallback(async () => {
+    const request = ++stateRequest.current;
+    void loadMetrics();
+    try {
+      const [nextState, nextReturn] = await Promise.all([
+        getLearningState(),
+        getReturnReview(),
+      ]);
+      if (!mounted.current || request !== stateRequest.current) return;
+      setState(nextState);
+      setReturnCard(nextReturn);
+      setError("");
+    } catch (reason: unknown) {
+      if (mounted.current && request === stateRequest.current) {
+        setError(reason instanceof Error ? reason.message : "事实工作台加载失败");
+      }
+    } finally {
+      if (mounted.current && request === stateRequest.current) setLoading(false);
+    }
+  }, [loadMetrics]);
+
   useEffect(() => {
+    mounted.current = true;
     void loadState();
+    return () => {
+      mounted.current = false;
+      stateRequest.current += 1;
+      metricsRequest.current += 1;
+    };
   }, [loadState]);
 
   const loadProviderSettings = useCallback(async () => {
@@ -1819,9 +1850,12 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                 <p className="eyebrow">METRICS</p>
                 <h2>首片指标</h2>
               </div>
-              {!metrics ? (
-                <p className="fact-empty">指标尚未加载。</p>
-              ) : (
+              {metricsLoading && <p className="fact-empty" role="status">正在加载指标…</p>}
+              {metricsError && <div role="alert" className="workspace-alert">
+                <p>指标暂时不可用：{metricsError}</p>
+                <button className="button button--quiet" type="button" onClick={() => void loadMetrics()}>重试指标</button>
+              </div>}
+              {!metricsLoading && !metricsError && metrics && (
                 <div className="fact-metrics">
                   <div>
                     <strong>产品指标</strong>

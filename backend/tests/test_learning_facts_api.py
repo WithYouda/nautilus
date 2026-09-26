@@ -10,7 +10,7 @@ from app.learning_domain import DomainError, Principal
 
 
 def authorize(client):
-    challenge = client.get("/api/auth/challenge").json()["code"]
+    challenge = client.app.state.settings.runtime_token_path.read_text(encoding="utf-8")
     response = client.post("/api/auth/authorize", json={"access_token": challenge})
     assert response.status_code == 200
     return response.json()["identity"]

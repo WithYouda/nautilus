@@ -18,10 +18,6 @@ export type AuthStatus = {
   identity: Identity | null;
 };
 
-export type AuthChallenge = {
-  code: string;
-};
-
 export type TaskType = "study" | "practice" | "review" | "output";
 export type ScheduleMode = "fixed" | "flexible";
 export type TimerMode =
@@ -553,10 +549,6 @@ export function getHealth(): Promise<Health> {
 
 export function getAuthStatus(): Promise<AuthStatus> {
   return request<AuthStatus>("/api/auth/status");
-}
-
-export function getAuthChallenge(): Promise<AuthChallenge> {
-  return request<AuthChallenge>("/api/auth/challenge");
 }
 
 export function authorize(accessToken: string): Promise<AuthStatus> {
