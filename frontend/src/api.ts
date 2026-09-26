@@ -405,6 +405,7 @@ export type AiMessage = {
   generation_trace?: GenerationTrace | null;
   help_record?: HelpRecord | null;
   source_scope?: AppliedSourceScope | null;
+  inherited_from?: { conversation_id: string; message_id: string } | null;
 };
 export type SourceScope = { mode: 'unspecified' | 'reference' | 'only'; version_ids: string[]; conflict_policy?: 'ask' | 'balanced' | 'materials' };
 export type AppliedSourceScope = SourceScope & {
@@ -413,7 +414,7 @@ export type AppliedSourceScope = SourceScope & {
   fingerprint: string;
   purged?: boolean;
 };
-export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; provenance?: Record<string, unknown> };
+export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; inherited?: boolean; provenance?: Record<string, unknown> };
 export type MaterialKind = 'conversation' | 'discussion';
 export function getMaterials(kind: MaterialKind, id: string): Promise<{ versions: MaterialVersion[] }> {
   return request(`/api/materials/${kind}/${id}`);
@@ -456,6 +457,8 @@ export type AiConversationDetail = {
   context: AiLearningContext | null;
   messages: AiMessage[];
   active_run: AiRun | null;
+  branch_origin?: { conversation_id: string; message_id: string } | null;
+  branch_source_scope?: SourceScope | null;
 };
 
 export type AiSendResult = {
@@ -914,6 +917,12 @@ export function createAiConversation(
 
 export function getAiConversation(conversationId: string): Promise<AiConversationDetail> {
   return request<AiConversationDetail>(`/api/ai/conversations/${conversationId}`);
+}
+
+export function branchAiConversation(conversationId: string, messageId: string, requestKey: string): Promise<AiConversationDetail> {
+  return request<AiConversationDetail>(`/api/ai/conversations/${conversationId}/branches`, {
+    method: 'POST', body: JSON.stringify({ message_id: messageId, request_key: requestKey }),
+  });
 }
 
 export function renameAiConversation(conversationId: string, title: string): Promise<AiConversationDetail> {

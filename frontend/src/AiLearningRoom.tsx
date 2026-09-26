@@ -1,4 +1,4 @@
-import useConversationSearch from './useConversationSearch';
+import useConversationSearch, { writeConversationSearch } from './useConversationSearch';
 import useReplyHistory from "./useReplyHistory";
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
@@ -11,12 +11,13 @@ import type { SearchTrace } from "./SearchResults";
 import AssistantResponse, { type GenerationTrace } from "./AssistantResponse";
 import HelpControls from "./HelpControls";
 import HelpRecord, { HelpRecordFacts } from "./HelpRecord";
-import TaskMaterials, { MaterialUse, emptySourceScope, readSourceScope, webMaterialCandidates } from './TaskMaterials';
+import TaskMaterials, { MaterialUse, emptySourceScope, readSourceScope, writeSourceScope, webMaterialCandidates } from './TaskMaterials';
 import {
   ApiError,
   recordLearningRoomEntry,
   recordAiHelpDisplay,
   cancelAiRun,
+  branchAiConversation,
   clearAiConversationConfig,
   createAiConversation,
   deleteAiConversation,
@@ -319,6 +320,9 @@ export default function AiLearningRoom({
   const pendingContentRef = useRef<string | null>(null);
   const initialDraftSentRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
+  const branchKeysRef = useRef<Record<string, string>>({});
+  const branchBusyRef = useRef(false);
+  const [branchBusy, setBranchBusy] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [sourceScope, setSourceScope] = useState<SourceScope>(emptySourceScope);
   const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
@@ -738,7 +742,7 @@ export default function AiLearningRoom({
   }
 
   async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
-    if (!entryReady || !content || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
+    if (!entryReady || !content || branchBusyRef.current || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
     if (!searchChoice.ready) { setError("正在读取联网设置，请稍后发送。"); return false; }
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本，或改为未指定资料。'); return false; }
     const unresolved = pendingSubmissionRef.current;
@@ -865,6 +869,7 @@ export default function AiLearningRoom({
   }
 
   function handleNewConversation() {
+    if (branchBusyRef.current) return;
     abortRef.current?.abort();
     runIdRef.current = null;
     pendingSubmissionRef.current = null;
@@ -885,6 +890,7 @@ export default function AiLearningRoom({
   }
 
   async function handleConversationSwitch(id: string) {
+    if (branchBusyRef.current) return;
     if (id === conversationId) {
       setOpenLayer(null);
       return;
@@ -904,6 +910,28 @@ export default function AiLearningRoom({
       if (!mountedRef.current) return;
       setStatus("failed");
       setError(reason instanceof Error ? reason.message : "切换对话失败");
+    }
+  }
+
+  async function handleBranch(messageId: string) {
+    if (!conversationId || !detail || branchBusyRef.current || sendingRef.current || pendingSubmissionRef.current || currentRun || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status)) return;
+    const sourceId = conversationId;
+    const key = `${sourceId}:${messageId}`;
+    const requestKey = branchKeysRef.current[key] ?? crypto.randomUUID();
+    branchKeysRef.current[key] = requestKey;
+    branchBusyRef.current = true; setBranchBusy(true); setError('');
+    try {
+      const created = await branchAiConversation(sourceId, messageId, requestKey);
+      if (!mountedRef.current) return;
+      const nextId = created.conversation.id;
+      if (created.branch_source_scope) writeSourceScope('conversation', created.conversation.identity_id, nextId, created.branch_source_scope);
+      writeConversationSearch('conversation', created.conversation.identity_id, nextId, searchSelection);
+      await activateConversation(nextId);
+      delete branchKeysRef.current[key];
+    } catch (reason) {
+      if (mountedRef.current) setError(reason instanceof Error ? reason.message : '创建独立对话失败，请重试。');
+    } finally {
+      branchBusyRef.current = false; if (mountedRef.current) setBranchBusy(false);
     }
   }
 
@@ -990,7 +1018,7 @@ export default function AiLearningRoom({
   const activeModel = activeProvider?.models?.find((item) => item.id === selectedModelId) ?? activeProvider?.default_model ?? null;
   const selectedConfigValue = selectedProviderId && selectedModelId ? `${selectedProviderId}::${selectedModelId}` : "";
   const conversationTitle = detail?.conversation.title ?? "新的学习对话";
-  const canSend = entryReady && searchChoice.ready && Boolean(
+  const canSend = entryReady && !branchBusy && searchChoice.ready && Boolean(
     activeProvider?.has_api_key && activeProvider.enabled && (!selectedModelId || (activeModel?.enabled && activeModel.discovery_status !== "unavailable")),
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
 
@@ -1012,7 +1040,7 @@ export default function AiLearningRoom({
     <div className="ai-room" style={verificationOpen || completionOpen || discussionId ? { display: "none" } : undefined}>
       <header className="ai-room-header">
         <div className="ai-room-heading">
-          <button className="button button--quiet button--compact button--with-icon" onClick={onBack} aria-label="返回工作区">
+          <button className="button button--quiet button--compact button--with-icon" onClick={onBack} disabled={branchBusy} aria-label="返回工作区">
             <ArrowLeft size={15} /><span>返回工作区</span>
           </button>
           <div>
@@ -1038,7 +1066,7 @@ export default function AiLearningRoom({
             </button>
             {openLayer === "history" && <div id="ai-conversation-history-panel" className="ai-layer-panel ai-history-panel">
               <div className="ai-layer-heading"><div><small>HISTORY</small><strong>学习对话</strong></div><button className="icon-button" type="button" onClick={() => setOpenLayer(null)} aria-label="关闭对话历史"><X size={15} /></button></div>
-              <button className="button button--quiet button--with-icon ai-history-new" type="button" onClick={handleNewConversation}><Plus size={13} />新建{scopeNoun(effectiveScope)}对话</button>
+              <button className="button button--quiet button--with-icon ai-history-new" type="button" disabled={branchBusy} onClick={handleNewConversation}><Plus size={13} />新建{scopeNoun(effectiveScope)}对话</button>
               {historyActionError && <p className="ai-history-action-error" role="alert">{historyActionError}</p>}
               <div className="ai-history-list" aria-label="对话列表">
                 {historyLoading ? <p className="ai-history-state">正在加载对话…</p> : historyError ? <p className="ai-history-state is-error" role="alert">{historyError}</p> : conversations.length === 0 ? <p className="ai-history-state">还没有历史对话。</p> : conversations.map((item) => {
@@ -1064,7 +1092,7 @@ export default function AiLearningRoom({
                       <button className="icon-button" type="submit" aria-label="保存对话标题" title="保存" disabled={busy || !editingTitle.trim()}><Check size={14} /></button>
                       <button className="icon-button" type="button" aria-label="取消修改标题" title="取消" disabled={busy} onClick={handleCancelRename}><X size={14} /></button>
                     </form> : <>
-                      <button className="ai-history-select" type="button" aria-current={item.id === conversationId ? "true" : undefined} onClick={() => void handleConversationSwitch(item.id)}>
+                      <button className="ai-history-select" type="button" disabled={branchBusy} aria-current={item.id === conversationId ? "true" : undefined} onClick={() => void handleConversationSwitch(item.id)}>
                         <span><strong>{item.title}</strong><small>{scope}</small></span>
                         {item.id === conversationId && <span className="ai-history-current">当前</span>}
                       </button>
@@ -1142,23 +1170,24 @@ export default function AiLearningRoom({
               <p className="ai-title-note">{detail?.conversation.title_generation_status === "failed" ? "上次标题生成失败，当前保留本地标题。" : "首轮回答成功后自动生成一次；也可在这里手动重生成。"}</p>
             </div>}
           </div>
-          <button className="button button--quiet button--compact button--with-icon" onClick={onProviderOpen} aria-label="AI 提供方设置" title="AI 提供方设置">
+          <button className="button button--quiet button--compact button--with-icon" onClick={onProviderOpen} disabled={branchBusy} aria-label="AI 提供方设置" title="AI 提供方设置">
             <SlidersHorizontal size={15} /><span>AI 提供方设置</span>
           </button>
-              {learningBrief?.action_id && learningBrief.delegation_id && <button className="button button--accent button--compact button--with-icon" type="button" aria-label={verificationCompleted ? "查看验证结果" : "进入验证"} onClick={() => setVerificationOpen(true)}>
+              {learningBrief?.action_id && learningBrief.delegation_id && <button className="button button--accent button--compact button--with-icon" type="button" disabled={branchBusy} aria-label={verificationCompleted ? "查看验证结果" : "进入验证"} onClick={() => setVerificationOpen(true)}>
             <ShieldCheck size={15} /><span>{verificationCompleted ? "查看验证结果" : "进入验证"}</span>
           </button>}
-          <button className="icon-button icon-button--bordered" onClick={handleNewConversation} title="新建对话" aria-label="新建对话"><Plus size={16} /></button>
+          <button className="icon-button icon-button--bordered" onClick={handleNewConversation} disabled={branchBusy} title="新建对话" aria-label="新建对话"><Plus size={16} /></button>
         </div>
       </header>
 
     {learningBrief && <><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
-        <button className="button button--quiet" onClick={async () => { try { const card = await getReturnReview(); if (card) await chooseReturnReview(card.id, "stop_for_now", `room-stop:${card.id}`); onBack(); } catch (reason) { setError(reason instanceof Error ? reason.message : "暂停未保存"); } }}>今天先停</button>
+        <button className="button button--quiet" disabled={branchBusy} onClick={async () => { try { const card = await getReturnReview(); if (card) await chooseReturnReview(card.id, "stop_for_now", `room-stop:${card.id}`); onBack(); } catch (reason) { setError(reason instanceof Error ? reason.message : "暂停未保存"); } }}>今天先停</button>
         {learningBrief.delegation_id && !learningBrief.history_only && <button className="button button--quiet" type="button" aria-expanded={completionOpen} onClick={() => setCompletionOpen(value => !value)}>记录本次完成</button>}
         {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}
       </div></>}
 
       <LearningChatPanel title={conversationTitle} autoFollow={!editingMessageId && (replyHistory.following || status === "submitting")} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
+          {detail?.branch_origin && <p className="ai-branch-origin">从另一对话分出 · <button className="text-button" type="button" disabled={branchBusy} onClick={() => void handleConversationSwitch(detail.branch_origin!.conversation_id)}>返回原对话</button></p>}
           {searchChoice.error && <p role="status">{searchChoice.error}</p>}
           {error && <div className="ai-room-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div>}
           {status === "failed" && pendingSubmissionRef.current?.helpRequest && pendingContentRef.current && <button className="button button--quiet ai-retry-button button--with-icon" type="button" onClick={() => void submitMessage(pendingContentRef.current!, true, undefined, undefined, pendingSubmissionRef.current!.helpRequest)}><RefreshCw size={15} />重试发送帮助请求</button>}
@@ -1175,7 +1204,7 @@ export default function AiLearningRoom({
                 ? detail!.messages.filter(item => item.role === 'user' && (item.question_version_id ?? item.id) === (message.question_version_id ?? message.id))
                 : detail!.messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
               const versionIndex = versions.findIndex(item => item.id === message.id);
-              return <MessageBubble key={message.id} message={message} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)}
+              return <MessageBubble key={message.id} message={message} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)} branchDisabled={message.status === 'streaming' || Boolean(message.source_scope?.purged) || branchBusy || sendingRef.current || Boolean(pendingSubmissionRef.current) || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId)} onBranch={message.role === 'assistant' ? () => void handleBranch(message.id) : undefined}
                 onHelpDisplay={async characters => {
                   try {
                     const record = await recordAiHelpDisplay(message.conversation_id, message.id, characters);
@@ -1190,7 +1219,7 @@ export default function AiLearningRoom({
                   }
                 }}
                 editing={editingMessageId === message.id}
-                editDisabled={!entryReady || Boolean(currentRun) || status === "submitting" || (Boolean(editingMessageId) && editingMessageId !== message.id)}
+                editDisabled={!entryReady || branchBusy || Boolean(currentRun) || status === "submitting" || (Boolean(editingMessageId) && editingMessageId !== message.id)}
                 sendDisabled={!canSend}
                 onStartEdit={() => setEditingMessageId(message.id)}
                 onCancelEdit={() => {
@@ -1202,7 +1231,7 @@ export default function AiLearningRoom({
                   }
                 }}
                 onSendEdit={text => submitMessage(text, true, undefined, message.id)}
-                version={{ disabled: Boolean(currentRun) || status === "submitting" || Boolean(editingMessageId), index: versionIndex, count: versions.length,
+                version={{ disabled: branchBusy || Boolean(currentRun) || status === "submitting" || Boolean(editingMessageId), index: versionIndex, count: versions.length,
                   onPrevious: () => replyHistory.switchVersion(versions[versionIndex - 1].id),
                   onNext: () => replyHistory.switchVersion(versions[versionIndex + 1].id) }}
                 onRetry={message.role === 'assistant' ? () => {
@@ -1281,9 +1310,10 @@ function ConversationHelpDialog({ messages, title, failedDisplays, triggerRef, o
           const answerIndex = answerVersions.findIndex(item => item.id === message.id) + 1;
           return <article key={message.id} className="ai-help-dialog-entry">
             <h3>问题版本 {questionIndex || '?'} / {questionVersions.length || '?'} · 回答版本 {answerIndex} / {answerVersions.length}</h3>
+            {message.inherited_from && <p>原对话记录</p>}
             <p className="ai-help-dialog-question">{question?.content ?? '原问题不可用'}</p>
             <HelpRecordFacts record={message.help_record!} />
-            {failedDisplays[message.id] && !message.help_record?.display && <p role="alert">页面呈现记录未保存。
+            {!message.inherited_from && failedDisplays[message.id] && !message.help_record?.display && <p role="alert">页面呈现记录未保存。
               <button className="text-button" type="button" disabled={retryingId === message.id} onClick={async () => {
                 setRetryingId(message.id); setRetryErrorId(null);
                 try { await onRetryDisplay(message); } catch { setRetryErrorId(message.id); }
@@ -1394,8 +1424,8 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message, automatic = false, onRetry, retryDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
-  message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; materialVersions: MaterialVersion[];
+function MessageBubble({ message, automatic = false, onRetry, retryDisabled, onBranch, branchDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
+  message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; materialVersions: MaterialVersion[];
   onHelpDisplay: (characters: number) => Promise<NonNullable<AiMessage['help_record']>>;
   version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
   editing: boolean; editDisabled: boolean; sendDisabled: boolean; onStartEdit: () => void; onCancelEdit: () => void; onSendEdit: (text: string) => Promise<boolean>;
@@ -1406,10 +1436,11 @@ function MessageBubble({ message, automatic = false, onRetry, retryDisabled, ver
     onStartEdit={onStartEdit} onCancelEdit={onCancelEdit} onSendEdit={onSendEdit} />;
   return (
     <LearningMessage role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
+      {message.inherited_from && <small className="ai-inherited-answer">继承的历史回答</small>}
       <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
       <MaterialUse scope={message.source_scope} versions={materialVersions} />
-      <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />
-      <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} />
+      {!message.inherited_from && <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />}
+      <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} onBranch={onBranch} branchDisabled={branchDisabled} />
     </LearningMessage>
   );
 }

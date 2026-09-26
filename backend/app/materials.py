@@ -43,7 +43,29 @@ class MaterialService:
         rows = self.db.fetchall('''SELECT id,material_id,version,title,content,url,content_kind,provenance_json,
             created_at,purged_at FROM learning_task_material WHERE owner_id=? AND scope_kind=? AND scope_id=?
             ORDER BY created_at,version''', (owner, kind, scope_id))
-        return {'versions': [dict(row) for row in rows]}
+        versions = [dict(row) for row in rows]
+        owned_ids = {row['id'] for row in versions}
+        for version_id in self.inherited_versions(owner, kind, scope_id):
+            if version_id in owned_ids:
+                continue
+            row = self.db.fetchone('''SELECT id,material_id,version,title,content,url,content_kind,
+                provenance_json,created_at,purged_at FROM learning_task_material WHERE id=? AND owner_id=?''',
+                (version_id, owner))
+            if row:
+                versions.append({**dict(row), 'inherited': True})
+        return {'versions': versions}
+
+    def inherited_versions(self, owner, kind, scope_id):
+        if kind != 'conversation':
+            return set()
+        # Only server-created branch copies grant access to these immutable IDs.
+        result = set()
+        for row in self.conversations.database.fetchall('''SELECT config_snapshot_json FROM ai_run
+                WHERE identity_id=? AND conversation_id=?
+                  AND json_type(config_snapshot_json,'$.branch_origin')='object' ''', (owner, scope_id)):
+            snapshot = json.loads(row[0])
+            result.update(snapshot.get('branch_material_version_ids', []))
+        return result
 
     def _web_item(self, owner, kind, scope_id, run_id, item_index):
         if not isinstance(item_index, int) or isinstance(item_index, bool) or item_index < 0:
@@ -140,10 +162,15 @@ class MaterialService:
             if (selection['mode'] == 'unspecified' and ids) or (selection['mode'] != 'unspecified' and not ids):
                 raise DomainError('invalid_material_selection', 422)
             materials = []
+            inherited = self.inherited_versions(owner, kind, scope_id)
             for version_id in ids:
                 row = self.db.fetchone('''SELECT id,material_id,version,title,content,url,content_kind
                     FROM learning_task_material WHERE id=? AND owner_id=? AND scope_kind=? AND scope_id=?
                     AND purged_at IS NULL''', (version_id, owner, kind, scope_id))
+                if row is None and version_id in inherited:
+                    row = self.db.fetchone('''SELECT id,material_id,version,title,content,url,content_kind
+                        FROM learning_task_material WHERE id=? AND owner_id=? AND purged_at IS NULL''',
+                        (version_id, owner))
                 if row is None:
                     raise DomainError('material_not_found', 404)
                 materials.append(dict(row))

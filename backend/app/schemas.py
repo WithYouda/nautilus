@@ -642,3 +642,8 @@ class QuestionDiscussionMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=12000)
     request_key: str = Field(min_length=1, max_length=200)
     retry: bool = False
+
+
+class ConversationBranchRequest(BaseModel):
+    message_id: str = Field(min_length=1)
+    request_key: str = Field(min_length=1)

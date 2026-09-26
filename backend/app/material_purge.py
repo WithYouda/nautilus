@@ -31,7 +31,8 @@ def _marker(snapshot, material_ids):
         old = {}
     # Keep reply lineage so existing UI history remains navigable.
     all_ids = list(dict.fromkeys([*(old.get('source_scope') or {}).get('material_ids', []), *material_ids]))
-    return json.dumps({'reply':old.get('reply', {}),
+    return json.dumps({**{key:old[key] for key in ('branch_origin', 'branch_material_version_ids') if key in old},
+                       'reply':old.get('reply', {}),
                        'source_scope':{'purged':True,'material_ids':all_ids}}, ensure_ascii=False)
 
 
@@ -250,7 +251,8 @@ def purge(service, identity, material_id):
     row = service.db.fetchone('SELECT scope_kind,scope_id FROM learning_task_material WHERE owner_id=? AND material_id=? LIMIT 1', (owner,material_id))
     if row is None:
         raise DomainError('not_found',404)
-    service.owned_scope(identity,row['scope_kind'],row['scope_id'])
+    # The owner check above remains valid after the originating chat is soft-deleted.
+    # HTTP callers also verify that this group belongs to their current scope or branch.
     learning_path = service.db.database_path
     ordinary_path = service.conversations.database.database_path
     report_path = receipt_path(learning_path,owner,'material',material_id)

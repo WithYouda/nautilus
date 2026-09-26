@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { getPreferences } from './preferences';
 import type { SearchSelection } from './SearchControls';
 
+export function writeConversationSearch(kind: string, identity: string, id: string, selection: SearchSelection) {
+  try { localStorage.setItem(`nautilus.search-selection:${identity}:${kind}:${id}`, JSON.stringify(selection)); } catch { /* Current selection remains usable. */ }
+}
+
 // Defaults are account settings; overrides belong to one conversation on this browser.
 export default function useConversationSearch(kind: string, identity: string | null, id: string | null) {
   const key = identity && id ? `nautilus.search-selection:${identity}:${kind}:${id}` : null;

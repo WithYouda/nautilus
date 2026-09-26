@@ -1451,6 +1451,10 @@ class ConversationService:
             reply = snapshot.get("reply", {})
             item["source_scope"] = public_scope(snapshot.get("source_scope"), item["content"])
             if item["role"] == "assistant":
+                if snapshot.get('branch_origin'):
+                    origin = snapshot['branch_origin']
+                    item['inherited_from'] = {'conversation_id': origin['conversation_id'],
+                                              'message_id': origin['source_message_id']}
                 item["search_trace"] = snapshot.get("search_trace")
                 item["generation_trace"] = snapshot.get("generation_trace")
                 item["help_record"] = public_help(snapshot, item["content"], item["status"], item["updated_at"] if item["status"] != "streaming" else None)
@@ -1483,7 +1487,7 @@ class ConversationService:
             if characters < 1 or characters > len(row["content"]):
                 raise ConversationError("展示字符数超出回答正文")
             snapshot = json.loads(row["config_snapshot_json"] or "{}")
-            if record_display(snapshot, characters, _now()):
+            if not snapshot.get('branch_origin') and record_display(snapshot, characters, _now()):
                 connection.execute("UPDATE ai_run SET config_snapshot_json=? WHERE id=?", (json.dumps(snapshot, ensure_ascii=False), row["run_id"]))
             return public_help(snapshot, row["content"], row["status"], row["updated_at"])
 
@@ -1508,7 +1512,9 @@ class ConversationService:
         except ConversationError:
             # 关联节点可能已被软删除；对话本身仍然可读。
             context = None
+        from .conversation_branches import branch_metadata
         return {
+            **branch_metadata(self, identity_id, conversation_id),
             "conversation": conversation,
             "context": context,
             "messages": self.list_messages(identity_id, conversation_id),

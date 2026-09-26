@@ -12,6 +12,7 @@ from ..providers import ProviderError, build_provider
 from ..schemas import (
     ConversationConfigRequest,
     ConversationCreateRequest,
+    ConversationBranchRequest,
     ConversationUpdateRequest,
     ModelManualRequest,
     MessageSendRequest,
@@ -593,3 +594,14 @@ async def cancel_run(
     except ConversationError as error:
         _raise(error)
     return {"run": _public_run(run)}
+
+
+@router.post("/conversations/{conversation_id}/branches", status_code=201)
+def branch_conversation(conversation_id: str, payload: ConversationBranchRequest, request: Request,
+                        identity=Depends(current_identity)):
+    from ..conversation_branches import create_branch
+    try:
+        return create_branch(conversation_service(request), identity['id'], conversation_id,
+                             payload.message_id, payload.request_key)
+    except ConversationError as error:
+        _raise(error)
