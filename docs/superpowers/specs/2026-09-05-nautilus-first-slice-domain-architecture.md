@@ -28,6 +28,8 @@
 
 ### 状态机与完成边界
 
+下表描述当前代码的AI验证完成路径。09-26已确认另允许用户明确记录执行完成，新路径尚未实现；不能继续将表内AI验证前置条件当作所有完成方式的产品限制。
+
 | 对象 | 状态及边界 |
 | --- | --- |
 | Action | open → completed；库还保留 cancelled；最后开放委托完成才关闭行动 |
@@ -38,6 +40,8 @@
 | Derived State | awaiting_evidence / pending_review / insufficient_evidence / partially_supported / supported / contradicted（简称 awaiting/pending/insufficient/partial） |
 
 对象之间没有 completed 的一一映射。supported 仅表示当前标准版本和实际范围内支持，不是通用掌握或长期保持。用户自报独立性与执行检测结果分别展示。
+
+09-26新增完成契约（待实现，FOLLOWUP-COMPLETION-001）：执行完成、原验证来源/结果、材料是否提供、后续AI审查分别表达。覆盖未验证、非AI验证附材料、外部独立验证未附材料；后者可记录用户报告的考试等结果，无材料不阻止记录完成。用户报告与平台已核验不同，上传文件不能直接生成human_review来源或passed结果；后续AI意见不改写原结果。只完成本次委托，其他开放委托仍保留；不自动关闭整个目标、降低证据标准或回填历史来源。具体命令、事件、字段和迁移待设计，本次不改现有状态机或旧记录。材料审查建议见产品决定第8.2节，不作为已实现执行链。
 
 ### 删除影响矩阵
 
