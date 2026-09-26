@@ -7,4 +7,9 @@
 .task-material-list { max-height: 12rem; overflow: auto; padding-left: 1.25rem; }
 .task-material-list li { margin: .5rem 0; }
 .task-material-list input[type=checkbox] { margin-right: .4rem; }
+.task-material-list label { display: flex; align-items: baseline; gap: .25rem; }
+.task-material-list details { margin: .35rem 0 .6rem 1.25rem; }
+.task-material-list details > div { border-top: 1px solid var(--line, #ddd); padding: .5rem 0; }
+.task-material-upload { padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
+.task-material-upload input { font: inherit; }
 .task-material-use { margin: .5rem 0; font-size: .9em; }

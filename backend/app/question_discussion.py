@@ -14,7 +14,7 @@ from .search_adapters import SearchError
 from .search_runtime import external_stream, apply_native_event
 from .generation_trace import GenerationRecorder, interrupt_trace
 from .help_records import HELP_PROMPTS, public_help, record_display
-from .source_runtime import material_guard, scope_key, public_scope
+from .source_runtime import material_guard, scope_key, public_scope, compatible_scope
 
 
 class QuestionDiscussionService:
@@ -281,7 +281,7 @@ class QuestionDiscussionService:
                 path.reverse()
                 history_path = []
                 for item in reversed(path):
-                    if scope_key(by_id[item].get('source_scope')) != scope_key(frozen):
+                    if not compatible_scope(by_id[item].get('source_scope'), frozen):
                         break
                     history_path.append(item)
                 history_path.reverse()
@@ -306,7 +306,7 @@ class QuestionDiscussionService:
             preparation_error = None
             try:
                 prepared_runtime = self.verification._runtime(owner, discussion['session_id'])
-                if getattr(self.chats, 'search_service', None) and not material_bound:
+                if getattr(self.chats, 'search_service', None):
                     search_run = self.chats.search_service.prepare(owner, search, prepared_runtime[1].provider_kind)
             except (SearchError, ConversationError, DomainError) as error:
                 preparation_error = error

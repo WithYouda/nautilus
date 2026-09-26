@@ -20,15 +20,21 @@ def scope_key(scope):
 
 
 def scoped_path(path, scope):
-    """Only a continuous suffix in the same scope may continue the model turn."""
+    """Normal references keep discussion continuity; strict scopes stay isolated."""
     kept = []
     for item in reversed(path):
         paired_question = (kept and kept[-1].get('role') == 'assistant'
                            and kept[-1].get('parent_message_id') == item.get('id'))
-        if not paired_question and scope_key(item.get('source_scope')) != scope_key(scope):
+        if not paired_question and not compatible_scope(item.get('source_scope'), scope):
             break
         kept.append(item)
     return list(reversed(kept))
+
+
+def compatible_scope(previous, current):
+    if (current or {}).get('mode') == 'reference':
+        return not (previous or {}).get('purged') and (previous or {}).get('mode', 'unspecified') in ('unspecified', 'reference')
+    return scope_key(previous) == scope_key(current)
 
 
 def public_scope(scope, answer=''):

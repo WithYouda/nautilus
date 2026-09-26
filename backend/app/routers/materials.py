@@ -1,13 +1,17 @@
 from typing import Literal
 import json
+from urllib.parse import unquote
+from pathlib import PurePath
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from ..dependencies import current_identity
 from ..learning_domain import DomainError
 from ..purge_storage import receipt_path
 from ..managed_purge import EXTERNAL_LIMITS
+from ..material_files import MAX_FILE_BYTES, extract_material_text
 
 router = APIRouter(prefix='/api/materials')
 ScopeKind = Literal['conversation', 'discussion']
@@ -40,6 +44,26 @@ def create_material(scope_kind: ScopeKind, scope_id: str, payload: MaterialCreat
                     request: Request, identity=Depends(current_identity)):
     try:
         return request.app.state.materials.create(identity, scope_kind, scope_id, **payload.model_dump())
+    except DomainError as error:
+        fail(error)
+
+
+@router.post('/{scope_kind}/{scope_id}/upload', status_code=201)
+async def upload_material(scope_kind: ScopeKind, scope_id: str, request: Request,
+                          identity=Depends(current_identity)):
+    try:
+        service = request.app.state.materials
+        # Resolve ownership before reading or parsing untrusted bytes.
+        with service.lock:
+            service.owned_scope(identity, scope_kind, scope_id)
+        name = PurePath(unquote(request.headers.get('x-filename', '')).replace('\\', '/')).name
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > MAX_FILE_BYTES:
+                raise DomainError('material_file_too_large', 413)
+        content = await run_in_threadpool(extract_material_text, name, bytes(raw))
+        return await run_in_threadpool(service.create, identity, scope_kind, scope_id, title=name, content=content)
     except DomainError as error:
         fail(error)
 

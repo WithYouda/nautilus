@@ -23,7 +23,7 @@ function Parameters({ schema, value, onChange, disabled }: { schema?: SearchPara
   })}</div>;
 }
 export { Parameters as SearchParameters };
-export default function SearchControls({ value, onChange, disabled, providerKind, onOpenSettings }: { value: SearchSelection; onChange: (value: SearchSelection) => void; disabled?: boolean; providerKind?: string; onOpenSettings?: () => void }) {
+export default function SearchControls({ value, onChange, disabled, providerKind, onOpenSettings, onReset, overridden }: { value: SearchSelection; onChange: (value: SearchSelection) => void; disabled?: boolean; providerKind?: string; onOpenSettings?: () => void; onReset?: () => void; overridden?: boolean }) {
   const [services, setServices] = useState<SearchService[]>([]);
   const [catalog, setCatalog] = useState<SearchCatalogItem[]>([]);
   const [defaultId, setDefaultId] = useState<string | null>(null);
@@ -44,11 +44,10 @@ export default function SearchControls({ value, onChange, disabled, providerKind
     void load(); window.addEventListener('nautilus:search-settings-changed', load);
     return () => { active = false; window.removeEventListener('nautilus:search-settings-changed', load); };
   }, []);
-  const selectedId = value.service_id ?? (value.mode === 'external' ? '' : defaultId ?? '');
+  const selectedId = value.service_id ?? defaultId ?? '';
   const service = services.find((entry) => entry.id === selectedId);
   const definition = useMemo(() => catalog.find((entry) => entry.kind === service?.kind), [catalog, service?.kind]);
   const nativeAllowed = nativeKinds.has(providerKind ?? '');
-  useEffect(() => { if (value.mode === 'native' && !nativeAllowed) onChange({ mode: 'off' }); }, [nativeAllowed, value.mode]);
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   useEffect(() => {
     if (!open) return;
@@ -105,6 +104,8 @@ export default function SearchControls({ value, onChange, disabled, providerKind
     {open && createPortal(<div className="search-picker-layer"><div ref={panelRef} className="search-picker-panel" style={window.innerWidth > 700 && position ? position : undefined} role="dialog" aria-label="联网搜索选择" tabIndex={-1}>
       <div className="search-picker-header"><strong>联网搜索</strong><div><button type="button" className="search-picker-icon-button" aria-label="搜索设置" onClick={() => { close(); onOpenSettings ? onOpenSettings() : window.dispatchEvent(new Event('nautilus:open-search-settings')); }}><Settings2 size={17} /></button><button type="button" className="search-picker-icon-button" aria-label="关闭搜索选择" onClick={close}><X size={18} /></button></div></div>
       {error && <p className="form-error" role="alert">{error}</p>}
+      {onReset && <p className="form-hint">{overridden ? '当前对话已单独设置' : '沿用设置页默认值'}{overridden && <button type="button" className="text-button" onClick={() => { onReset(); close(); }}>恢复默认</button>}</p>}
+      {value.mode === 'native' && !nativeAllowed && <p className="form-error">当前模型不支持内置搜索，请选择其他联网方式或关闭。</p>}
       <div className="search-picker-options" role="group" aria-label="本轮搜索模式">
         <button type="button" className={value.mode === 'off' ? 'is-active' : ''} onClick={() => changeMode('off')}><Search size={17} /><span><strong>关闭</strong><small>不使用联网搜索</small></span>{value.mode === 'off' && <Check size={16} />}</button>
         <button type="button" className={value.mode === 'external' ? 'is-active' : ''} onClick={() => changeMode('external')}><Globe2 size={17} /><span><strong>外部服务</strong><small>{value.mode === 'external' ? service?.name ?? '请选择服务' : services.find((entry) => entry.id === (lastExternalId.current ?? defaultId))?.name ?? '选择已配置服务'}</small></span>{value.mode === 'external' && <Check size={16} />}</button>

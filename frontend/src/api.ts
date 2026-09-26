@@ -406,7 +406,7 @@ export type AiMessage = {
   help_record?: HelpRecord | null;
   source_scope?: AppliedSourceScope | null;
 };
-export type SourceScope = { mode: 'unspecified' | 'reference' | 'only'; version_ids: string[] };
+export type SourceScope = { mode: 'unspecified' | 'reference' | 'only'; version_ids: string[]; conflict_policy?: 'ask' | 'balanced' | 'materials' };
 export type AppliedSourceScope = SourceScope & {
   material_ids: string[];
   materials: Array<{ id: string; material_id: string; version: number; title: string; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; cited: boolean }>;

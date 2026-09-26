@@ -1,3 +1,4 @@
+import useConversationSearch from './useConversationSearch';
 import useReplyHistory from "./useReplyHistory";
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
@@ -319,7 +320,6 @@ export default function AiLearningRoom({
   const initialDraftSentRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [searchSelection, setSearchSelection] = useState<SearchSelection>({ mode: "off" });
   const [sourceScope, setSourceScope] = useState<SourceScope>(emptySourceScope);
   const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
 
@@ -331,10 +331,12 @@ export default function AiLearningRoom({
 
   const currentRun = detail?.active_run ?? null;
   const conversationId = detail?.conversation.id ?? null;
+  const searchChoice = useConversationSearch("conversation", detail?.conversation.identity_id ?? null, conversationId);
+  const searchSelection = searchChoice.value;
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id);
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
 
-  useEffect(() => { setEditingMessageId(null); setSearchSelection({ mode: "off" }); setSourceScope(detail?.conversation ? readSourceScope('conversation', detail.conversation.identity_id, detail.conversation.id) : emptySourceScope()); setMaterialVersions([]); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
+  useEffect(() => { setEditingMessageId(null); setSourceScope(detail?.conversation ? readSourceScope('conversation', detail.conversation.identity_id, detail.conversation.id) : emptySourceScope()); setMaterialVersions([]); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
 
   conversationIdRef.current = conversationId;
   currentRunRef.current = currentRun;
@@ -620,12 +622,12 @@ export default function AiLearningRoom({
 
   useEffect(() => {
     const content = initialDraft?.trim();
-    if (!content || status !== "idle" || detail?.messages.some((message) => message.role === "user") || initialDraftSentRef.current === content) return;
+    if (!searchChoice.ready || !content || status !== "idle" || detail?.messages.some((message) => message.role === "user") || initialDraftSentRef.current === content) return;
     const timer = window.setTimeout(() => {
       if (mountedRef.current) void submitMessage(content);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [detail, initialDraft, provider, providers, status]);
+  }, [detail, initialDraft, provider, providers, status, searchChoice.ready]);
 
 
   useEffect(() => {
@@ -734,6 +736,7 @@ export default function AiLearningRoom({
 
   async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
     if (!entryReady || !content || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
+    if (!searchChoice.ready) { setError("正在读取联网设置，请稍后发送。"); return false; }
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本，或改为未指定资料。'); return false; }
     const unresolved = pendingSubmissionRef.current;
     if (unresolved && (pendingContentRef.current !== content || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
@@ -771,7 +774,7 @@ export default function AiLearningRoom({
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, source_scope: frozenScope, ...(frozenScope.mode === 'unspecified' && frozenSearch.mode !== "off" ? { search: frozenSearch } : {}) });
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, source_scope: frozenScope, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}) });
       if (!mountedRef.current) return false;
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
       pendingSubmissionRef.current = null;
@@ -984,7 +987,7 @@ export default function AiLearningRoom({
   const activeModel = activeProvider?.models?.find((item) => item.id === selectedModelId) ?? activeProvider?.default_model ?? null;
   const selectedConfigValue = selectedProviderId && selectedModelId ? `${selectedProviderId}::${selectedModelId}` : "";
   const conversationTitle = detail?.conversation.title ?? "新的学习对话";
-  const canSend = entryReady && Boolean(
+  const canSend = entryReady && searchChoice.ready && Boolean(
     activeProvider?.has_api_key && activeProvider.enabled && (!selectedModelId || (activeModel?.enabled && activeModel.discovery_status !== "unavailable")),
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
 
@@ -1153,6 +1156,7 @@ export default function AiLearningRoom({
       </div></>}
 
       <LearningChatPanel title={conversationTitle} autoFollow={!editingMessageId && (replyHistory.following || status === "submitting")} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
+          {searchChoice.error && <p role="status">{searchChoice.error}</p>}
           {error && <div className="ai-room-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div>}
           {status === "failed" && pendingSubmissionRef.current?.helpRequest && pendingContentRef.current && <button className="button button--quiet ai-retry-button button--with-icon" type="button" onClick={() => void submitMessage(pendingContentRef.current!, true, undefined, undefined, pendingSubmissionRef.current!.helpRequest)}><RefreshCw size={15} />重试发送帮助请求</button>}
           {status === "failed" && !pendingSubmissionRef.current && !editingMessageId && detail?.messages.some((message) => message.role === "user") && (
@@ -1161,7 +1165,7 @@ export default function AiLearningRoom({
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={setSearchSelection} disabled={!canSend || Boolean(editingMessageId) || sourceScope.mode !== 'unspecified'} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) setDetail(next); } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} disabled={!canSend || Boolean(editingMessageId) || !searchChoice.ready} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) setDetail(next); } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
               const versions = message.role === 'user'

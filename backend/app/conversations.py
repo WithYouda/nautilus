@@ -1627,7 +1627,7 @@ class ConversationService:
         config_snapshot["source_scope"] = public_scope(frozen)
         from .search_adapters import SearchError
         search_run = None
-        if self.search_service is not None and not material_bound:
+        if self.search_service is not None:
             try:
                 search_run = self.search_service.prepare(identity_id, search, config.provider_kind)
             except SearchError as error:

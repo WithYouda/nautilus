@@ -6,7 +6,9 @@ const fakeKey = 'synthetic-search-test-key-only';
 const script = `function search(query,maxResults){ return {answer:'Synthetic answer for '+query,items:[{title:'Synthetic source',url:'https://example.com/search-proof',text:'Synthetic page content',publishedDate:'2026-01-01'}]}; }`;
 
 async function settings(page: Page) {
-  await page.getByRole('button', { name: '搜索设置', exact: true }).click();
+  const unified = page.getByRole('dialog', { name: '设置', exact: true });
+  if (!await unified.isVisible()) await page.getByRole('button', { name: '设置', exact: true }).click();
+  await unified.getByRole('button', { name: '管理搜索服务与高级设置' }).click();
   const dialog = page.getByRole('dialog', { name: '联网搜索设置' });
   await expect(dialog.getByRole('button', { name: '新增' })).toBeEnabled();
   return dialog;

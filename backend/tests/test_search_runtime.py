@@ -144,7 +144,8 @@ def test_native_rejected_for_legacy_provider(tmp_path):
         assert not calls
 
 
-def test_native_responses_requires_real_tool_event_and_citation(tmp_path):
+@pytest.mark.parametrize("with_material", [False, True])
+def test_native_responses_requires_real_tool_event_and_citation(tmp_path, with_material):
     invoked = []
 
     def handler(request):
@@ -166,13 +167,21 @@ def test_native_responses_requires_real_tool_event_and_citation(tmp_path):
         provider = client.put("/api/ai/provider", json={"display_name": "Responses", "api_protocol": "openai_responses", "base_url": "https://api.example.com/v1", "model": "gpt-test", "api_key": "fake-key"})
         assert provider.status_code == 200, provider.text
         conversation = start_conversation(client, create_task(client))
-        sent = send(client, conversation, "native", {"mode": "native"})
+        extra = {}
+        if with_material:
+            material = client.post(f'/api/materials/conversation/{conversation}', json={
+                'title': '教材', 'content': 'NATIVE-MATERIAL-TEXT'}).json()
+            extra['source_scope'] = {'mode': 'reference', 'version_ids': [material['id']]}
+        sent = send(client, conversation, "native", {"mode": "native"}, **extra)
         assert sent.status_code == 202, sent.text
         events = read_sse(client, sent.json()["run"]["id"])
         trace = events[-1][1]["search_trace"]
         assert trace["status"] == "succeeded" and trace["items"][0]["url"] == SEARCH_URL
         assert events[-1][1]["content"] == "Grounded answer"
-        assert any(call.get("stream") is False and "tools" not in call for call in invoked)
+        if with_material:
+            assert 'NATIVE-MATERIAL-TEXT' in json.dumps(invoked)
+        else:
+            assert any(call.get("stream") is False and "tools" not in call for call in invoked)
 
 
 def test_native_without_tool_is_not_used(tmp_path):
