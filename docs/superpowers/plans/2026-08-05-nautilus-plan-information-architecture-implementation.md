@@ -2,7 +2,7 @@
 
 > **Status:** Completed on 2026-08-05. Final verification: backend `114 passed`, production build succeeded, Playwright `31 passed`, and isolated Chromium checks passed at `1440x1000`, `1024x640`, and `390x844`.
 
-> **For agentic workers:** Execute this plan task-by-task with tests first. Repository instructions prohibit commits unless the user explicitly requests one, so commit steps are intentionally omitted.
+> **Historical plan:** Completed work and the former navigation model are retained for reference, not for re-execution. Current scope and scheduling are maintained in the [current implementation plan](2026-09-05-nautilus-first-slice-implementation.md). Follow the current [AGENTS.md](../../../AGENTS.md) for checks and explicit-path staging/local commits; the former instruction to omit commits is superseded.
 
 **Goal:** Replace the current first-plan editor with a scalable plan overview/detail workflow, reversible task completion, document-style inline editing, and persisted global/plan/task AI context scopes.
 
@@ -134,3 +134,5 @@
 - [x] Run script syntax/safety checks, `pip check` and `git diff --check`.
 - [x] Start a new isolated production preview under `/tmp/nautilus-*`, inspect real Chromium screenshots at all three viewports, and leave the verified URL running for user review.
 - [x] Update `docs/progress/nautilus-development-status.md` with changed files, migrations, exact test results, known risks and the next task.
+
+2026-09-26：补充历史定位与当前计划入口，撤销过期的禁止本地提交说明；保留原实现和验收记录，不重跑已完成任务。
