@@ -136,6 +136,25 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     outcome_context_key='synthetic-continuity', boundaries='仅一份样例',
                     stop_conditions='写出自己的判断与过程', time_budget_minutes=15,
                     recommended_criterion_id=None, rationale='先完成一个可观察的小步骤'), ensure_ascii=False)
+            elif '"purpose":"practice_' in prompt or '"purpose": "practice_' in prompt:
+                context = json.loads(payload['messages'][-1]['content'])
+                purpose = context['purpose']
+                if purpose == 'practice_hint':
+                    result = dict(text='合成补练提示：先单独检查输入边界。')
+                elif purpose == 'practice_evaluation':
+                    result = dict(assessment='meets', feedback='合成补练反馈：这次已说明边界处理。',
+                        answer_quote=context['answer'][:30], remaining=[], next_step='可以暂不继续。')
+                else:
+                    basis = [dict(source='answer', quote=context['source']['answer'][:30])]
+                    result = dict(review=dict(status='corrected' if purpose == 'practice_recheck' else 'supported',
+                        summary='合成复核：按原题范围判断，不增加要求。', basis=basis), exercise=None)
+                    if purpose == 'practice_exercise':
+                        prompt_text = ('合成补练：换为两个编号时，怎样检查边界？' if context.get('avoid_repeating_prompt')
+                                       else '合成补练：输入只包含一个编号时，怎样检查边界？')
+                        result['exercise'] = dict(kind=context['request']['requested_kind'], focus='optional', reason='合成理由：沿用原题的边界判断。',
+                            basis=basis, prompt=context['source']['question'] if context['request']['requested_kind'] == 'redo' else prompt_text,
+                            answer_guidance='SYNTHETIC_PRIVATE_PRACTICE_GUIDANCE')
+                content = json.dumps(result, ensure_ascii=False)
             elif 'completion_material_review' in prompt:
                 content = json.dumps(dict(summary='合成审查：仅能确认材料报告的内容',
                     findings=[dict(kind='insufficient', quote='', comment='没有题目和评分依据，无法判断具体能力。')],

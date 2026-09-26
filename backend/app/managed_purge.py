@@ -19,7 +19,8 @@ EXTERNAL_LIMITS = [
     '操作系统快照、磁盘历史块及存储介质内部副本：应用无法验证清除；本结果针对受管理 SQLite 文件及其日志。',
 ]
 TABLES = {'artifact': ('learning_raw_artifact', 'artifact_id'),
-          'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id')}
+          'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id'),
+          'practice': ('learning_practice', 'id')}
 
 
 def compact(connection):
@@ -95,7 +96,7 @@ class ManagedPurge:
         report_path = receipt_path(self.path, owner, kind, object_id)
         with storage_lock(self.path), self.db._lock:
             rows = self.db.fetchall('SELECT id,artifact_id FROM learning_verification_submission WHERE owner_id=? AND '
-                + ('artifact_id=?' if kind == 'artifact' else 'verification_id=?'), (owner, object_id)) if kind != 'completion' else []
+                + ('artifact_id=?' if kind == 'artifact' else 'verification_id=?'), (owner, object_id)) if kind in {'artifact', 'verification'} else []
             submissions = [row['id'] for row in rows]
             artifacts = [row['artifact_id'] for row in rows if row['artifact_id']]
             previous_report = json.loads(report_path.read_text()) if report_path.exists() else None

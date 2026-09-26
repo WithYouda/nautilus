@@ -17,3 +17,11 @@
 .outcome-review summary { cursor: pointer; }
 .outcome-review__raw .ai-markdown, .outcome-review__timeline .ai-markdown { overflow-wrap: anywhere; }
 @media (max-width: 700px) { .outcome-review__states { grid-template-columns: 1fr; } }
+.practice-entry { margin: 1rem 0; }
+.practice-entry > summary { cursor: pointer; font-weight: 600; }
+.practice-panel { padding: .75rem 0; }
+.practice-panel__controls, .practice-panel__versions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: .65rem 0; }
+.practice-panel__versions { align-items: flex-start; flex-direction: column; }
+.practice-detail { border: 1px solid var(--border-color, #ddd); border-radius: .5rem; padding: 1rem; margin: .75rem 0; }
+.practice-detail section, .practice-detail article { margin: .85rem 0; }
+.practice-detail textarea, .practice-panel textarea { width: 100%; min-height: 6rem; }

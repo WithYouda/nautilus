@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getLearningArtifact, getOutcomeReview, type LearningArtifact, type OutcomeReview as Review } from './api';
 import LearningMarkdown from './LearningMarkdown';
+import { PracticeDetail } from './Practice';
 import './styles/outcome-review.css';
 
 const stateLabels: Record<string, string> = {
@@ -38,9 +39,10 @@ export default function OutcomeReview({ id, refreshKey, onBack, onOpenVerificati
   const [selectedArtifact, setSelectedArtifact] = useState<{ id: string; version: number } | null>(null);
   const [artifact, setArtifact] = useState<LearningArtifact | null>(null);
   const [artifactError, setArtifactError] = useState('');
+  const [selectedPracticeId, setSelectedPracticeId] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    setReview(null); setSelectedArtifact(null); setArtifact(null); setError('');
+    setReview(null); setSelectedArtifact(null); setSelectedPracticeId(null); setArtifact(null); setError('');
     getOutcomeReview(id).then(value => { if (active) setReview(value); })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : '依据暂时无法读取'); });
     return () => { active = false; };
@@ -98,6 +100,7 @@ export default function OutcomeReview({ id, refreshKey, onBack, onOpenVerificati
         </>}
       </article>)}</div> : <p>暂无明确关联的作答。</p>}
       <p className="form-hint">AI 反馈是当时的评估记录，包括“通过”时也不代表平台已独立核实。</p></section>
+      <section aria-label="针对性补练记录"><h4>针对性补练</h4><p className="form-hint">补练与原验证分别保存；这里展示练习和反馈，不据此自动推断正式能力。</p>{review.practices?.length ? <div className="outcome-review__timeline">{review.practices.map(item => <article key={item.id}><div className="outcome-review__item-head"><strong>{item.question_id} · {item.status === 'purged' ? '内容已删除' : '补练记录'}</strong><time>{time(item.created_at)}</time></div><p>作答 {item.attempt_count} 次{item.latest_feedback ? ` · 最新 AI 反馈：${item.latest_feedback}` : ''}</p><button className="button button--quiet" type="button" disabled={!item.available} onClick={() => setSelectedPracticeId(item.id)}>查看这项补练</button></article>)}</div> : <p>暂无针对性补练记录。</p>}{selectedPracticeId && <div className="outcome-review__raw"><button className="text-button" type="button" onClick={() => setSelectedPracticeId(null)}>返回补练列表</button>{(() => { const selected = review.practices?.find(item => item.id === selectedPracticeId); const original = selected && review.attempts.find(item => item.verification_id === selected.verification_id && item.submission_id === selected.submission_id && item.evaluation_id === selected.evaluation_id); return original ? <button className="text-button" type="button" onClick={() => onOpenVerification(original)}>查看原验证版本</button> : null; })()}<PracticeDetail key={selectedPracticeId} id={selectedPracticeId} readOnly /></div>}</section>
       <section aria-label="产出与证据"><h4>原始产出与证据</h4>{review.artifacts.length ? <div className="outcome-review__timeline">{review.artifacts.map(item => <article key={`${item.artifact_id}:${item.content_version}`}>
         <div className="outcome-review__item-head"><strong>{item.action_title} · 产出 v{item.content_version}</strong><time>{time(item.created_at)}</time></div><p>{item.evidence_status === 'withdrawn' ? '当前产出记录已撤回 · ' : item.evidence_status === 'invalidated' ? '当前产出记录已失效 · ' : ''}{standardName(item.criterion_id)}</p>
         {item.available ? <button className="button button--quiet" type="button" onClick={() => rawArtifact(item.artifact_id, item.content_version)}>查看这个版本的原始产出</button> : <p>{item.visibility === 'purged' ? '内容已删除' : '当前不可查看'}</p>}

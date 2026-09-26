@@ -1612,7 +1612,7 @@ export type PurgeReport = {
   external_limits: string[];
 };
 
-export function getLearningPurgeReport(kind: 'verification' | 'completion' | 'artifact', objectId: string): Promise<PurgeReport> {
+export function getLearningPurgeReport(kind: 'verification' | 'completion' | 'artifact' | 'practice', objectId: string): Promise<PurgeReport> {
   return request<PurgeReport>(`/api/learning/purges/${kind}/${objectId}`);
 }
 
@@ -2003,6 +2003,7 @@ export type OutcomeReview = {
   completions?: CompletionFact[];
   standards: Array<{ id: string; title: string; version: number; review_status: string; availability: string | null; dimensions: Array<{ id: string; label: string; state: LearningDerivedState | null }> }>;
   attempts: Array<{ verification_id: string; submission_id: string | null; evaluation_id: string | null; delegation_id: string; action_title: string; mode: string; created_at: string; criterion_id: string | null; standard_version: number | null; contract_version: number | null; evaluation_status: string | null; condition: string | null; condition_basis: 'submission_record' | null; feedback: string | null; passed: boolean | null; available: boolean; unavailable_reason: 'purged' | 'hidden' | 'not_submitted' | null; artifact_id: string | null }>;
+  practices?: Array<{ id: string; verification_id: string; submission_id: string; evaluation_id: string; question_id: string; created_at: string; status: string; available: boolean; purged_at: string | null; attempt_count: number; latest_feedback: string | null }>;
   artifacts: Array<{ artifact_id: string; content_version: number; created_at: string; delegation_id: string; action_title: string; criterion_id: string | null; visibility: string; evidence_status: string; available: boolean }>;
   claims: Array<{ id: string; criterion_id: string; dimension_id: string; status: string; stance: string; source: string; verification_method: string; evidence_condition: string; condition_basis: string | null; statement: string | null; created_at: string; artifact_id: string; content_version: number; available: boolean; reviews: Array<{ id: string; action: string; reason: string | null; created_at: string }> }>;
   follow_ups: Array<{ id: string; claim_id: string; kind: string; status: string; due_at: string | null; created_at: string; note: string | null }>;
@@ -2029,6 +2030,37 @@ export function recordDiscussionHelpDisplay(discussionId: string, turnId: string
 export function recordReferenceHelpDisplay(verificationId: string, evaluationId: string, questionId: string): Promise<ReferenceHelpDisplay> {
   return request(`/api/learning/verifications/${verificationId}/evaluations/${evaluationId}/questions/${questionId}/help-display`, { method: 'POST' });
 }
+
+export type PracticeKind = 'redo' | 'new_situation';
+export type Practice = {
+  id: string; verification_id: string; submission_id: string; evaluation_id: string; question_id: string;
+  available?: boolean;
+  operation: 'exercise' | 'recheck'; requested_kind: PracticeKind;
+  status: 'running' | 'ready' | 'reviewed' | 'started' | 'skipped' | 'failed' | 'purged';
+  reason: string | null; created_at: string; started_at: string | null; purged_at: string | null;
+  request: { objection?: string; recheck_id?: string; previous_id?: string; [key: string]: unknown } | null;
+  contract: { version: number; criterion_id: string | null; standard_version: number | null; [key: string]: unknown } | null;
+  content: { review: { status: 'supported' | 'corrected' | 'insufficient'; summary: string; basis: Array<{ source: 'question' | 'answer' | 'feedback'; quote: string }> }; exercise: { kind: PracticeKind; focus: 'required_gap' | 'optional'; reason: string; basis: Array<{ source: 'question' | 'answer' | 'feedback'; quote: string }>; prompt: string } | null } | null;
+  attempts: Array<{ id: string; answer: string | null; condition: { user_report: string; evidence_condition: 'independent' | 'with_materials'; attempt_kind: PracticeKind | 'same_question_retry'; captured_at: string; records: Array<{ run_id: string; kind: string; provided_at: string | null; displayed_at: string | null }> } | null; created_at: string; purged_at: string | null }>;
+  runs: Array<{ id: string; kind: 'hint' | 'evaluation'; attempt_id: string | null; status: 'running' | 'succeeded' | 'failed'; result: { text?: string; assessment?: 'meets' | 'needs_work' | 'uncertain'; feedback?: string; answer_quote?: string; remaining?: string[]; next_step?: string } | null; reason: string | null; provider_name: string | null; model: string | null; created_at: string; finished_at: string | null; displayed_at: string | null; purged_at: string | null }>;
+};
+export function listPractices(verificationId: string, submissionId: string, evaluationId: string, questionId: string): Promise<Practice[]> {
+  const query = new URLSearchParams({ submission_id: submissionId, evaluation_id: evaluationId, question_id: questionId });
+  return request(`/api/learning/verifications/${verificationId}/practices?${query}`);
+}
+export function createPractice(verificationId: string, payload: { submission_id: string; evaluation_id: string; question_id: string; request_key: string; operation: 'exercise' | 'recheck'; requested_kind: PracticeKind; objection?: string; recheck_id?: string; previous_id?: string }): Promise<Practice> {
+  return request(`/api/learning/verifications/${verificationId}/practices`, { method: 'POST', body: JSON.stringify(payload) });
+}
+export function getPractice(id: string): Promise<Practice> { return request(`/api/learning/practices/${id}`); }
+export function choosePractice(id: string, choice: 'start' | 'skip'): Promise<Practice> { return request(`/api/learning/practices/${id}/choice`, { method: 'POST', body: JSON.stringify({ choice }) }); }
+export function savePracticeAttempt(id: string, payload: { answer: string; evidence_condition: 'independent' | 'with_materials'; request_key: string }): Promise<Practice> {
+  return request(`/api/learning/practices/${id}/attempts`, { method: 'POST', body: JSON.stringify(payload) });
+}
+export function runPractice(id: string, payload: { kind: 'hint' | 'evaluation'; attempt_id?: string; request_key: string }): Promise<Practice> {
+  return request(`/api/learning/practices/${id}/runs`, { method: 'POST', body: JSON.stringify(payload) });
+}
+export function recordPracticeDisplay(id: string, runId: string): Promise<Practice> { return request(`/api/learning/practices/${id}/runs/${runId}/display`, { method: 'POST' }); }
+export function purgePractice(id: string): Promise<Practice> { return request(`/api/learning/practices/${id}/purge`, { method: 'POST' }); }
 
 
 export type DiscussionStreamUpdate = { turn: QuestionDiscussion['turns'][number]; purged: boolean };

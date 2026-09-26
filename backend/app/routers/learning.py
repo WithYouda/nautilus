@@ -74,6 +74,11 @@ router = APIRouter(prefix="/api/learning", dependencies=[Depends(_private_respon
 
 def _raise_learning_error(error: DomainError) -> None:
     messages = {
+        "practice_source_unavailable": "原题、作答或复核依据当前不可用，暂不能继续这项补练。",
+        "practice_objection_required": "请先说明你对原反馈的具体疑问。",
+        "practice_recheck_required": "请先复核有争议的反馈，再选择是否出练习。",
+        "practice_state_conflict": "请先开始这项练习；刷新可查看已保存进度。",
+        "practice_busy": "这项练习正在处理，请等待已有结果。",
         "position_answer_pending": "等这次回答结束后再整理位置。",
         "position_changed": "位置记录已更新，请重新打开学习安排后再试。",
         "position_provider_unavailable": "当前对话模型不可用，可以先手动记录位置。",

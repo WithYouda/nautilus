@@ -8,6 +8,7 @@ from .state_derivation import StateDerivationService
 
 class OutcomeReview:
     def __init__(self, verification):
+        self.verification = verification
         self.learning = verification.learning
         self.db = self.learning.database
         self.records = LearningRecords(verification)
@@ -42,10 +43,26 @@ class OutcomeReview:
                 'artifacts': self._artifacts(connection, owner, outcome_id),
                 'claims': self._claims(connection, owner, outcome_id),
                 'follow_ups': self._follow_ups(connection, owner, outcome_id),
+                'practices': self._practices(connection, owner, outcome_id),
                 'completions': [dict(row) for row in connection.execute('''SELECT c.id,c.delegation_id,c.verification_kind,c.created_at,c.purged_at
                     FROM learning_completion c JOIN learning_delegation d ON d.owner_id=c.owner_id AND d.id=c.delegation_id
                     WHERE c.owner_id=? AND d.outcome_id=? ORDER BY c.created_at DESC''', (owner, outcome_id))],
             }
+
+    def _practices(self, connection, owner, outcome_id):
+        from .practice import PracticeService
+        service = PracticeService(self.verification)
+        result = []
+        for row in connection.execute('''SELECT p.* FROM learning_practice p
+            JOIN learning_verification v ON v.owner_id=p.owner_id AND v.id=p.verification_id
+            JOIN learning_delegation d ON d.owner_id=v.owner_id AND d.id=v.delegation_id
+            WHERE p.owner_id=? AND d.outcome_id=? ORDER BY p.rowid DESC''', (owner, outcome_id)).fetchall():
+            public = service._public(owner, dict(row), connection)
+            result.append({**{key: public[key] for key in ('id','verification_id','submission_id','evaluation_id','question_id',
+                'created_at','status','available','purged_at')}, 'attempt_count': len(public['attempts']),
+                'latest_feedback': next((run['result'].get('feedback') for run in public['runs']
+                    if run['kind'] == 'evaluation' and run['result']), None)})
+        return result
 
     @staticmethod
     def _attempts(connection, owner, outcome_id):

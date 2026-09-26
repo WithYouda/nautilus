@@ -202,6 +202,9 @@ def _backup_loses_purge_barriers(
         ("learning_evidence_private_content", ("owner_id", "event_id")),
         ("learning_question_discussion", ("owner_id", "id")),
         ("learning_completion", ("owner_id", "id")),
+        ("learning_practice", ("owner_id", "id")),
+        ("learning_practice_attempt", ("owner_id", "id")),
+        ("learning_practice_run", ("owner_id", "id")),
     )
     for table, keys in barriers:
         current_columns = {row[1] for row in current.execute(f"PRAGMA table_info({table})")}
@@ -321,6 +324,31 @@ def _backup_restores_verification_content(current, backup):
                 (owner_id, completion_id),
             ).fetchone():
                 return True
+    if current.execute("SELECT 1 FROM sqlite_master WHERE name='learning_practice'").fetchone():
+        for owner_id, practice_id in current.execute(
+            "SELECT owner_id,id FROM learning_practice WHERE purged_at IS NOT NULL"
+        ):
+            if 'learning_practice' in backup_tables and backup.execute(
+                """SELECT 1 FROM learning_practice WHERE owner_id=? AND id=? AND
+                   (request_json IS NOT NULL OR request_fingerprint IS NOT NULL OR
+                    contract_snapshot_json IS NOT NULL OR content_json IS NOT NULL OR
+                    provider_name IS NOT NULL OR model IS NOT NULL OR status <> 'purged')""",
+                (owner_id, practice_id),
+            ).fetchone():
+                return True
+            if 'learning_practice_attempt' in backup_tables and backup.execute(
+                """SELECT 1 FROM learning_practice_attempt WHERE owner_id=? AND practice_id=? AND
+                   (answer IS NOT NULL OR condition_json IS NOT NULL OR request_fingerprint IS NOT NULL)""",
+                (owner_id, practice_id),
+            ).fetchone():
+                return True
+            if 'learning_practice_run' in backup_tables and backup.execute(
+                """SELECT 1 FROM learning_practice_run WHERE owner_id=? AND practice_id=? AND
+                   (result_json IS NOT NULL OR provider_name IS NOT NULL OR model IS NOT NULL OR
+                    displayed_at IS NOT NULL OR status <> 'failed' OR reason <> 'content_purged')""",
+                (owner_id, practice_id),
+            ).fetchone():
+                return True
     return False
 
 
@@ -393,7 +421,8 @@ def _check_purge_receipts(target_path, candidate_path):
             raise ProductionLearningDatabaseError('purged content cleanup is incomplete; finish it before restoring')
         kind, owner, object_id = (receipt[key] for key in ('kind', 'owner', 'object_id'))
         table, key = {'artifact': ('learning_raw_artifact', 'artifact_id'),
-                      'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id')}[kind]
+                      'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id'),
+                      'practice': ('learning_practice', 'id')}[kind]
         with closing(sqlite3.connect(candidate_path)) as connection:
             connection.row_factory = sqlite3.Row
             if 'purged_at' not in columns(connection, table):
@@ -414,6 +443,9 @@ def _check_purge_receipts(target_path, candidate_path):
                 'learning_evidence_private_content': ['content_json'],
                 'learning_completion': ['content_json', 'contract_snapshot_json', 'request_fingerprint'],
                 'learning_completion_review': ['result_json', 'user_response', 'provider_name', 'model'],
+                'learning_practice': ['request_json', 'request_fingerprint', 'contract_snapshot_json', 'content_json', 'provider_name', 'model'],
+                'learning_practice_attempt': ['answer', 'condition_json', 'request_fingerprint'],
+                'learning_practice_run': ['result_json', 'provider_name', 'model', 'displayed_at'],
             }
             def snapshot():
                 result = {}

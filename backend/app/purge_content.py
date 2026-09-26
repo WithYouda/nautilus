@@ -95,6 +95,31 @@ def _redact_events(connection, owner, claim_ids, now):
         connection.execute(trigger[0])
 
 
+def _erase_practices(connection, owner, practice_ids, now):
+    """Erase one practice and exercises derived from its private recheck result."""
+    if not columns(connection, 'learning_practice'):
+        return
+    affected = set(practice_ids)
+    pending = set(affected)
+    while pending:
+        children = set()
+        for practice_id in pending:
+            children.update(_ids(connection, 'learning_practice', 'id',
+                "owner_id=? AND (json_extract(request_json,'$.recheck_id')=? "
+                "OR json_extract(request_json,'$.previous_id')=?)", (owner, practice_id, practice_id)))
+        pending = children - affected
+        affected.update(pending)
+    for practice_id in affected:
+        _update(connection, 'learning_practice', dict(request_json=None, request_fingerprint=None,
+            contract_snapshot_json=None, content_json=None, provider_name=None, model=None,
+            status='purged', reason='content_purged', purged_at=now), 'owner_id=? AND id=?', (owner, practice_id))
+        _update(connection, 'learning_practice_attempt', dict(answer=None, condition_json=None,
+            request_fingerprint=None, purged_at=now), 'owner_id=? AND practice_id=?', (owner, practice_id))
+        _update(connection, 'learning_practice_run', dict(result_json=None, provider_name=None,
+            model=None, displayed_at=None, status='failed', reason='content_purged',
+            finished_at=now, purged_at=now), 'owner_id=? AND practice_id=?', (owner, practice_id))
+
+
 def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifact_ids=()):
     """Keeps unrelated rows, object identities and execution facts intact."""
     if kind == 'completion':
@@ -105,14 +130,23 @@ def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifac
             'owner_id=? AND completion_id=?', (owner, object_id))
         return
 
+    if kind == 'practice':
+        _erase_practices(connection, owner, {object_id}, now)
+        return
+
     artifacts = {object_id} if kind == 'artifact' else set()
     artifacts.update(artifact_ids)
     submissions = set()
-    if kind == 'verification' or 'artifact_id' in columns(connection, 'learning_verification_submission'):
+    if kind == 'verification' or (kind == 'artifact' and 'artifact_id' in columns(connection, 'learning_verification_submission')):
         submissions = _ids(connection, 'learning_verification_submission', 'id',
             'owner_id=? AND ' + ('verification_id=?' if kind == 'verification' else 'artifact_id=?'), (owner, object_id))
     for submission_id in submission_ids:
         submissions.update(_ids(connection, 'learning_verification_submission', 'id', 'owner_id=? AND id=?', (owner, submission_id)))
+    practice_ids = set()
+    for submission in submissions:
+        practice_ids.update(_ids(connection, 'learning_practice', 'id',
+            'owner_id=? AND submission_id=?', (owner, submission)))
+    _erase_practices(connection, owner, practice_ids, now)
     for submission in submissions:
         if 'artifact_id' in columns(connection, 'learning_verification_submission'):
             artifacts.update(_ids(connection, 'learning_verification_submission', 'artifact_id', 'owner_id=? AND id=? AND artifact_id IS NOT NULL', (owner, submission)))

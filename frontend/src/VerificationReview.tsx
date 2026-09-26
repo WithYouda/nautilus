@@ -3,6 +3,7 @@ import QuestionFeedbackContent from './QuestionFeedbackContent';
 import LearningMarkdown from './LearningMarkdown';
 import { createQuestionDiscussion, getVerificationReview, purgeVerification, recordReferenceHelpDisplay, type VerificationReview as Review, type LearningVerification } from './api';
 import PurgeStatus from './PurgeStatus';
+import { PracticePanel } from './Practice';
 
 export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged, onReadSolution, initialSubmissionId, initialEvaluationId, onSelectionChange }: {
   id: string; refreshKey?: string; onDiscuss: (id: string) => void;
@@ -85,6 +86,7 @@ export default function VerificationReview({ id, refreshKey, onDiscuss, onPurged
               setReview(previous => previous?.selected_evaluation_id === selectedEvaluation ? { ...previous, help_displays: { ...previous.help_displays, [question.id]: value } } : previous);
               return value;
             } : undefined} /> : <p className="form-hint">{review.result ? '这次记录未保存逐题反馈，可在讨论中请 AI 重新讲解。' : '本题反馈尚未生成，作答已保存。'}</p>}
+            {feedback && review.selected_submission_id && review.selected_evaluation_id && <details className="practice-entry" key={`practice:${review.selected_submission_id}:${review.selected_evaluation_id}:${question.id}`}><summary>针对性补练</summary><PracticePanel verificationId={id} submissionId={review.selected_submission_id} evaluationId={review.selected_evaluation_id} questionId={question.id} /></details>}
             {review.discussions.filter(d => d.question_id === question.id && d.submission_id === review.selected_submission_id).map((d, i) => <button type="button" key={d.id} className="text-button" onClick={() => onDiscuss(d.id)}>打开题目讨论 {i + 1}{d.purged_at ? '（内容已删除）' : ''}</button>)}
           </article>;
         })}

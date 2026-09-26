@@ -23,6 +23,8 @@ from .db import Database
 from .layouts import LayoutService
 from .learning_service import LearningService
 from .completion import CompletionService
+from .practice import PracticeService
+from .routers import practice
 from .learning_setup import LearningSetupService
 from .measurements import MeasurementService
 from .review import ReviewService
@@ -93,6 +95,7 @@ def create_app(
         discussion_service = QuestionDiscussionService(verification_service)
         discussion_service.recover()
         CompletionService(verification_service).recover()
+        PracticeService(verification_service).recover()
         interrupted_title_runs = conversation_service.recover_interrupted_title_runs()
         if interrupted_title_runs:
             logger.warning("Recovered %s interrupted conversation title runs.", interrupted_title_runs)
@@ -163,6 +166,7 @@ def create_app(
     app.include_router(plans.router)
     app.include_router(layouts.router)
     app.include_router(learning.router)
+    app.include_router(practice.router)
     app.include_router(ai.router)
     app.include_router(search.router)
     return app
