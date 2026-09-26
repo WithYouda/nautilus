@@ -29,6 +29,12 @@ npm --prefix frontend install
 
 首次授权时，在运行服务的 WSL2 主机本地读取授权码文件并手动输入页面。默认启动脚本使用 `tmp/access-token`；当前trial使用 `tmp/nautilus-trial-20260919/runtime/access-token`；若设置了 `NAUTILUS_RUNTIME_TOKEN_FILE`，读取该路径。父目录权限0700、文件0600；默认启动脚本只提示路径，不打印授权码。浏览器会话持续到主动注销，普通服务重启不要求重新授权。授权码不写入日志、文档或Git；网络可达不代表已授权，正式网络信任范围仍待决定。
 
+## 联网搜索
+
+在工作区页头或学习室输入区打开“搜索设置”，可添加/测试19种外部服务，配置密钥、搜索深度、地址和各服务高级参数。默认有无需密钥的Bing，进入会话默认关闭搜索；发送前选择“外部服务”，查询留空使用当前问题。DeepSeek等聊天模型可以继续使用原提供方，由所选外部服务提供资料。付费服务需要自己的账户，搜索测试会实际调用配置的服务。
+
+“模型内置”需要在AI提供方设置选择支持的API协议：OpenAI Responses、Google Gemini或Anthropic Messages，并使用支持搜索工具的模型/账户；普通OpenAI兼容协议不能仅靠开关获得厂商搜索。来源和检索状态随每版回答保存，结果默认折叠。Custom JS需要后端requirements中的QuickJS，在隔离进程执行。服务字段、协议、运行限制与尚未完成的真实账户验收见[联网搜索规格](docs/superpowers/specs/2026-09-26-nautilus-web-search.md)。
+
 ## 数据库、升级与恢复
 
 同一环境有两个职责不同的文件：`nautilus.sqlite3`承载普通会话/配置等，`learning.sqlite3`承载新学习域。主库迁移001–010、学习库迁移011及以后；029是结构版本号，不是额外环境。

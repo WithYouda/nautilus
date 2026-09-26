@@ -10,6 +10,7 @@ import {
   actionableProviderError,
   type AiProvider,
   type AiProviderInput,
+  type AiApiProtocol,
 } from "./api";
 import DialogPortal from "./DialogPortal";
 import useDismissibleLayer from "./useDismissibleLayer";
@@ -17,13 +18,13 @@ import useDismissibleLayer from "./useDismissibleLayer";
 const modelCache = new Map<string, { models: string[]; savedAt: number }>();
 const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000;
 
-async function cacheKey(baseUrl: string, draftKey: string) {
+async function cacheKey(baseUrl: string, draftKey: string, protocol: AiApiProtocol) {
   const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
-  if (!draftKey) return `${normalizedBaseUrl}:saved`;
+  if (!draftKey) return `${protocol}:${normalizedBaseUrl}:saved`;
   if (!crypto.subtle) return "";
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(draftKey));
   const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${normalizedBaseUrl}:${fingerprint}`;
+  return `${protocol}:${normalizedBaseUrl}:${fingerprint}`;
 }
 
 export default function AiProviderDialog({
@@ -39,6 +40,7 @@ export default function AiProviderDialog({
 }) {
   const [displayName, setDisplayName] = useState("OpenAI 兼容提供方");
   const [baseUrl, setBaseUrl] = useState("");
+  const [apiProtocol, setApiProtocol] = useState<AiApiProtocol>("openai_compatible");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [enabled, setEnabled] = useState(true);
@@ -64,6 +66,7 @@ export default function AiProviderDialog({
     setSelectedProviderId(next?.id ?? null);
     setDisplayName(next?.display_name ?? "OpenAI 兼容提供方");
     setBaseUrl(next?.base_url ?? "");
+    setApiProtocol(next?.api_protocol ?? "openai_compatible");
     setModel(next?.model ?? "");
     setApiKey("");
     setEnabled(next?.enabled ?? true);
@@ -107,6 +110,7 @@ export default function AiProviderDialog({
   function runtimePayload(selectedModel?: string) {
     return {
       base_url: baseUrl.trim(),
+      api_protocol: apiProtocol,
       model: selectedModel,
       ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       request_timeout_seconds: timeoutSeconds,
@@ -119,7 +123,7 @@ export default function AiProviderDialog({
       setModelNotice("填写 Base URL 和 API Key 后可自动获取；也可以直接手动填写模型名称。");
       return;
     }
-    const key = await cacheKey(baseUrl, apiKey.trim());
+    const key = await cacheKey(baseUrl, apiKey.trim(), apiProtocol);
     const cached = key ? modelCache.get(key) : undefined;
     if (!forceRefresh && cached && Date.now() - cached.savedAt < CLIENT_CACHE_TTL_MS) {
       setModels(cached.models);
@@ -133,6 +137,7 @@ export default function AiProviderDialog({
     try {
       const result = await discoverAiProviderModels({
         base_url: baseUrl.trim(),
+        api_protocol: apiProtocol,
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         request_timeout_seconds: timeoutSeconds,
         force_refresh: forceRefresh,
@@ -168,6 +173,7 @@ export default function AiProviderDialog({
     const payload: AiProviderInput = {
       display_name: displayName.trim() || "OpenAI 兼容提供方",
       base_url: baseUrl.trim(),
+      api_protocol: apiProtocol,
       model: model.trim(),
       enabled,
       request_timeout_seconds: timeoutSeconds,
@@ -252,7 +258,8 @@ export default function AiProviderDialog({
               <label className="field"><span>显示名称</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} /></label>
               <label className="field"><span>启用状态</span><select value={enabled ? "enabled" : "disabled"} onChange={(event) => setEnabled(event.target.value === "enabled")}><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
               <label className="field"><span>默认提供方</span><select value={isDefault ? "default" : "normal"} onChange={(event) => setIsDefault(event.target.value === "default")}><option value="normal">否</option><option value="default">是</option></select></label>
-              <label className="field field--wide"><span>Base URL</span><input type="url" value={baseUrl} onChange={(event) => { setBaseUrl(event.target.value); setModels([]); setModelNotice(""); }} placeholder="https://api.example.com/v1" maxLength={300} required /></label>
+              <label className="field"><span>API 协议</span><select value={apiProtocol} onChange={(event) => { setApiProtocol(event.target.value as AiApiProtocol); setModels([]); setModelNotice(""); }}><option value="openai_compatible">Chat Completions（默认）</option><option value="openai_responses">OpenAI Responses</option><option value="google">Google</option><option value="anthropic">Anthropic</option></select></label>
+              <label className="field field--wide"><span>Base URL</span><input type="url" value={baseUrl} onChange={(event) => { setBaseUrl(event.target.value); setModels([]); setModelNotice(""); }} placeholder={apiProtocol === "google" ? "https://generativelanguage.googleapis.com/v1beta" : apiProtocol === "anthropic" ? "https://api.anthropic.com/v1" : "https://api.example.com/v1"} maxLength={300} required /></label>
               <div className="field ai-model-field" ref={modelBoxRef}>
                 <span>模型</span>
                 <div className="ai-model-combobox">
@@ -288,7 +295,7 @@ export default function AiProviderDialog({
             </div>
 
             <p className="form-hint">点击模型输入框会从 Base URL 获取模型并缓存；获取失败时仍可手动填写。密钥只交给本地服务处理。</p>
-            <p className="form-hint">联网搜索尚未接入。模型官网的搜索功能不会随 API 自动启用；当前回答和出题不包含实时检索。</p>
+            <p className="form-hint">模型内置搜索只在支持的 API 协议和模型上可用；实际是否执行以本轮 API 返回的搜索状态为准。</p>
             {provider?.credential_error && <p className="form-error" role="alert">{provider.credential_error}</p>}
             {error && <p className="form-error" role="alert">{error}</p>}
 

@@ -28,7 +28,7 @@ class ModelDiscoveryService:
     def _cache_key(identity_id: str, config: ProviderConfig) -> str:
         base_url = normalize_base_url(config.base_url)
         fingerprint = hashlib.sha256(config.api_key.encode("utf-8")).hexdigest()
-        return f"{identity_id}:{base_url}:{fingerprint}"
+        return f"{identity_id}:{config.provider_kind}:{base_url}:{fingerprint}"
 
     async def discover(
         self,

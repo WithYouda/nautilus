@@ -5,7 +5,10 @@ import { setReviewLocation } from "./LearningRecords";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
 import { ArrowLeft, Bot, Check, CircleAlert, History, MapPin, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
 import LearningMarkdown from "./LearningMarkdown";
+import SearchControls, { type SearchSelection } from "./SearchControls";
+import SearchResults, { type SearchTrace } from "./SearchResults";
 import {
+  ApiError,
   recordLearningRoomEntry,
   cancelAiRun,
   clearAiConversationConfig,
@@ -54,6 +57,7 @@ type PendingSubmission = {
   targetId: string | null;
   conversationId: string | null;
   clientMessageId: string;
+  search?: SearchSelection;
   regenerateMessageId?: string;
   editMessageId?: string;
   parentMessageId?: string;
@@ -109,6 +113,7 @@ function readSession(): RoomSession | null {
             editMessageId: parsed.pending.editMessageId,
             parentMessageId: parsed.pending.parentMessageId,
             clientMessageId: typeof parsed.pending.clientMessageId === "string" ? parsed.pending.clientMessageId : "",
+            search: parsed.pending.search && typeof parsed.pending.search === "object" && ["off", "external", "native"].includes(parsed.pending.search.mode) ? parsed.pending.search : undefined,
           }
         : undefined,
       learningBrief: parsed.learningBrief,
@@ -159,6 +164,7 @@ function upsertAssistantMessage(
   content: string,
   status: AiMessage["status"],
   reasoningContent?: string,
+  searchTrace?: SearchTrace | null,
 ): AiMessage[] {
   if (!messageId) return messages;
   let found = false;
@@ -169,6 +175,7 @@ function upsertAssistantMessage(
       ...message,
       content,
       reasoning_content: reasoningContent ?? message.reasoning_content,
+      search_trace: searchTrace === undefined ? message.search_trace : searchTrace,
       status,
       updated_at: new Date().toISOString(),
     };
@@ -291,6 +298,7 @@ export default function AiLearningRoom({
   const initialDraftSentRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [searchSelection, setSearchSelection] = useState<SearchSelection>({ mode: "off" });
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
   useDismissibleLayer(openLayer === "config", [configLayerRef], dismissLayer);
@@ -302,7 +310,7 @@ export default function AiLearningRoom({
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id);
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
 
-  useEffect(() => { setEditingMessageId(null); }, [conversationId]);
+  useEffect(() => { setEditingMessageId(null); setSearchSelection({ mode: "off" }); }, [conversationId]);
 
   conversationIdRef.current = conversationId;
   currentRunRef.current = currentRun;
@@ -391,8 +399,14 @@ export default function AiLearningRoom({
               event.data.content,
               "streaming",
               event.data.reasoning_content,
+              event.data.search_trace,
             ),
           } : previous);
+          return;
+        }
+        if (event.type === "search") {
+          if (event.data.run_id !== run.id) return;
+          setDetail(previous => previous ? { ...previous, messages: previous.messages.map(message => message.id === event.data.message_id ? { ...message, search_trace: event.data.trace } : message) } : previous);
           return;
         }
         if (event.type === "delta") {
@@ -431,6 +445,7 @@ export default function AiLearningRoom({
             event.data.content,
             event.type === "done" && event.data.status === "succeeded" ? "complete" : event.type === "done" ? "canceled" : "failed",
             event.data.reasoning_content,
+            event.data.search_trace,
           ),
         } : previous);
         persistSession({ conversationId: run.conversation_id, runId: null });
@@ -688,6 +703,11 @@ export default function AiLearningRoom({
 
   async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string): Promise<boolean> {
     if (!entryReady || !content || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
+    const unresolved = pendingSubmissionRef.current;
+    if (unresolved && (pendingContentRef.current !== content || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
+      setError("上次发送结果尚未确认。请先用原问题重试，或重新打开对话核对已保存的消息。");
+      return false;
+    }
     if (!activeProvider?.has_api_key || !activeProvider.enabled) {
       setError("请先配置并启用 AI 提供方");
       return false;
@@ -711,12 +731,13 @@ export default function AiLearningRoom({
       const automatic = !regenerateMessageId && !editMessageId && Boolean(learningBrief && initialDraft?.trim() === content);
       const clientMessageId = canReusePending ? savedPending!.clientMessageId : `${automatic ? LEARNING_PROMPT_ID_PREFIX : ""}${makeClientMessageId()}`;
       const parentMessageId = canReusePending ? savedPending!.parentMessageId : (!regenerateMessageId && !editMessageId ? replyHistory.leaf ?? undefined : undefined);
-      const pending: PendingSubmission = { regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
+      const frozenSearch = canReusePending ? savedPending!.search ?? { mode: "off" as const } : automatic ? { mode: "off" as const } : structuredClone(searchSelection);
+      const pending: PendingSubmission = { search: frozenSearch, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId });
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, ...(frozenSearch.mode === "off" ? {} : { search: frozenSearch }) });
       if (!mountedRef.current) return false;
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
       pendingSubmissionRef.current = null;
@@ -734,7 +755,7 @@ export default function AiLearningRoom({
             title_source: "fallback",
             title_revision: current.conversation.title_revision + 1,
           } : current.conversation,
-          messages: result.messages,
+          messages: result.messages.map(message => ({ ...message, search_trace: message.search_trace === undefined ? current.messages.find(old => old.id === message.id)?.search_trace : message.search_trace })),
           active_run: result.run,
         };
       });
@@ -751,6 +772,11 @@ export default function AiLearningRoom({
       return true;
     } catch (reason: unknown) {
       if (!mountedRef.current) return false;
+      if (reason instanceof ApiError && [400, 422].includes(reason.status ?? 0)) {
+        pendingSubmissionRef.current = null;
+        pendingContentRef.current = null;
+        persistSession({ pending: undefined });
+      }
       if (!preserveDraft) setDraft(content);
       setStatus("failed");
       setError(reason instanceof Error ? reason.message : "消息发送失败");
@@ -1089,11 +1115,11 @@ export default function AiLearningRoom({
           {status === "failed" && !editingMessageId && !pendingSubmissionRef.current?.editMessageId && detail?.messages.some((message) => message.role === "user") && (
             <button className="button button--quiet ai-retry-button button--with-icon" onClick={() => void handleRetry()}><RefreshCw size={15} />重新生成</button>
           )}
-      </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
+      </>} composer={<><SearchControls value={searchSelection} onChange={setSearchSelection} disabled={!canSend || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><LearningComposer id="ai-learning-question" textareaRef={composerRef}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
         disabled={!canSend || Boolean(editingMessageId)} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
-      />}>
+      /></>}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
               const versions = message.role === 'user'
                 ? detail!.messages.filter(item => item.role === 'user' && (item.question_version_id ?? item.id) === (message.question_version_id ?? message.id))
@@ -1257,6 +1283,7 @@ function MessageBubble({ message, automatic = false, onRetry, retryDisabled, ver
       <div className="ai-message-content ai-markdown">
         {message.content ? <LearningMarkdown>{message.content}</LearningMarkdown> : message.status === "streaming" ? "…" : ""}
       </div>
+      {message.search_trace && message.search_trace.mode !== "off" && <SearchResults trace={message.search_trace} />}
       <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} />
     </LearningMessage>
   );

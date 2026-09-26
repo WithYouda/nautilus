@@ -38,11 +38,12 @@ class ProviderConfig:
     api_key: str
     timeout_seconds: int = 60
     provider_kind: str = "openai_compatible"
+    web_search: bool = False
 
 
 @dataclass(frozen=True)
 class ProviderChunk:
-    kind: Literal["content", "reasoning"]
+    kind: Literal["content", "reasoning", "search_status", "search_sources"]
     text: str
 
 
@@ -512,6 +513,10 @@ class ProviderAdapterRegistry:
         config: ProviderConfig,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> OpenAICompatibleProvider:
+        if config.provider_kind in {"openai_responses", "google", "anthropic"}:
+            from .native_providers import OpenAIResponsesProvider, GoogleProvider, AnthropicProvider
+            native = {item.kind: item for item in (OpenAIResponsesProvider, GoogleProvider, AnthropicProvider)}
+            return native[config.provider_kind](config, transport=transport)
         factory = self._factories.get(config.provider_kind)
         if factory is None:
             raise ProviderError(

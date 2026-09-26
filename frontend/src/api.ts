@@ -1,3 +1,5 @@
+import type { SearchSelection } from "./SearchControls";
+import type { SearchTrace } from "./SearchResults";
 export type Health = {
   status: string;
   service: string;
@@ -202,10 +204,13 @@ export type LayoutTemplate = {
   updated_at: string;
 };
 
+export type AiApiProtocol = "openai_compatible" | "openai_responses" | "google" | "anthropic";
+
 export type AiProvider = {
   id: string;
   display_name: string;
   provider_kind: "openai_compatible";
+  api_protocol?: AiApiProtocol;
   base_url: string;
   model: string;
   enabled: boolean;
@@ -265,12 +270,14 @@ export type AiProviderInput = {
   display_name: string;
   base_url: string;
   model: string;
+  api_protocol?: AiApiProtocol;
   api_key?: string;
   enabled: boolean;
   request_timeout_seconds: number;
 };
 
 export type AiProviderRuntimeInput = {
+  api_protocol?: AiApiProtocol;
   base_url?: string;
   model?: string;
   api_key?: string;
@@ -386,6 +393,7 @@ export type AiMessage = {
   updated_at: string;
   parent_message_id?: string | null;
   question_version_id?: string;
+  search_trace?: SearchTrace | null;
 };
 
 export type AiRunStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
@@ -431,18 +439,20 @@ export type AiStreamStartPayload = {
   status: AiRunStatus;
   content: string;
   reasoning_content: string;
+  search_trace?: SearchTrace | null;
 };
 
 export type AiStreamEvent =
   | { type: "start"; data: AiStreamStartPayload }
   | { type: "delta"; data: { kind: "content" | "reasoning"; text: string } }
+  | { type: "search"; data: { run_id: string; message_id: string | null; trace: SearchTrace } }
   | {
       type: "done";
-      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content">;
+      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace">;
     }
   | {
       type: "error";
-      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content"> & {
+      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace"> & {
         kind: string | null;
         message: string;
       };
@@ -907,7 +917,7 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
-  versions: { edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string } = {},
+  versions: { edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -983,7 +993,7 @@ function parseAiStreamFrame(frame: string): AiStreamEvent | null {
     if (line.startsWith("event:")) eventName = line.slice(6).trim();
     if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
   }
-  if (!dataLines.length || !["start", "delta", "done", "error"].includes(eventName)) {
+  if (!dataLines.length || !["start", "delta", "search", "done", "error"].includes(eventName)) {
     return null;
   }
   const data = JSON.parse(dataLines.join("\n")) as AiStreamEvent["data"];
@@ -1903,7 +1913,8 @@ export type VerificationReview = {
 export type QuestionDiscussion = {
   id: string; verification_id: string; submission_id: string; question_id: string; purged: boolean;
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
-  turns: Array<{ question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+  provider_protocol?: AiApiProtocol | null;
+  turns: Array<{ search_trace?: SearchTrace | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
@@ -1919,7 +1930,7 @@ export function createQuestionDiscussion(id: string, submissionId: string, quest
   return request(`/api/learning/verifications/${id}/discussions`, { method: 'POST', body: JSON.stringify({ submission_id: submissionId, question_id: questionId, request_key: requestKey, evaluation_id: evaluationId }) });
 }
 export function getQuestionDiscussion(id: string): Promise<QuestionDiscussion> { return request(`/api/learning/discussions/${id}`); }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string } = {}): Promise<QuestionDiscussion> {
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection } = {}): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
 }
 

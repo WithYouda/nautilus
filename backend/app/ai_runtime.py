@@ -5,13 +5,14 @@ import json
 import logging
 from collections import OrderedDict
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator
 
 import httpx
 
 from .conversations import ConversationError, ConversationService
 from .providers import ProviderChunk, ProviderConfig, ProviderError, build_provider
+from .search_runtime import external_context, apply_native_event
 
 logger = logging.getLogger("nautilus.ai")
 
@@ -47,6 +48,7 @@ class RunState:
     finished: bool = False
     cancel_requested: bool = False
     task: asyncio.Task | None = None
+    search_trace: dict = field(default_factory=lambda: {"mode": "off", "status": "off", "items": []})
 
     @property
     def text(self) -> str:
@@ -88,12 +90,14 @@ class AiRunManager:
         regenerate_message_id: str | None = None,
         parent_message_id: str | None = None,
         edit_message_id: str | None = None,
+        search: dict | None = None,
     ) -> dict[str, Any]:
         prepared = self.conversations.prepare_run(
             identity_id,
             conversation_id,
             content=content,
             client_message_id=client_message_id,
+            search=search,
             **({"regenerate_message_id": regenerate_message_id,
                 "parent_message_id": parent_message_id,
                 "edit_message_id": edit_message_id}
@@ -109,15 +113,17 @@ class AiRunManager:
             conversation_id=conversation_id,
             identity_id=identity_id,
             response_message_id=run["response_message_id"],
+            search_trace=json.loads(run.get("config_snapshot_json") or "{}").get("search_trace", {"mode": "off", "status": "off", "items": []}),
         )
         self._runs[state.run_id] = state
         self._evict()
         try:
             messages = self.conversations.build_prompt(
-                prepared["history"], prepared["context"]
+                prepared["history"], prepared["context"],
+                search_enabled=bool(prepared.get("search_run") and prepared["search_run"].selection["mode"] != "off"),
             )
             state.task = asyncio.create_task(
-                self._execute(state, messages, prepared["provider_config"])
+                self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"))
             )
         except Exception as error:
             self._finish(
@@ -143,10 +149,12 @@ class AiRunManager:
         state: RunState,
         messages: list[dict[str, str]],
         config: ProviderConfig,
+        search_run=None,
     ) -> None:
         stream: AsyncIterator[ProviderChunk] | None = None
         try:
-            provider = build_provider(config, transport=self.transport)
+            search_enabled = search_run is not None and search_run.selection["mode"] == "native"
+            provider = build_provider(replace(config, web_search=search_enabled), transport=self.transport)
             async with self._provider_slots:
                 if not self.conversations.mark_run_running(state.run_id):
                     run = self.conversations.owned_run(state.identity_id, state.run_id)
@@ -155,11 +163,18 @@ class AiRunManager:
                     self._broadcast(state, None)
                     return
                 state.status = "running"
-                stream = provider.stream_chat(messages)
                 async with asyncio.timeout(float(config.timeout_seconds)):
+                    if search_run is not None and search_run.selection["mode"] == "external":
+                        messages = await external_context(self.conversations.search_service, search_run, messages, provider,
+                            lambda trace: self._publish_search(state, trace))
+                    stream = provider.stream_chat(messages)
                     async for chunk in stream:
                         if state.cancel_requested:
                             break
+                        if chunk.kind in {"search_status", "search_sources"}:
+                            apply_native_event(state.search_trace, chunk)
+                            self._publish_search(state, state.search_trace)
+                            continue
                         remaining = MAX_RESPONSE_CHARS - state.response_chars
                         if remaining <= 0:
                             raise ProviderError("AI 回复超过长度限制", kind="output_limit")
@@ -196,6 +211,14 @@ class AiRunManager:
             if stream is not None:
                 with suppress(Exception, asyncio.CancelledError):
                     await stream.aclose()
+
+    def _publish_search(self, state, trace):
+        if state.cancel_requested or state.finished:
+            raise asyncio.CancelledError()
+        state.search_trace = trace
+        if not self.conversations.save_search_trace(state.run_id, trace):
+            raise asyncio.CancelledError()
+        self._broadcast(state, sse_event("search", {"run_id": state.run_id, "message_id": state.response_message_id, "trace": trace}))
 
     def _track_title_task(self, task: asyncio.Task) -> None:
         self._title_tasks.add(task)
@@ -316,6 +339,9 @@ class AiRunManager:
         if state.finished:
             return
         try:
+            if state.search_trace.get("status") in {"queued", "running"} and status in {"failed", "canceled"}:
+                state.search_trace.update(status="failed", message="搜索已取消" if status == "canceled" else (message or "本轮搜索未完成"))
+                self.conversations.save_search_trace(state.run_id, state.search_trace)
             persisted_status = self.conversations.finalize_run(
                 state.run_id,
                 status,
@@ -403,6 +429,7 @@ class AiRunManager:
                     "status": state.status,
                     "content": replay,
                     "reasoning_content": state.reasoning_text,
+                    "search_trace": state.search_trace,
                 },
             )
             if not finished:
@@ -425,6 +452,7 @@ class AiRunManager:
                                 "message": "流式连接处理过慢，请重新连接以继续接收",
                                 "content": state.text,
                                 "reasoning_content": state.reasoning_text,
+                                "search_trace": state.search_trace,
                             },
                         )
                         return
@@ -446,6 +474,7 @@ class AiRunManager:
                     "message": state.error_message or "AI 运行失败",
                     "content": state.text,
                     "reasoning_content": state.reasoning_text,
+                    "search_trace": state.search_trace,
                 },
             )
         return sse_event(
@@ -456,6 +485,7 @@ class AiRunManager:
                 "status": state.status,
                 "content": state.text,
                 "reasoning_content": state.reasoning_text,
+                "search_trace": state.search_trace,
             },
         )
 
@@ -471,6 +501,10 @@ class AiRunManager:
                 content = row["content"]
                 reasoning_content = row["reasoning_content"]
         status = run["status"]
+        search_trace = json.loads(run.get("config_snapshot_json") or "{}").get("search_trace")
+        if status in {"queued", "running"} and search_trace and search_trace.get("status") in {"queued", "running"}:
+            search_trace.update(status="failed", message="服务已重启，本轮搜索被中断")
+            self.conversations.save_search_trace(run["id"], search_trace)
         yield sse_event(
             "start",
             {
@@ -480,6 +514,7 @@ class AiRunManager:
                 "status": status,
                 "content": content,
                 "reasoning_content": reasoning_content,
+                "search_trace": search_trace,
             },
         )
         if status in {"queued", "running"}:
@@ -502,6 +537,7 @@ class AiRunManager:
                     "message": "服务已重启，本次生成被中断",
                     "content": content,
                     "reasoning_content": reasoning_content,
+                    "search_trace": search_trace,
                 },
             )
             return
@@ -516,6 +552,7 @@ class AiRunManager:
                     "message": run["error_message"] or "AI 运行失败",
                     "content": content,
                     "reasoning_content": reasoning_content,
+                    "search_trace": search_trace,
                 },
             )
             return
@@ -527,6 +564,7 @@ class AiRunManager:
                 "status": status,
                 "content": content,
                 "reasoning_content": reasoning_content,
+                "search_trace": search_trace,
             },
         )
 

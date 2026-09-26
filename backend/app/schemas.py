@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -181,6 +181,7 @@ class TemplateNameRequest(BaseModel):
 
 
 class ProviderSaveRequest(BaseModel):
+    api_protocol: Literal["openai_compatible", "openai_responses", "google", "anthropic"] | None = None
     display_name: str = Field(default="OpenAI 兼容提供方", max_length=80)
     base_url: str = Field(min_length=1, max_length=300)
     model: str = Field(min_length=1, max_length=120)
@@ -200,6 +201,7 @@ class ProviderSaveRequest(BaseModel):
 
 
 class ProviderModelsRequest(BaseModel):
+    api_protocol: Literal["openai_compatible", "openai_responses", "google", "anthropic"] | None = None
     base_url: str | None = Field(default=None, max_length=300)
     api_key: str | None = None
     request_timeout_seconds: int | None = Field(default=None, ge=5, le=600)
@@ -215,6 +217,7 @@ class ProviderModelsRequest(BaseModel):
 
 
 class ProviderTestRequest(BaseModel):
+    api_protocol: Literal["openai_compatible", "openai_responses", "google", "anthropic"] | None = None
     base_url: str | None = Field(default=None, max_length=300)
     model: str | None = Field(default=None, max_length=120)
     api_key: str | None = None
@@ -235,6 +238,7 @@ class ProviderCreateRequest(ProviderSaveRequest):
 
 
 class ProviderUpdateRequest(BaseModel):
+    api_protocol: Literal["openai_compatible", "openai_responses", "google", "anthropic"] | None = None
     display_name: str | None = Field(default=None, max_length=80)
     base_url: str | None = Field(default=None, max_length=300)
     model: str | None = Field(default=None, max_length=120)
@@ -306,6 +310,7 @@ class ConversationUpdateRequest(BaseModel):
 
 
 class MessageSendRequest(BaseModel):
+    search: dict[str, Any] | None = None
     regenerate_message_id: str | None = Field(default=None, max_length=64)
     parent_message_id: str | None = Field(default=None, max_length=64)
     edit_message_id: str | None = Field(default=None, max_length=64)
@@ -611,6 +616,7 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 
 class QuestionDiscussionMessageRequest(BaseModel):
+    search: dict[str, Any] | None = None
     regenerate_turn_id: str | None = Field(default=None, max_length=64)
     parent_turn_id: str | None = Field(default=None, max_length=64)
     edit_turn_id: str | None = Field(default=None, max_length=64)

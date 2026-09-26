@@ -69,6 +69,7 @@ def create_provider(
             identity["id"], display_name=payload.display_name, base_url=payload.base_url,
             model=payload.model, api_key=payload.api_key, enabled=payload.enabled,
             is_default=payload.is_default, request_timeout_seconds=payload.request_timeout_seconds,
+            api_protocol=payload.api_protocol,
         )
     except ConversationError as error:
         _raise(error)
@@ -118,6 +119,7 @@ async def test_provider_profile(
             model=payload.model if payload else None,
             api_key=payload.api_key if payload else None,
             request_timeout_seconds=payload.request_timeout_seconds if payload else None,
+            api_protocol=payload.api_protocol if payload else None,
         )
     except ConversationError as error:
         _raise(error)
@@ -127,6 +129,7 @@ async def test_provider_profile(
         not (payload and payload.api_key)
         and profile["base_url"] == config.base_url
         and profile["model"] == config.model
+        and service._protocol(profile, config.model) == config.provider_kind
         and int(profile["request_timeout_seconds"]) == config.timeout_seconds
     )
     try:
@@ -201,6 +204,7 @@ def save_provider(
             api_key=payload.api_key,
             enabled=payload.enabled,
             request_timeout_seconds=payload.request_timeout_seconds,
+            api_protocol=payload.api_protocol,
         )
     except ConversationError as error:
         _raise(error)
@@ -235,6 +239,7 @@ async def test_provider(
                 model=payload.model,
                 api_key=payload.api_key,
                 request_timeout_seconds=payload.request_timeout_seconds,
+                api_protocol=payload.api_protocol,
             )
             if not config.model:
                 raise ConversationError("模型名称不能为空")
@@ -247,6 +252,7 @@ async def test_provider(
         and not (payload and payload.api_key)
         and profile["base_url"] == config.base_url
         and profile["model"] == config.model
+        and service._protocol(profile, config.model) == config.provider_kind
         and int(profile["request_timeout_seconds"]) == config.timeout_seconds
     )
     try:
@@ -283,6 +289,7 @@ async def discover_provider_models(
             base_url=payload.base_url,
             api_key=payload.api_key,
             request_timeout_seconds=payload.request_timeout_seconds,
+            api_protocol=payload.api_protocol,
         )
         models, cached = await request.app.state.model_discovery.discover(
             identity["id"], config, force_refresh=payload.force_refresh
@@ -309,6 +316,7 @@ async def discover_provider_profile_models(
         profile, config = service.provider_profile_form_runtime(
             identity["id"], provider_id, base_url=payload.base_url,
             api_key=payload.api_key, request_timeout_seconds=payload.request_timeout_seconds,
+            api_protocol=payload.api_protocol,
         )
         models, cached = await request.app.state.model_discovery.discover(
             identity["id"], config, force_refresh=payload.force_refresh
@@ -513,6 +521,7 @@ async def send_message(
             regenerate_message_id=payload.regenerate_message_id,
             parent_message_id=payload.parent_message_id,
             edit_message_id=payload.edit_message_id,
+            search=payload.search,
         )
     except ConversationError as error:
         _raise(error)

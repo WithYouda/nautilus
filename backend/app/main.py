@@ -15,6 +15,7 @@ from .auth import AuthService
 from .config import Settings
 from .conversations import ConversationService
 from .credentials import CredentialStore
+from .search_service import SearchService
 from .evidence import EvidenceService, ProviderSemanticAnalyzer
 from .evidence_provider import EvidenceProviderService
 from .evidence_events import EvidenceEventService
@@ -32,7 +33,7 @@ from .model_discovery import ModelDiscoveryService
 from .network import wsl_ip
 from .plan_editor import PlanEditorService
 from .plans import PlanService
-from .routers import ai, auth, layouts, learning, plans, system
+from .routers import ai, auth, layouts, learning, plans, system, search
 
 logger = logging.getLogger("nautilus")
 
@@ -65,6 +66,8 @@ def create_app(
         measurement_service = MeasurementService(learning_service)
         credential_store = CredentialStore(app_settings.credentials_dir)
         conversation_service = ConversationService(database, plan_service, credential_store)
+        search_service = SearchService(credential_store, transport=provider_transport)
+        conversation_service.search_service = search_service
         learning_setup_service = LearningSetupService(
             learning_service,
             conversation_service,
@@ -122,6 +125,7 @@ def create_app(
         app.state.evidence_provider = evidence_provider_service
         app.state.evidence_events = evidence_events
         app.state.credentials = credential_store
+        app.state.search = search_service
         app.state.conversations = conversation_service
         app.state.ai_runs = ai_run_manager
         app.state.model_discovery = model_discovery
@@ -158,6 +162,7 @@ def create_app(
     app.include_router(layouts.router)
     app.include_router(learning.router)
     app.include_router(ai.router)
+    app.include_router(search.router)
     return app
 
 

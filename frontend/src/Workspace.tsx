@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { BookOpen, Bot, ChevronLeft, ChevronRight, Compass, History, LogOut, Menu, MessageSquareText, Settings2, X } from "lucide-react";
+import { BookOpen, Bot, ChevronLeft, ChevronRight, Compass, History, LogOut, Menu, MessageSquareText, Search, Settings2, X } from "lucide-react";
 import { getAiProvider, type Health, type AiProvider, type AiContextScope, type Identity, type LearningRoomBrief } from "./api";
 import AiLearningRoom from "./AiLearningRoom";
 import AiCompanionPanel from "./AiCompanionPanel";
 import AiProviderDialog from "./AiProviderDialog";
+import SearchSettings from "./SearchSettings";
 import DialogPortal from "./DialogPortal";
 import FactWorkspace from "./FactWorkspace";
 import LearningPlans from "./LearningPlans";
@@ -63,6 +64,7 @@ export default function Workspace({ health, identity, onLogout }: {
   const [aiEntry, setAiEntry] = useState<AiRoomEntry>(() => restoredAiEntry() ?? { scope: "independent", targetId: null });
   const [aiProvider, setAiProvider] = useState<AiProvider | null>(null);
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
+  const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
   const [companionDrawerOpen, setCompanionDrawerOpen] = useState(false);
   const [companionExpanded, setCompanionExpanded] = useState(false);
   const [error, setError] = useState("");
@@ -71,6 +73,7 @@ export default function Workspace({ health, identity, onLogout }: {
   const [v6Layout, setV6Layout] = useState<V6Layout>(restoredV6Layout);
   const v6LayoutRef = useRef(v6Layout);
   useEffect(() => { v6LayoutRef.current = v6Layout; }, [v6Layout]);
+  useEffect(() => { const openSearch = () => setSearchSettingsOpen(true); window.addEventListener("nautilus:open-search-settings", openSearch); return () => window.removeEventListener("nautilus:open-search-settings", openSearch); }, []);
   useEffect(() => { getAiProvider().then(result => setAiProvider(result.provider)).catch(reason => setError(reason.message)); }, []);
   useEffect(() => {
     const pop = () => { closeStoredRoom(); setView(restoredWorkspaceView()); setMode("manage"); setCreation(null); setPageKey(key => key + 1); };
@@ -180,6 +183,7 @@ export default function Workspace({ health, identity, onLogout }: {
             <button className="icon-button v6-companion-toggle" type="button" onClick={() => setCompanionExpanded(!companionExpanded)} aria-expanded={companionExpanded} aria-label={companionExpanded ? "收起 AI 学习伙伴" : "打开 AI 学习伙伴"}><Bot size={17} /></button>
             <button className="icon-button v6-compact-companion-trigger" type="button" onClick={() => setCompanionDrawerOpen(true)} aria-label="打开 AI 学习伙伴"><Bot size={17} /></button>
           </>}
+          <button className="icon-button" type="button" onClick={() => setSearchSettingsOpen(true)} title="搜索设置" aria-label="搜索设置"><Search size={18} /></button>
           <button className="icon-button" onClick={() => setProviderDialogOpen(true)} title="提供方设置" aria-label="提供方设置"><Settings2 size={18} /></button>
           <button className="icon-button" onClick={onLogout} title="退出会话" aria-label="退出会话"><LogOut size={18} /></button>
         </div>
@@ -189,6 +193,7 @@ export default function Workspace({ health, identity, onLogout }: {
         : view === "home" ? <FactWorkspace key={pageKey} creation={creation} onOpenPlans={id => chooseView("plans", id ? { plan: id } : {})} onOpenRecord={openRecord} onOpenLearningRoom={openRoom} />
         : view === "plans" ? <LearningPlans key={pageKey} onCreate={create} onOpenRecord={openRecord} onLearning={brief => openRoom("", brief)} />
         : <LearningRecords key={pageKey} onClose={() => chooseView("home")} onLearning={brief => openRoom("", brief)} />}
+      <SearchSettings open={searchSettingsOpen} onClose={() => setSearchSettingsOpen(false)} />
       <AiProviderDialog open={providerDialogOpen} provider={aiProvider} onClose={() => setProviderDialogOpen(false)} onChanged={setAiProvider} />
     </section>
     {mode === "manage" && <>
