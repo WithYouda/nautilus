@@ -109,6 +109,8 @@ class LearningCore:
         # Preserve idempotency hashes issued before plan continuation existed.
         if isinstance(command, ConfirmLearningSetup) and command.plan_id is None:
             payload.pop("plan_id")
+        if isinstance(command, CompleteLearningAction) and command.completion_id is None:
+            payload.pop("completion_id")
         request_hash = digest({"command": operation, "payload": payload})
         previous = connection.execute(
             """SELECT request_hash, result_json FROM learning_command
@@ -190,6 +192,8 @@ class LearningCore:
                 "action_id": command.action_id,
                 "delegation_id": command.delegation_id,
             }
+            if command.completion_id:
+                payload["completion_id"] = command.completion_id
             others = connection.execute(
                 "SELECT 1 FROM learning_delegation WHERE owner_id=? AND action_id=? AND id<>? AND status IN ('ready', 'active', 'paused')",
                 (principal.owner_id, command.action_id, command.delegation_id),

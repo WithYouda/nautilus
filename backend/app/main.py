@@ -22,6 +22,7 @@ from .evidence_events import EvidenceEventService
 from .db import Database
 from .layouts import LayoutService
 from .learning_service import LearningService
+from .completion import CompletionService
 from .learning_setup import LearningSetupService
 from .measurements import MeasurementService
 from .review import ReviewService
@@ -91,6 +92,7 @@ def create_app(
         verification_service.evidence = evidence_service
         discussion_service = QuestionDiscussionService(verification_service)
         discussion_service.recover()
+        CompletionService(verification_service).recover()
         interrupted_title_runs = conversation_service.recover_interrupted_title_runs()
         if interrupted_title_runs:
             logger.warning("Recovered %s interrupted conversation title runs.", interrupted_title_runs)

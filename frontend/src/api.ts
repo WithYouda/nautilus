@@ -1925,7 +1925,7 @@ export function getAgentContext(targetId?: string): Promise<AgentContext> {
 export type ReturnReview = {
   id: string;
   position: { goal: string; plan: string; plan_id: string | null; action: string; action_id: string; delegation_id: string; last_session: string | null; last_activity_at: string | null };
-  what_happened: { summary: string; action_status: string; delegation_status: string; verification_status: string | null; verification_id: string | null; has_saved_answer: boolean; session_status: string | null };
+  what_happened: { summary: string; action_status: string; delegation_status: string; verification_status: string | null; verification_id: string | null; has_saved_answer: boolean; session_status: string | null; completion?: CompletionFact | null };
   supported: Array<{ claim_id: string; label: string; basis_kind: string; scope: string; user_facing_explanation: string }>;
   unknowns: Array<{ reason_code: string; label: string }>;
   recommendation: { kind: string; action_id: string | null; delegation_id: string | null; label: string; reason_code: string; explanation: string; verification_id: string | null };
@@ -1960,9 +1960,21 @@ export type QuestionDiscussion = {
 };
 export type LearningRecord = { id: string; outcome_id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
+export type CompletionKind = 'unverified' | 'external_material' | 'external_report';
+export type CompletionFact = { id: string; verification_kind: CompletionKind; created_at: string; purged_at: string | null; delegation_id?: string };
+export type CompletionContent = { note: string; report: { method: string; result: string } | null; material: { kind: 'work' | 'result'; label: string; text: string } | null };
+export type CompletionReview = { id: string; status: 'running' | 'succeeded' | 'failed'; reason: string | null; created_at: string; finished_at: string | null; provider_name: string | null; model: string | null; result: null | { summary: string; findings: Array<{ kind: 'issue' | 'question' | 'insufficient' | 'no_issue'; quote: string; comment: string }>; limitations: string; next_step: string }; user_response: string | null };
+export type LearningCompletion = CompletionFact & { action_id: string; delegation_id: string; content: CompletionContent | null; contract: null | { version: number; criterion_id: string | null; stop_conditions: string; boundaries: string }; reviews: CompletionReview[] };
+export type CreateLearningCompletion = CompletionContent & { request_key: string; verification_kind: CompletionKind };
+export function getLearningCompletion(delegationId: string): Promise<LearningCompletion | null> { return request(`/api/learning/delegations/${delegationId}/completion`); }
+export function createLearningCompletion(delegationId: string, payload: CreateLearningCompletion): Promise<LearningCompletion> { return request(`/api/learning/delegations/${delegationId}/completion`, { method: 'POST', body: JSON.stringify(payload) }); }
+export function reviewLearningCompletion(id: string, requestKey: string): Promise<LearningCompletion> { return request(`/api/learning/completions/${id}/reviews`, { method: 'POST', body: JSON.stringify({ request_key: requestKey }) }); }
+export function respondToCompletionReview(id: string, reviewId: string, value: string): Promise<LearningCompletion> { return request(`/api/learning/completions/${id}/reviews/${reviewId}/response`, { method: 'PUT', body: JSON.stringify({ text: value }) }); }
+export function purgeLearningCompletion(id: string): Promise<LearningCompletion> { return request(`/api/learning/completions/${id}/purge`, { method: 'POST' }); }
 export type OutcomeReview = {
   outcome: { id: string; object_description: string; behavior: string; context_key: string };
   records: LearningRecord[];
+  completions?: CompletionFact[];
   standards: Array<{ id: string; title: string; version: number; review_status: string; availability: string | null; dimensions: Array<{ id: string; label: string; state: LearningDerivedState | null }> }>;
   attempts: Array<{ verification_id: string; submission_id: string | null; evaluation_id: string | null; delegation_id: string; action_title: string; mode: string; created_at: string; criterion_id: string | null; standard_version: number | null; contract_version: number | null; evaluation_status: string | null; condition: string | null; condition_basis: 'submission_record' | null; feedback: string | null; passed: boolean | null; available: boolean; unavailable_reason: 'purged' | 'hidden' | 'not_submitted' | null; artifact_id: string | null }>;
   artifacts: Array<{ artifact_id: string; content_version: number; created_at: string; delegation_id: string; action_title: string; criterion_id: string | null; visibility: string; evidence_status: string; available: boolean }>;

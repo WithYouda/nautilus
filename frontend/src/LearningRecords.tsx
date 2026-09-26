@@ -4,6 +4,7 @@ import VerificationReview from './VerificationReview';
 import OutcomeReview from './OutcomeReview';
 import QuestionDiscussion from './QuestionDiscussion';
 import LearningPageHeader from './LearningPageHeader';
+import LearningCompletion from './LearningCompletion';
 
 const labels: Record<string, string> = { ready: '待开始', active: '进行中', paused: '已暂停', completed: '已完成', cancelled: '已取消', passed: '已确认完成', submitted: '已评估', failed: '待补强' };
 export function setReviewLocation(key: string, value: string | null) {
@@ -23,13 +24,19 @@ export default function LearningRecords({ onClose, onLearning }: { onClose: () =
   const [outcomeRefresh, setOutcomeRefresh] = useState(0);
   const [discussionId, setDiscussionId] = useState<string | null>(query.get('discussion'));
   const [error, setError] = useState('');
+  const [recordRefresh, setRecordRefresh] = useState(0);
   useEffect(() => { listLearningRecords().then(setItems).catch(reason => setError(reason.message)); }, []);
   useEffect(() => {
     let active = true;
     setRecord(null);
     if (recordId) getLearningRecord(recordId).then(value => { if (active) setRecord(value); }).catch(reason => { if (active) setError(reason.message); });
     return () => { active = false; };
-  }, [recordId]);
+  }, [recordId, recordRefresh]);
+  function refreshRecords() {
+    setRecordRefresh(value => value + 1);
+    setOutcomeRefresh(value => value + 1);
+    listLearningRecords().then(setItems).catch(reason => setError(reason instanceof Error ? reason.message : '记录暂时无法刷新'));
+  }
   function discuss(id: string | null) { setDiscussionId(id); setReviewLocation('discussion', id); }
   function selectVerification(id: string | null, submission: string | null = null, evaluation: string | null = null) {
     setVerificationId(id); setSubmissionId(submission); setEvaluationId(evaluation);
@@ -42,7 +49,7 @@ export default function LearningRecords({ onClose, onLearning }: { onClose: () =
     </LearningPageHeader>
     {error && <p role="alert">{error}</p>}
     <div className="learning-records-list">{items.map(item => <button type="button" className="verification-panel" key={item.id} aria-pressed={recordId === item.id && !outcomeId} onClick={() => { setRecordId(item.id); setOutcomeId(null); setReviewLocation('outcome', null); selectVerification(null); setReviewLocation('record', item.id); }}>
-      <strong>{item.title}</strong><span>{labels[item.status] ?? '已记录'} · {item.verification_count} 次验证</span><small>{item.goal_title || '独立学习'}{item.plan_title ? ` · ${item.plan_title}` : ''}</small>
+      <strong>{item.title}</strong><span>{labels[item.status] ?? '已记录'} · {item.verification_count} 次 AI 验证</span><small>{item.goal_title || '独立学习'}{item.plan_title ? ` · ${item.plan_title}` : ''}</small>
     </button>)}</div>
     {!items.length && !error && <p>还没有学习记录。创建计划并开始学习后，记录会出现在这里。</p>}
     {record && !outcomeId && <section aria-label="委托历史"><h3>{record.record.title}</h3>
@@ -50,7 +57,8 @@ export default function LearningRecords({ onClose, onLearning }: { onClose: () =
       <div className="record-verification-list"><button className="button" type="button" onClick={() => { setOutcomeId(record.record.outcome_id); setReviewLocation('outcome', record.record.outcome_id); selectVerification(null); }}>查看这个成果的依据</button>
         {record.brief && onLearning && <button className="button button--quiet" type="button" onClick={() => { for (const key of ['record', 'outcome', 'verification', 'submission', 'evaluation', 'discussion']) setReviewLocation(key, null); onLearning({ ...record.brief!, history_only: true }); }}>查看原学习对话</button>}</div>
       <div className="record-verification-list">{record.verifications.map((v, i) => <button type="button" className="button button--quiet" key={v.id} aria-pressed={verificationId === v.id} onClick={() => selectVerification(v.id)}>验证 {record.verifications.length - i} · {v.mode === 'ai_challenge' ? 'AI 出题' : '提交材料'} · {v.purged_at ? '内容已删除' : labels[v.status] ?? '已保存'}</button>)}</div>
-      {!record.verifications.length && <p>尚未发起验证；原学习记录仍保留。</p>}
+      {!record.verifications.length && <p>尚未发起 AI 验证；原学习记录仍保留。</p>}
+      <LearningCompletion key={record.record.id} delegationId={record.record.id} allowCreate={record.record.status !== 'completed' && record.record.status !== 'cancelled'} onCompleted={refreshRecords} onPurged={refreshRecords} />
     </section>}
     {outcomeId && !verificationId && <OutcomeReview id={outcomeId} refreshKey={outcomeRefresh} onBack={() => { setOutcomeId(null); setReviewLocation('outcome', null); selectVerification(null); }} onOpenRecord={id => { setRecordId(id); setReviewLocation('record', id); setOutcomeId(null); setReviewLocation('outcome', null); selectVerification(null); }} onOpenVerification={attempt => selectVerification(attempt.verification_id, attempt.submission_id, attempt.evaluation_id)} />}
     {verificationId && <div className="record-verification-detail"><div className="record-verification-list"><button className="button button--quiet" type="button" onClick={() => selectVerification(null)}>{outcomeId ? '返回成果依据' : '收起验证回看'}</button></div><VerificationReview key={verificationId} id={verificationId} initialSubmissionId={submissionId} initialEvaluationId={evaluationId} onSelectionChange={(submission, evaluation) => { setSubmissionId(submission); setEvaluationId(evaluation); setReviewLocation('submission', submission); setReviewLocation('evaluation', evaluation); }} onPurged={() => setOutcomeRefresh(value => value + 1)} onDiscuss={id => discuss(id)} /></div>}

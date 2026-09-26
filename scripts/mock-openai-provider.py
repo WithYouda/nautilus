@@ -136,6 +136,10 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     outcome_context_key='synthetic-continuity', boundaries='仅一份样例',
                     stop_conditions='写出自己的判断与过程', time_budget_minutes=15,
                     recommended_criterion_id=None, rationale='先完成一个可观察的小步骤'), ensure_ascii=False)
+            elif 'completion_material_review' in prompt:
+                content = json.dumps(dict(summary='合成审查：仅能确认材料报告的内容',
+                    findings=[dict(kind='insufficient', quote='', comment='没有题目和评分依据，无法判断具体能力。')],
+                    limitations='未核验材料真伪、本人独立完成或机构记录。', next_step='可选择补充题目；不影响已记录的完成。'), ensure_ascii=False)
             elif '你为Nautilus整理学习位置' in prompt:
                 content = json.dumps(dict(current='正在讨论如何定位日志编号，尚未验证理解。',
                     next='可以解释一次自己的判断过程。'), ensure_ascii=False)

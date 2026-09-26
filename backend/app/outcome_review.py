@@ -42,6 +42,9 @@ class OutcomeReview:
                 'artifacts': self._artifacts(connection, owner, outcome_id),
                 'claims': self._claims(connection, owner, outcome_id),
                 'follow_ups': self._follow_ups(connection, owner, outcome_id),
+                'completions': [dict(row) for row in connection.execute('''SELECT c.id,c.delegation_id,c.verification_kind,c.created_at,c.purged_at
+                    FROM learning_completion c JOIN learning_delegation d ON d.owner_id=c.owner_id AND d.id=c.delegation_id
+                    WHERE c.owner_id=? AND d.outcome_id=? ORDER BY c.created_at DESC''', (owner, outcome_id))],
             }
 
     @staticmethod

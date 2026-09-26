@@ -181,6 +181,7 @@ def _backup_loses_purge_barriers(
         ("learning_verification_submission", ("owner_id", "id")),
         ("learning_evidence_private_content", ("owner_id", "event_id")),
         ("learning_question_discussion", ("owner_id", "id")),
+        ("learning_completion", ("owner_id", "id")),
     )
     for table, keys in barriers:
         current_columns = {row[1] for row in current.execute(f"PRAGMA table_info({table})")}
@@ -277,6 +278,27 @@ def _backup_restores_verification_content(current, backup):
             if backup.execute(
                 "SELECT 1 FROM learning_evidence_private_content WHERE event_id=? AND content_json IS NOT NULL",
                 (row[0],),
+            ).fetchone():
+                return True
+    if current.execute("SELECT 1 FROM sqlite_master WHERE name='learning_completion'").fetchone():
+        for owner_id, completion_id in current.execute(
+            "SELECT owner_id, id FROM learning_completion WHERE purged_at IS NOT NULL"
+        ):
+            if "learning_completion" in backup_tables and backup.execute(
+                """SELECT 1 FROM learning_completion
+                   WHERE owner_id=? AND id=? AND
+                         (content_json IS NOT NULL OR contract_snapshot_json IS NOT NULL
+                          OR request_fingerprint IS NOT NULL)""",
+                (owner_id, completion_id),
+            ).fetchone():
+                return True
+            if "learning_completion_review" in backup_tables and backup.execute(
+                """SELECT 1 FROM learning_completion_review
+                   WHERE owner_id=? AND completion_id=? AND
+                         (result_json IS NOT NULL OR provider_name IS NOT NULL
+                          OR model IS NOT NULL OR user_response IS NOT NULL
+                          OR status <> 'failed' OR reason <> 'completion_content_deleted')""",
+                (owner_id, completion_id),
             ).fetchone():
                 return True
     return False

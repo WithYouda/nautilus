@@ -46,6 +46,7 @@ import DialogPortal from "./DialogPortal";
 import useDismissibleLayer from "./useDismissibleLayer";
 import LearningVerification from "./LearningVerification";
 import LearningPosition from "./LearningPosition";
+import LearningCompletion from "./LearningCompletion";
 
 const SESSION_KEY = "nautilus.ai.learning-room";
 const MAX_RECONNECT_ATTEMPTS = 3;
@@ -260,6 +261,8 @@ export default function AiLearningRoom({
   const [context, setContext] = useState<AiLearningContext | null>(null);
   const [status, setStatus] = useState<RoomStatus>("loading");
   const [entryReady, setEntryReady] = useState(false);
+  const [completionOpen, setCompletionOpen] = useState(false);
+  useEffect(() => { setCompletionOpen(false); }, [learningBrief?.delegation_id]);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<AiProvider[]>([]);
@@ -976,7 +979,11 @@ export default function AiLearningRoom({
       />
       </div>}
     {discussionId && <QuestionDiscussion id={discussionId} onBack={() => { setDiscussionId(null); setReviewLocation("discussion", null); setVerificationOpen(true); }} />}
-    <div className="ai-room" style={verificationOpen || discussionId ? { display: "none" } : undefined}>
+    {learningBrief?.delegation_id && !learningBrief.history_only && <div className="verification-scroll" hidden={!completionOpen || verificationOpen || Boolean(discussionId)}><div className="verification-page">
+      <button className="button button--quiet" type="button" onClick={() => setCompletionOpen(false)}>返回学习室</button>
+      <LearningCompletion key={learningBrief.delegation_id} delegationId={learningBrief.delegation_id} onCompleted={onBack} />
+    </div></div>}
+    <div className="ai-room" style={verificationOpen || completionOpen || discussionId ? { display: "none" } : undefined}>
       <header className="ai-room-header">
         <div className="ai-room-heading">
           <button className="button button--quiet button--compact button--with-icon" onClick={onBack} aria-label="返回工作区">
@@ -1116,8 +1123,9 @@ export default function AiLearningRoom({
         </div>
       </header>
 
-      {learningBrief && <><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
+    {learningBrief && <><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
         <button className="button button--quiet" onClick={async () => { try { const card = await getReturnReview(); if (card) await chooseReturnReview(card.id, "stop_for_now", `room-stop:${card.id}`); onBack(); } catch (reason) { setError(reason instanceof Error ? reason.message : "暂停未保存"); } }}>今天先停</button>
+        {learningBrief.delegation_id && !learningBrief.history_only && <button className="button button--quiet" type="button" aria-expanded={completionOpen} onClick={() => setCompletionOpen(value => !value)}>记录本次完成</button>}
         {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}
       </div></>}
 

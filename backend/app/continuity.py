@@ -26,6 +26,7 @@ class ContinuityService:
             return self._card(connection, principal)
 
     def _card(self, connection, principal):
+        from .completion import completion_summary
         owner = principal.owner_id
         sessions = [dict(row) for row in connection.execute(
             """SELECT s.*, COALESCE(e.rowid,0) AS started_position FROM learning_session s LEFT JOIN learning_event e
@@ -39,6 +40,13 @@ class ContinuityService:
         current = next((d for d in delegations if session and d['id'] == session['delegation_id']), delegations[0])
         if session and session['status'] != 'running' and delegations[0]['status'] == 'ready' and delegations[0]['created_position'] > session['started_position']:
             current, session = delegations[0], None
+        if not session or session['status'] != 'running':
+            latest_completion = connection.execute('SELECT delegation_id,created_at FROM learning_completion WHERE owner_id=? ORDER BY created_at DESC LIMIT 1', (owner,)).fetchone()
+            last_activity = (session['ended_at'] or session['started_at']) if session else current['created_at']
+            if latest_completion and latest_completion['created_at'] > last_activity:
+                current = next(d for d in delegations if d['id'] == latest_completion['delegation_id'])
+                session = next((s for s in sessions if s['delegation_id'] == current['id']), None)
+        completion = completion_summary(connection, owner, current['id'])
         open_items = [d for d in delegations if d['status'] in ('ready', 'active') and d['action_status'] == 'open']
         verification = connection.execute(
             'SELECT * FROM learning_verification WHERE owner_id=? AND delegation_id=? AND purged_at IS NULL ORDER BY created_at DESC, rowid DESC LIMIT 1', (owner, current['id']),
@@ -57,7 +65,7 @@ class ContinuityService:
             kind, reason, explanation = 'resume', 'running', '这次学习尚在进行，先接着当前任务。'
         elif session and session['status'] == 'interrupted' and current in open_items:
             kind, reason, explanation = 'resume', 'interrupted', '你上次在这里中断，继续原来的任务可以保留学习上下文。'
-        elif verification and verification['status'] in ('failed','submitted','ready') and verification['latest_submission_id']:
+        elif verification and current['status'] != 'completed' and verification['status'] in ('failed','submitted','ready') and verification['latest_submission_id']:
             kind, reason, explanation = 'supplemental_verification', 'saved_verification', '作答已保存，继续查看或重试本次验证。'
             target = current
             verification_id = verification['id']
@@ -100,7 +108,11 @@ class ContinuityService:
         happened = '学习仍在进行。' if session and session['status']=='running' else '上次学习已中断，产出仍按原记录保存。' if session and session['status']=='interrupted' else '学习安排已保存。'
         if verification and verification['status']=='passed':
             happened = '你已确认本次委托完成；验证结果与成果证据分别记录。'
+        if completion:
+            happened = ('你已确认本次委托完成，未经过验证。' if completion['verification_kind'] == 'unverified' else
+                        '你已确认本次委托完成；外部验证结果按你的报告记录，平台尚未核验。')
         fingerprint = digest(dict(session=session, delegation=current, target=target, kind=kind,
+            completion=completion,
             verification=dict(verification) if verification else None,
             claims=[(c['id'],c['status']) for c in claims]))
         existing = connection.execute('SELECT id FROM learning_return_review WHERE owner_id=? AND context_key=?', (owner, fingerprint)).fetchone()
@@ -116,6 +128,7 @@ class ContinuityService:
             what_happened=dict(summary=happened, action_status=current['action_status'], delegation_status=current['status'],
                 verification_status=verification['status'] if verification else None,
                 verification_id=verification['id'] if verification else None,
+                completion=completion,
                 has_saved_answer=bool(verification and verification['latest_submission_id']),
                 session_status=session['status'] if session else None),
             supported=supported[:4], unknowns=unknowns,

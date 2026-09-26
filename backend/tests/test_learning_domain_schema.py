@@ -85,6 +85,7 @@ def test_independent_schema_and_reopen_are_stable(tmp_path):
                 "027_learning_continuity",
                 "028_verification_discussions",
                 "029_discussion_reasoning",
+                "030_learning_completion",
             ]
             assert database.fetchone("PRAGMA integrity_check")[0] == "ok"
             assert database.fetchall("PRAGMA foreign_key_check") == []

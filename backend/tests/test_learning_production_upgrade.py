@@ -16,6 +16,30 @@ from app.learning_production import (
 from test_evidence_claims import authorize, create_standard_chain
 
 
+def test_upgrade_029_to_030_preserves_existing_learning_facts(tmp_path):
+    from app.config import Settings
+    from app.db import Database
+    from test_learning_verifications import create_context
+
+    path = tmp_path / 'learning.sqlite3'
+    database = Database(path, Settings.from_env().migrations_dir, migration_floor=11, migration_ceiling=29)
+    with database.transaction() as connection:
+        connection.execute("INSERT INTO local_identity (id,device_id,display_name,created_at,updated_at) VALUES ('owner-a','synthetic-device','Synthetic','2026-09-26','2026-09-26')")
+    context = create_context(database)
+    before = [tuple(row) for row in database.fetchall('SELECT * FROM learning_event ORDER BY position')]
+    database.close()
+    result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
+    assert result['status'] == 'upgraded'
+    assert result['preflight']['applied_migrations'][-1] == '029_discussion_reasoning'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '030_learning_completion'
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute('SELECT * FROM learning_event ORDER BY position').fetchall() == before
+        assert connection.execute('SELECT status FROM learning_session WHERE id=?', (context['session_id'],)).fetchone()[0] == 'running'
+        assert connection.execute('SELECT COUNT(*) FROM learning_completion').fetchone()[0] == 0
+        assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+        assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+
+
 def test_production_upgrade_initializes_and_backs_up_isolated_learning_database(tmp_path):
     database_path = tmp_path / "learning.sqlite3"
     backup_dir = tmp_path / "backups"

@@ -38,11 +38,13 @@ export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged,
   const saved = !completed && card.what_happened.has_saved_answer;
   const started = card.what_happened.session_status !== null;
   const status = completed ? '已完成' : saved || !started ? '已保存' : '正在学习';
+  const completion = card.what_happened.completion;
+  const completionLabel = completion?.verification_kind === 'unverified' ? '未经过验证' : completion?.verification_kind === 'external_material' ? completion.purged_at ? '用户报告非 AI 验证 · 曾附材料，内容已删除 · 平台未核验' : '用户报告非 AI 验证 · 已附材料 · 平台未核验' : completion?.verification_kind === 'external_report' ? '用户报告外部验证 · 未附材料 · 平台未核验' : null;
   return <section className="return-review" aria-label="当前学习">
     <span className={`learning-state-label learning-state-label--${completed ? 'complete' : 'active'}`}>{status}</span>
     <h2>{card.position.action}</h2>
     {card.position.goal && <p className="return-review__route">{card.position.goal}{card.position.plan && ` · ${card.position.plan}`}</p>}
-    <p className="return-review__fact">{completed ? card.what_happened.verification_id ? '本次学习已完成，作答和验证反馈已保存。' : '本次学习已完成，学习记录已保留。' : saved ? '作答已保存，可以查看反馈并继续验证。' : card.what_happened.session_status === 'interrupted' ? '学习位置已保存，可以接着上次的内容继续。' : started ? '接着当前任务学习，对话和验证记录会保留。' : '学习安排已保存，可以开始这项任务。'}</p>
+    <p className="return-review__fact">{completed ? completionLabel ? `本次执行已完成 · ${completionLabel}${completion?.purged_at ? ' · 内容已删除' : ''}。` : card.what_happened.verification_id ? '本次学习已完成，作答和验证反馈已保存。' : '本次学习已完成，学习记录已保留。' : saved ? '作答已保存，可以查看反馈并继续验证。' : card.what_happened.session_status === 'interrupted' ? '学习位置已保存，可以接着上次的内容继续。' : started ? '接着当前任务学习，对话和验证记录会保留。' : '学习安排已保存，可以开始这项任务。'}</p>
     <p className="return-review__next"><span>下一步建议的理由</span><br />{card.recommendation.explanation}</p>
     <div className="return-review__actions">
       {completed ? <>

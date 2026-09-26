@@ -27,6 +27,7 @@ from ..learning_room import LearningRoomService
 from ..learning_position import LearningPositionService
 from ..learning_records import LearningRecords
 from ..outcome_review import OutcomeReview
+from ..completion import CompletionService, CompletionRequest, CompletionReviewRequest, CompletionResponseRequest
 from ..question_discussion import QuestionDiscussionService
 from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest
 from ..schemas import (
@@ -127,6 +128,9 @@ def _raise_learning_error(error: DomainError) -> None:
         "verification_contract_changed": "本次验证的学习约定已变更，请按新约定重新开始验证",
         "verification_already_completed": "本次验证已完成，请先复核下一步学习安排",
         "verification_not_ready": "验证与停止条件尚未全部通过，暂时不能确认完成",
+        "completion_already_recorded": "本次委托已记录完成，请刷新查看；原验证记录仍保留",
+        "completion_content_deleted": "完成记录的内容已删除，不能继续审查或写入回应",
+        "completion_material_required": "请先在完成记录中附上需要审阅的材料",
         "verification_learner_work_required": "请单独提交自己的过程、理解或项目结果；参考材料不作为能力证据",
         "verification_session_required": "缺少真实学习会话关联，当前记录不能接入证据链",
         "verification_submission_immutable": "验证提交不可更正，请在验证页提交新的作答",
@@ -381,6 +385,46 @@ def list_learning_verifications(
 @router.get("/records")
 def list_learning_records(request: Request, identity: dict[str, Any] = Depends(current_identity)):
     return LearningRecords(verification_service(request)).list(identity)
+
+
+@router.get("/delegations/{delegation_id}/completion")
+def get_learning_completion(delegation_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return CompletionService(verification_service(request)).get(identity, delegation_id)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post("/delegations/{delegation_id}/completion")
+def create_learning_completion(delegation_id: str, payload: CompletionRequest, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return CompletionService(verification_service(request)).create(identity, delegation_id, payload)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post("/completions/{completion_id}/reviews")
+async def review_completion_material(completion_id: str, payload: CompletionReviewRequest, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return await CompletionService(verification_service(request)).review(identity, completion_id, payload.request_key)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.put("/completions/{completion_id}/reviews/{review_id}/response")
+def respond_completion_review(completion_id: str, review_id: str, payload: CompletionResponseRequest, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return CompletionService(verification_service(request)).respond(identity, completion_id, review_id, payload.text)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post("/completions/{completion_id}/purge")
+def purge_completion_content(completion_id: str, request: Request, identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return CompletionService(verification_service(request)).purge(identity, completion_id)
+    except DomainError as error:
+        _raise_learning_error(error)
 
 
 @router.get("/outcomes/{outcome_id}/review")

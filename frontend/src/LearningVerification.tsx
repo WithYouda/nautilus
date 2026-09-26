@@ -11,6 +11,7 @@ import {
   analyzeVerificationEvidence,
   purgeVerification,
   getVerificationReview,
+  getLearningCompletion,
   type LearningRoomBrief,
   type LearningVerification,
 } from "./api";
@@ -51,6 +52,8 @@ export default function LearningVerification({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [completionRecorded, setCompletionRecorded] = useState(false);
   const [editing, setEditing] = useState(false);
   const submissionKey = useRef(requestId());
   const startKey = useRef(requestId());
@@ -58,8 +61,11 @@ export default function LearningVerification({
   useEffect(() => {
     let active = true;
     setLoading(true);
-    listLearningVerifications().then((items) => {
+    setLoadFailed(false); setError(''); setVerification(null); setAttempts([]);
+    setCompletionRecorded(false);
+    Promise.all([listLearningVerifications(), getLearningCompletion(brief.delegation_id!)]).then(([items, completion]) => {
       if (!active) return;
+      setCompletionRecorded(Boolean(completion));
       const related = items.filter((item) => item.action_id === brief.action_id && item.delegation_id === brief.delegation_id
         && item.session_id === (brief.session_id ?? null));
       setAttempts(related);
@@ -69,7 +75,7 @@ export default function LearningVerification({
       setVerification(current ?? null);
       if (current) setMode(current.mode);
     }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "验证恢复失败，请重新进入");
+      if (active) { setLoadFailed(true); setError(reason instanceof Error ? reason.message : "验证恢复失败，请重新进入"); }
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [brief.action_id, brief.delegation_id, brief.session_id]);
@@ -85,7 +91,7 @@ export default function LearningVerification({
   }
 
   function changeMode(nextMode: VerificationMode) {
-    if (busy || nextMode === mode || attempts.some((item) => item.status === "passed")) return;
+    if (busy || completionRecorded || nextMode === mode || attempts.some((item) => item.status === "passed")) return;
     if (verification && !verification.content_purged) {
       drafts.current.set(verification.id, { responses, material, learnerWork, independent, editing });
     }
@@ -215,8 +221,9 @@ export default function LearningVerification({
   }
 
   const questions = verification?.challenge.questions ?? [];
-  const completed = verification?.status === "passed";
-  const answering = !verification?.latest_submission_id || editing;
+  const aiCompleted = verification?.status === "passed";
+  const completed = aiCompleted || completionRecorded;
+  const answering = !completed && (!verification?.latest_submission_id || editing);
   const canConfirm = !answering && verification?.result?.passed && verification.stop_condition_met === true;
 
   return (
@@ -232,7 +239,7 @@ export default function LearningVerification({
         </div>
       </header>
 
-      {!loading && !completed && <section className="verification-mode-picker" aria-label="选择验证方式">
+      {!loading && !loadFailed && !completed && <section className="verification-mode-picker" aria-label="选择验证方式">
           <div className="verification-options" role="group" aria-label="验证方式">
             <button type="button" className={mode === "ai_challenge" ? "is-active" : ""} aria-pressed={mode === "ai_challenge"} disabled={busy} onClick={() => changeMode("ai_challenge")}>
               <strong>AI 出题验证</strong>
@@ -248,7 +255,9 @@ export default function LearningVerification({
 
       {error && <div className="workspace-alert" role="alert">{error}</div>}
 
-      {loading ? <p role="status">正在恢复验证记录…</p> : !verification ? (
+      {loading ? <p role="status">正在恢复验证记录…</p> : loadFailed ? <p>完成状态与验证记录暂时无法读取。请返回后重新进入。</p> : !verification && completionRecorded ? (
+        <section className="verification-panel"><p>本次执行已记录完成，原验证结果保留。</p><button className="button button--quiet" type="button" onClick={onBack}>返回学习室</button></section>
+      ) : !verification ? (
         <section className="verification-panel">
           <div className="verification-panel__intro">
             <ShieldCheck size={20} />
@@ -312,7 +321,8 @@ export default function LearningVerification({
             id={verification.id} refreshKey={`${verification.latest_submission_id}:${verification.evaluation?.id}:${verification.evaluation?.status}`}
             onDiscuss={onDiscuss} onPurged={value => { drafts.current.delete(value.id); setResponses({}); setMaterial(""); setLearnerWork(""); updateVerification(value); }} onReadSolution={() => setIndependent(false)}
           />}
-          {completed && <p>{verification.action_completed ? "停止条件已确认，学习行动已完成。" : "本次委托已完成；其他委托仍开放，学习行动可以继续。"}</p>}
+          {completionRecorded && <p>本次执行已记录完成，原验证结果保留。</p>}
+          {!completionRecorded && aiCompleted && <p>{verification.action_completed ? "停止条件已确认，学习行动已完成。" : "本次委托已完成；其他委托仍开放，学习行动可以继续。"}</p>}
 
           {!answering && verification.latest_submission_id && !completed && <p role="status">作答已保存。{verification.evaluation?.status === "failed" ? (verification.evaluation.message ?? "AI 评估未完成，可重试已保存的作答。") : verification.evaluation?.status === "running" ? "评估尚未返回；如请求已中断，可手动重试。" : ""}</p>}
           {!completed && canConfirm && <>

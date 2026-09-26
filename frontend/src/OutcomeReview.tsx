@@ -25,6 +25,7 @@ const standardAvailabilityLabels: Record<string, string> = { retired: '已停用
 const methodLabels: Record<string, string> = { semantic_analysis: 'AI 语义分析', independent_review: '独立复核', deterministic_check: '规则检查', python_re_search: '正则规则检查', redacted: '内容已删除' };
 const evaluationLabels: Record<string, string> = { queued: '排队中', running: '处理中', succeeded: '已完成', failed: '失败', timeout: '超时', cancelled: '已取消', invalid_output: '结果无效' };
 const time = (value: string) => new Date(value).toLocaleString();
+const completionLabel = { unverified: '未经过验证', external_material: '用户报告非 AI 验证 · 已附材料 · 平台未核验', external_report: '用户报告外部验证 · 未附材料 · 平台未核验' };
 const condition = (value: string | null) => value ? conditionLabels[value] ?? value : '帮助条件未记录';
 
 type Attempt = Review['attempts'][number];
@@ -86,6 +87,7 @@ export default function OutcomeReview({ id, refreshKey, onBack, onOpenVerificati
       </section>
       {!!otherStandards.length && <details><summary>其他标准版本（历史或候选，不计入当前支持）</summary><ul>{otherStandards.map(s => <li key={s.id}>{s.title} · v{s.version} · {standardStatusLabels[s.review_status] ?? '审核状态待确认'}{s.availability ? ` · ${standardAvailabilityLabels[s.availability] ?? '当前不可用'}` : ''}</li>)}</ul></details>}
       <section aria-label="关联委托"><h4>关联委托</h4>{review.records.length ? <ul className="outcome-review__plain-list">{review.records.map(record => <li key={record.id}><button className="text-button" type="button" onClick={() => onOpenRecord(record.id)}>{record.title}</button><small>{time(record.created_at)}</small></li>)}</ul> : <p>暂无明确关联的委托。</p>}</section>
+        <section aria-label="执行完成记录"><h4>执行完成记录</h4>{review.completions?.length ? <div className="outcome-review__timeline">{review.completions.map(item => <article key={item.id}><div className="outcome-review__item-head"><strong>{item.purged_at && item.verification_kind === 'external_material' ? '用户报告非 AI 验证 · 曾附材料，内容已删除 · 平台未核验' : completionLabel[item.verification_kind]}</strong><time>{time(item.created_at)}</time></div>{item.purged_at && <p>内容已删除</p>}<button className="button button--quiet" type="button" onClick={() => onOpenRecord(item.delegation_id!)}>查看原委托记录</button></article>)}</div> : <p>暂无执行完成记录。</p>}</section>
       <section aria-label="作答与反馈"><h4>作答与反馈</h4>{review.attempts.length ? <div className="outcome-review__timeline">{review.attempts.map((attempt, index) => <article key={`${attempt.verification_id}:${attempt.submission_id ?? 'none'}:${attempt.evaluation_id ?? 'none'}:${index}`}>
         <div className="outcome-review__item-head"><strong>{attempt.action_title}</strong><time>{time(attempt.created_at)}</time></div>
         <p>{attempt.mode === 'ai_challenge' ? 'AI 出题' : '提交材料'} · {condition(attempt.condition)} · {standardName(attempt.criterion_id)}{attempt.contract_version !== null ? ` · 当时任务约定 v${attempt.contract_version}` : ''}</p>

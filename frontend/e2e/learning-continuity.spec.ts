@@ -255,7 +255,7 @@ test('outcome review: history versions, raw artifact and deletion stay connected
   await page.getByRole('button', { name: '返回学习室', exact: true }).click();
   await page.getByRole('button', { name: '返回工作区', exact: true }).click();
   await page.getByRole('button', { name: '学习记录', exact: true }).click();
-  await page.getByRole('button', { name: /合成成果依据旅程.*次验证/ }).click();
+  await page.getByRole('button', { name: /合成成果依据旅程.*次 AI 验证/ }).click();
   await page.getByRole('button', { name: '查看这个成果的依据' }).click();
   const outcome = page.getByRole('region', { name: '单成果依据回看' });
   await expect(outcome).toContainText('目前没有可用的已批准标准');

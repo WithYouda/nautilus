@@ -55,6 +55,7 @@ class CompleteLearningAction(Command):
     action_id: str
     delegation_id: str
     expected_version: int = Field(ge=1)
+    completion_id: str | None = None
 
 
 class SaveTextArtifact(Command):

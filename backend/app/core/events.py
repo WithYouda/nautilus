@@ -337,6 +337,11 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
     elif event_type in {"action.completed", "delegation.completed"}:
         if event["aggregate_type"] != "action" or payload.get("action_id") != event["aggregate_id"]:
             raise DomainError("event_scope_invalid")
+        if payload.get("completion_id") and not connection.execute(
+            "SELECT 1 FROM learning_completion WHERE owner_id=? AND id=? AND action_id=? AND delegation_id=?",
+            (owner, payload["completion_id"], payload["action_id"], payload["delegation_id"]),
+        ).fetchone():
+            raise DomainError("event_scope_invalid")
         changed = connection.execute(
             "UPDATE learning_action SET status=?, version=? WHERE owner_id=? AND id=? AND status='open'",
             ("completed" if event_type == "action.completed" else "open", version, owner, payload["action_id"]),
