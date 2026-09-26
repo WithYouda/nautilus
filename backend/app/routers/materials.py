@@ -19,7 +19,7 @@ ScopeKind = Literal['conversation', 'discussion']
 
 class MaterialCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
-    content: str | None = Field(default=None, max_length=30000)
+    content: str | None = None
     material_id: str | None = None
     web_run_id: str | None = None
     web_item_index: int | None = Field(default=None, ge=0)

@@ -89,7 +89,7 @@ class MaterialService:
                 if web_item_index is not None:
                     raise DomainError('invalid_material_source', 422)
                 url, content_kind, provenance = None, 'text', {'kind':'user_text'}
-            if not isinstance(content, str) or not content.strip() or len(content) > 30000:
+            if not isinstance(content, str) or not content.strip():
                 raise DomainError('invalid_material_content', 422)
             editing = material_id is not None
             material_id = material_id or str(uuid4())
@@ -111,9 +111,6 @@ class MaterialService:
                     raise DomainError('material_scope_mismatch', 409)
                 if previous and c.execute('SELECT 1 FROM learning_task_material WHERE owner_id=? AND material_id=? AND purged_at IS NOT NULL LIMIT 1', (owner, material_id)).fetchone():
                     raise DomainError('material_purged', 409)
-                if not previous and c.execute('''SELECT COUNT(DISTINCT material_id) FROM learning_task_material
-                    WHERE owner_id=? AND scope_kind=? AND scope_id=? AND purged_at IS NULL''', (owner, kind, scope_id)).fetchone()[0] >= 8:
-                    raise DomainError('material_limit', 422)
                 version = int(previous['version']) + 1 if previous else 1
                 result = dict(id=str(uuid4()), material_id=material_id, owner_id=owner, scope_kind=kind,
                               scope_id=scope_id, version=version, title=title.strip(), content=content,
@@ -138,7 +135,7 @@ class MaterialService:
             if conflict_policy not in ('ask', 'balanced', 'materials'):
                 raise DomainError('invalid_material_selection', 422)
             ids = selection.get('version_ids')
-            if not isinstance(ids, list) or len(ids) > 8 or any(not isinstance(x, str) for x in ids) or len(ids) != len(set(ids)):
+            if not isinstance(ids, list) or any(not isinstance(x, str) for x in ids) or len(ids) != len(set(ids)):
                 raise DomainError('invalid_material_selection', 422)
             if (selection['mode'] == 'unspecified' and ids) or (selection['mode'] != 'unspecified' and not ids):
                 raise DomainError('invalid_material_selection', 422)
@@ -152,8 +149,6 @@ class MaterialService:
                 materials.append(dict(row))
             if len({x['material_id'] for x in materials}) != len(materials):
                 raise DomainError('invalid_material_selection', 422)
-            if sum(len(x['content']) for x in materials) > 60000:
-                raise DomainError('material_size_limit', 422)
             fingerprint = hashlib.sha256(json.dumps([selection['mode'], ids, conflict_policy], ensure_ascii=False,
                                             separators=(',', ':')).encode()).hexdigest()
             return {'mode':selection['mode'], 'version_ids':ids, 'materials':materials, 'conflict_policy':conflict_policy,

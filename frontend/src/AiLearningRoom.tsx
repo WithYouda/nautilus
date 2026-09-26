@@ -514,7 +514,10 @@ export default function AiLearningRoom({
     if (learningBrief?.session_id) await selectLearningRoomConversation(learningBrief.session_id, id);
     const [next, currentConfig] = await Promise.all([
       getAiConversation(id),
-      getAiConversationConfig(id),
+      getAiConversationConfig(id).catch(reason => {
+        if (mountedRef.current) setError(reason instanceof Error ? reason.message : "模型配置暂时无法读取");
+        return { config: null };
+      }),
     ]);
     if (!mountedRef.current) return;
     conversationIdRef.current = id;
@@ -654,9 +657,9 @@ export default function AiLearningRoom({
       conversationContextRef.current = conversationContext(created);
       conversationIdRef.current = created.conversation.id;
       setConversations((items) => upsertConversation(items, conversationListItem(created), true));
+      saveCurrentSession({ conversationId: created.conversation.id, runId: null });
       const currentConfig = await getAiConversationConfig(created.conversation.id);
       setConversationConfig(currentConfig.config);
-      saveCurrentSession({ conversationId: created.conversation.id, runId: null });
     }
     return created;
   }

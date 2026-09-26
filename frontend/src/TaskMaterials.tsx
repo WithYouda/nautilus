@@ -10,7 +10,7 @@ export function readSourceScope(kind: MaterialKind, identity: string, id: string
   try {
     const value = JSON.parse(localStorage.getItem(storageKey(kind, identity, id)) || '{}');
     if (['unspecified', 'reference', 'only'].includes(value.mode) && Array.isArray(value.version_ids) && value.version_ids.every((item: unknown) => typeof item === 'string'))
-      return { mode: value.mode, version_ids: value.version_ids.slice(0, 8), ...( ['ask', 'balanced', 'materials'].includes(value.conflict_policy) ? { conflict_policy: value.conflict_policy } : {}) };
+      return { mode: value.mode, version_ids: value.version_ids, ...( ['ask', 'balanced', 'materials'].includes(value.conflict_policy) ? { conflict_policy: value.conflict_policy } : {}) };
   } catch { /* Storage may be unavailable. */ }
   return emptySourceScope();
 }
@@ -43,17 +43,15 @@ const purgeStatusLabel = (status: PurgeReport['status']) => ({ not_requested: '�
 const fileStatusLabel = (status: PurgeReport['files'][number]['status']) => ({ cleared: '已清除', failed: '失败' })[status];
 const policyLabel = (policy: ConflictPolicy) => ({ ask: '询问我', balanced: '由 AI 综合判断', materials: '以所选资料为准' })[policy];
 function latestActive(versions: MaterialVersion[]) {
-  return [...new Map(versions.filter(item => !item.purged_at).sort((a, b) => a.version - b.version).map(item => [item.material_id, item])).values()].slice(0, 8);
+  return [...new Map(versions.filter(item => !item.purged_at).sort((a, b) => a.version - b.version).map(item => [item.material_id, item])).values()];
 }
 function uploadError(code: unknown) {
   const messages: Record<string, string> = {
     material_file_encoding: '文本文件需要使用 UTF-8 编码。',
     material_file_unsupported: '暂不支持此文件格式。',
     material_file_no_text: '没有读到可用文字。扫描版 PDF 和图片暂不支持。',
-    material_file_text_too_long: '提取的文字超过 30000 字，请拆分文件。',
     material_file_unreadable: '文件无法读取，请检查文件是否损坏。',
     material_file_encrypted: '加密 PDF 暂不支持。',
-    material_limit: '本对话最多保存 8 份资料。',
   };
   return typeof code === 'string' ? messages[code] ?? `资料未保存：${code}` : '资料未保存，请重试。';
 }
@@ -101,7 +99,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
   function change(value: SourceScope) { onChange(value); if (id && identity) writeSourceScope(kind, identity, id, value); }
   function selectSaved(item: MaterialVersion) {
     const other = scope.version_ids.filter(versionId => !versions.some(version => version.id === versionId && version.material_id === item.material_id));
-    change({ ...scope, mode: scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: [...other, item.id].slice(0, 8) });
+    change({ ...scope, mode: scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: [...other, item.id] });
   }
   async function save(payload: { title: string; content?: string; material_id?: string; web_run_id?: string; web_item_index?: number }) {
     const current = epoch.current;
@@ -164,11 +162,10 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
       <label>资料冲突时<select value={scope.conflict_policy ?? ''} disabled={disabled || busy || !id} onChange={event => change({ ...scope, conflict_policy: event.target.value ? event.target.value as ConflictPolicy : undefined })}>
         <option value="">沿用默认（{defaultPolicy ? policyLabel(defaultPolicy) : '读取后生效'}）</option><option value="ask">询问我</option><option value="balanced">由 AI 综合判断</option><option value="materials">以所选资料为准</option>
       </select></label>
-      {scope.mode !== 'unspecified' && <p>当前参考 {selected.length}/8 份资料，共 {selectedChars}/60000 字。{selected.length === 0 ? '请选择至少一个版本，才能发送。' : '资料不足时会指出缺口，由你决定是否扩展范围。'}</p>}
-      {selectedChars > 60000 && <p className="form-error" role="alert">本轮参考内容超过 60000 字，请取消部分资料的参考勾选后再发送；资料仍会保留。</p>}
+      {scope.mode !== 'unspecified' && <p>当前参考 {selected.length} 份资料，共 {selectedChars} 字。{selected.length === 0 ? '请选择至少一个版本，才能发送。' : '资料不足时会指出缺口，由你决定是否扩展范围。'}</p>}
       {!id && <p>正在打开当前对话，随后即可上传资料。</p>}
       {groups.length > 0 && <ul className="task-material-list">{groups.map(group => <li key={group.material_id}>
-        <label><input type="checkbox" disabled={disabled || busy || !!group.purged_at || (!versions.some(item => item.material_id === group.material_id && selected.includes(item.id)) && selected.length >= 8)} checked={versions.some(item => item.material_id === group.material_id && selected.includes(item.id))} onChange={() => { const own = versions.filter(item => item.material_id === group.material_id).map(item => item.id); const isSelected = own.some(value => selected.includes(value)); const remaining = selected.filter(value => !own.includes(value)); change({ ...scope, mode: isSelected && remaining.length === 0 ? 'unspecified' : scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: isSelected ? remaining : [...remaining, group.id] }); }} /><strong>{group.title || '已清除的资料'}</strong> · {materialKindLabel(group.content_kind)}{group.purged_at && <span> · 已清除</span>}</label>
+        <label><input type="checkbox" disabled={disabled || busy || !!group.purged_at} checked={versions.some(item => item.material_id === group.material_id && selected.includes(item.id))} onChange={() => { const own = versions.filter(item => item.material_id === group.material_id).map(item => item.id); const isSelected = own.some(value => selected.includes(value)); const remaining = selected.filter(value => !own.includes(value)); change({ ...scope, mode: isSelected && remaining.length === 0 ? 'unspecified' : scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: isSelected ? remaining : [...remaining, group.id] }); }} /><strong>{group.title || '已清除的资料'}</strong> · {materialKindLabel(group.content_kind)}{group.purged_at && <span> · 已清除</span>}</label>
         {safeSourceUrl(group.url) && <a href={safeSourceUrl(group.url)!} target="_blank" rel="noopener noreferrer">来源网页</a>}
         {!group.purged_at && <details><summary>查看当前版本和历史</summary>{versions.filter(item => item.material_id === group.material_id && !item.purged_at).map(item => <div key={item.id}><p>第 {item.version} 版 · {item.title}{selected.includes(item.id) ? ' · 当前使用' : ''}</p><pre>{item.content}</pre><button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setEditing(item); setTitle(item.title ?? ''); setContent(item.content ?? ''); }}>编辑为新版本</button></div>)}</details>}
         {!group.purged_at && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setPurgeId(group.material_id); void showPurgeReport(group.material_id); }}>清除</button>}
@@ -178,7 +175,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
       <div className="task-material-editor">
         <h4>{editing ? `编辑 ${editing.title}，保存为新版本` : '粘贴文本资料'}</h4>
         <label>标题<input value={title} maxLength={200} disabled={busy || disabled || !id} onChange={event => setTitle(event.target.value)} /></label>
-        <label>正文<textarea value={content} maxLength={30000} disabled={busy || disabled || !id} onChange={event => setContent(event.target.value)} /></label>
+        <label>正文<textarea value={content} disabled={busy || disabled || !id} onChange={event => setContent(event.target.value)} /></label>
         <button className="button button--quiet" type="button" disabled={busy || disabled || !id || !title.trim() || !content.trim()} onClick={() => void save({ title: title.trim(), content: content.trim(), ...(editing ? { material_id: editing.material_id } : {}) })}>保存版本</button>
         {editing && <button type="button" className="text-button" onClick={() => { setEditing(null); setTitle(''); setContent(''); }}>取消编辑</button>}
       </div>

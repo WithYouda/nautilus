@@ -1,4 +1,4 @@
-"""Bounded, text-only extraction for task material uploads."""
+"""Text-only extraction for task material uploads."""
 from __future__ import annotations
 
 from io import BytesIO
@@ -8,7 +8,6 @@ from xml.etree import ElementTree
 
 from .learning_domain import DomainError
 
-MAX_TEXT_CHARS = 30000
 TEXT_EXTENSIONS = {'.txt', '.md', '.markdown', '.json', '.csv', '.tsv', '.py', '.js', '.ts', '.tsx', '.jsx', '.html', '.css', '.xml', '.yaml', '.yml', '.sql', '.sh', '.rs', '.go', '.java', '.c', '.cpp', '.h'}
 
 
@@ -30,8 +29,6 @@ def extract_material_text(filename: str, raw: bytes) -> str:
         raise DomainError('material_file_unsupported', 422)
     if not content.strip():
         raise DomainError('material_file_no_text', 422)
-    if len(content) > MAX_TEXT_CHARS:
-        raise DomainError('material_file_text_too_long', 422)
     return content
 
 
@@ -42,7 +39,6 @@ def _docx_text(raw: bytes) -> str:
         root = ElementTree.fromstring(xml)
         ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
         lines = []
-        total = 0
         for paragraph in root.iter(ns + 'p'):
             fragments = []
             for node in paragraph.iter():
@@ -55,9 +51,6 @@ def _docx_text(raw: bytes) -> str:
             line = ''.join(fragments)
             if line.strip():
                 lines.append(line)
-                total += len(line) + 1
-            if total > MAX_TEXT_CHARS:
-                raise DomainError('material_file_text_too_long', 422)
         return '\n'.join(lines)
     except (BadZipFile, KeyError, ElementTree.ParseError, RuntimeError, ValueError) as error:
         raise DomainError('material_file_unreadable', 422) from error
@@ -70,12 +63,8 @@ def _pdf_text(raw: bytes) -> str:
         if reader.is_encrypted:
             raise DomainError('material_file_encrypted', 422)
         parts = []
-        total = 0
         for page in reader.pages:
             part = page.extract_text() or ''
-            total += len(part)
-            if total > MAX_TEXT_CHARS:
-                raise DomainError('material_file_text_too_long', 422)
             parts.append(part)
         return '\n'.join(parts)
     except DomainError:

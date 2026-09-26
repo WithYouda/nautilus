@@ -35,11 +35,14 @@ def test_text_and_docx_extraction_boundaries():
     assert extract_material_text('notes.md', b'\xef\xbb\xbfhello') == 'hello'
     assert extract_material_text('notes.docx', docx('hello')) == 'hello'
     assert extract_material_text('notes.pdf', text_pdf('hello')) == 'hello'
+    long_text = 'a' * 70001
+    assert extract_material_text('long.txt', long_text.encode()) == long_text
+    assert extract_material_text('long.docx', docx(long_text)) == long_text
+    assert extract_material_text('long.pdf', text_pdf(long_text)) == long_text
     for name, content, code in [
         ('notes.png', b'pixels', 'material_file_unsupported'),
         ('notes.txt', b'\xff', 'material_file_encoding'),
         ('notes.txt', b'  ', 'material_file_no_text'),
-        ('notes.txt', b'x' * 30001, 'material_file_text_too_long'),
     ]:
         with pytest.raises(DomainError, match=code):
             extract_material_text(name, content)
@@ -78,3 +81,22 @@ def test_upload_auth_large_file_and_extracted_storage(tmp_path):
         assert response.json()['title'] == 'notes one.docx'
         assert response.json()['content'] == 'SYNTHETIC_PRIVATE_TEXT'
         assert client.post('/api/materials/conversation/not-owned/upload', headers=headers, content=b'x').status_code == 404
+
+
+def test_long_materials_and_more_than_eight_are_saved_and_frozen(tmp_path):
+    with make_client(tmp_path, lambda request: None) as client:
+        authorize(client)
+        cid = start_conversation(client, create_task(client))
+        base = f'/api/materials/conversation/{cid}'
+        body = '完整正文' * 20000
+        ids = []
+        for index in range(9):
+            response = client.post(base, json={'title': f'资料{index}', 'content': body})
+            assert response.status_code == 201, response.text
+            ids.append(response.json()['id'])
+        identity = client.app.state.auth.ensure_local_identity()
+        frozen = client.app.state.materials.freeze(identity, 'conversation', cid,
+            {'mode': 'reference', 'version_ids': ids})
+        assert len(frozen['materials']) == 9
+        assert all(item['content'] == body for item in frozen['materials'])
+        assert len(client.get(base).json()['versions']) == 9

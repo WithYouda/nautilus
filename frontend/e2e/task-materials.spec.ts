@@ -82,3 +82,22 @@ test('settings, automatic upload references, independent network, versions and p
   await panel.getByRole('button', { name: '查看清除状态' }).click();
   await expect(panel.getByRole('status')).toContainText('清除状态');
 });
+
+test('long uploaded materials and selections beyond eight survive refresh', async ({ page }) => {
+  await authorize(page);
+  await page.getByRole('button', { name: '学习室', exact: true }).click();
+  await page.locator('.ai-composer').getByRole('button', { name: '资料', exact: true }).click();
+  const panel = page.locator('.task-materials-panel');
+  const file = panel.getByLabel(/上传资料/);
+  await expect(file).toBeEnabled();
+  for (let index = 0; index < 9; index++) {
+    await file.setInputFiles({ name: `教材${index}.txt`, mimeType: 'text/plain', buffer: Buffer.from(index < 2 ? '完整正文'.repeat(20000) : '第九份资料也可参考') });
+    await expect(panel.getByRole('checkbox', { name: `教材${index}.txt · 文本资料` })).toBeChecked();
+  }
+  await expect(panel).toContainText('当前参考 9 份资料');
+  await expect(panel.getByLabel('正文')).not.toHaveAttribute('maxlength', /.+/);
+  await page.reload();
+  await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
+  await expect(panel).toContainText('当前参考 9 份资料');
+  for (let index = 0; index < 9; index++) await expect(panel.getByRole('checkbox', { name: `教材${index}.txt · 文本资料` })).toBeChecked();
+});
