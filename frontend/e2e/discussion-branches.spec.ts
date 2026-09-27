@@ -98,8 +98,8 @@ test('branches an earlier question answer while preserving the verification and 
   expect(map.nodes).toHaveLength(2);
   expect(map.nodes.find((node: { id: string }) => node.id === branchId)).toMatchObject({ parent_id: sourceId, source_id: firstTurnId, available: true });
   expect(map.nodes.find((node: { id: string }) => node.id === sourceId)).toMatchObject({ parent_id: null, available: true });
-  await expect(discussion.locator('.branch-map-tree-item')).toHaveCount(2);
-  await discussion.getByRole('button', { name: '放大分支图' }).click();
+  await expect(page.getByRole('dialog', { name: '分支图' })).toHaveCount(0);
+  await discussion.getByRole('button', { name: '分支图', exact: true }).click();
   const branchMap = page.getByRole('dialog', { name: '分支图' });
   await expect(branchMap.locator('.branch-map-node')).toHaveCount(2);
   await branchMap.screenshot({ path: '/tmp/nautilus-discussion-branch-map-desktop.png' });

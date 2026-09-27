@@ -1,21 +1,5 @@
-.branch-map-sidebar { min-width: 0; width: 220px; flex: 0 0 220px; border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink); }
-.branch-map-sidebar-main { min-width: 0; }
-.branch-map-sidebar-heading { display: flex; align-items: center; justify-content: space-between; gap: 5px; min-height: 42px; padding: 7px 9px; border-bottom: 1px solid var(--line); }
-.branch-map-sidebar-heading > span { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; white-space: nowrap; }
-.branch-map-expand { display: inline-flex; align-items: center; gap: 4px; padding: 5px 2px; border: 0; color: var(--ink-soft); background: transparent; font-size: 10px; cursor: pointer; white-space: nowrap; }
-.branch-map-expand:hover:not(:disabled) { text-decoration: underline; }
-.branch-map-tree { max-height: min(56dvh, 560px); overflow: auto; padding: 7px 4px; }
-.branch-map-tree-item { display: flex; align-items: center; gap: 5px; width: 100%; min-height: 34px; padding: 5px 6px; border: 1px solid transparent; color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
-.branch-map-tree-item:hover:not(:disabled) { background: var(--paper-soft); }
-.branch-map-tree-item.is-current { border-color: var(--line-strong); background: var(--paper-soft); }
-.branch-map-tree-item.is-unavailable { color: var(--muted); }
-.branch-map-tree-guide { flex: 0 0 11px; color: var(--muted); font-size: 11px; }
-.branch-map-tree-title { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.branch-map-current { margin-left: auto; color: var(--accent-dark); font-size: 9px; white-space: nowrap; }
-.branch-map-state { margin: 0; padding: 14px 10px; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.branch-map-state p { margin: 0 0 8px; }
-.branch-map-state button { padding: 4px 9px; border: 1px solid var(--line-strong); color: var(--ink); background: var(--paper-soft); cursor: pointer; }
-.branch-map-mobile-trigger { display: none; }
+.branch-map-sidebar { min-width: 0; flex: 0 0 auto; color: var(--ink); }
+.branch-map-trigger { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 9px; border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink); font-size: 11px; cursor: pointer; }
 .branch-map-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(25, 27, 27, .55); }
 .branch-map-dialog { display: flex; flex-direction: column; width: min(1050px, 100%); height: min(720px, calc(100dvh - 40px)); min-height: 0; border: 1px solid var(--line-strong); background: var(--paper); box-shadow: 10px 12px 0 rgba(25, 27, 27, .2); color: var(--ink); }
 .branch-map-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 56px; padding: 10px 16px; border-bottom: 1px solid var(--line-strong); }
@@ -40,7 +24,6 @@
 .branch-map-node { position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 9px 11px; border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink); box-shadow: 3px 3px 0 rgba(48, 45, 40, .12); text-align: left; cursor: pointer; }
 .branch-map-node.is-selected { outline: 2px solid var(--ink-soft); outline-offset: 2px; }
 .branch-map-node.is-current { border-left: 4px solid var(--accent-dark); }
-.branch-map-node.is-unavailable { color: var(--muted); background: var(--surface); border-style: dashed; }
 .branch-map-node strong { display: -webkit-box; overflow: hidden; font-size: 12px; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .branch-map-node small { color: var(--muted); font-size: 10px; }
 .branch-map-detail { min-width: 0; overflow: auto; padding: 16px; border-left: 1px solid var(--line-strong); font-size: 12px; }
@@ -58,9 +41,6 @@
 .branch-map-error { padding: 8px; border: 1px solid #e6bbb7; background: var(--danger-soft); color: var(--danger); line-height: 1.4; }
 .branch-map-sidebar button:disabled, .branch-map-dialog button:disabled { opacity: .5; cursor: not-allowed; }
 @media (max-width: 760px) {
-  .branch-map-sidebar { width: auto; flex: 0 0 auto; border: 0; background: transparent; }
-  .branch-map-sidebar-main { display: none; }
-  .branch-map-mobile-trigger { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 9px; border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink); font-size: 11px; cursor: pointer; }
   .branch-map-backdrop { padding: 0; }
   .branch-map-dialog { width: 100%; height: 100dvh; max-height: none; border: 0; box-shadow: none; }
   .branch-map-dialog-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(180px, 1fr) minmax(150px, 38dvh); }

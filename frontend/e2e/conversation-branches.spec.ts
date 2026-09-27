@@ -20,6 +20,7 @@ test('branches an earlier learning answer into an independent conversation with 
   expect(provider.ok()).toBeTruthy();
   await page.reload();
   await page.getByRole('button', { name: '学习室', exact: true }).click();
+  await page.getByRole('button', { name: '新建对话', exact: true }).click();
   const composer = page.getByLabel('输入学习问题');
   const materialsButton = page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ });
   await materialsButton.click();
@@ -73,8 +74,8 @@ test('branches an earlier learning answer into an independent conversation with 
   expect(map.nodes).toHaveLength(2);
   expect(map.nodes.find((node: { id: string }) => node.id === branchId)).toMatchObject({ parent_id: sourceId, source_id: sourceAnswer.id, available: true });
   expect(map.nodes.find((node: { id: string }) => node.id === sourceId)).toMatchObject({ parent_id: null, available: true });
-  await expect(page.locator('.branch-map-tree-item')).toHaveCount(2);
-  await page.getByRole('button', { name: '放大分支图' }).click();
+  await expect(page.getByRole('dialog', { name: '分支图' })).toHaveCount(0);
+  await page.getByRole('button', { name: '分支图', exact: true }).click();
   const branchMap = page.getByRole('dialog', { name: '分支图' });
   await expect(branchMap.locator('.branch-map-node')).toHaveCount(2);
   await branchMap.screenshot({ path: '/tmp/nautilus-conversation-branch-map-desktop.png' });
