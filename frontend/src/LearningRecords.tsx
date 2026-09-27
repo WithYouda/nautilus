@@ -42,7 +42,7 @@ export default function LearningRecords({ onClose, onLearning }: { onClose: () =
     setVerificationId(id); setSubmissionId(submission); setEvaluationId(evaluation);
     setReviewLocation('verification', id); setReviewLocation('submission', submission); setReviewLocation('evaluation', evaluation);
   }
-  if (discussionId) return <QuestionDiscussion id={discussionId} onBack={() => discuss(null)} />;
+  if (discussionId) return <QuestionDiscussion id={discussionId} onNavigate={discuss} onBack={() => discuss(null)} />;
   return <section className="learning-records learning-page" aria-label="学习记录">
     <LearningPageHeader title="学习记录" description="查看学习对话、历次作答和 AI 反馈。记录会自动保存。">
       <button className="button button--quiet" type="button" onClick={() => { for (const key of ['record', 'outcome', 'verification', 'submission', 'evaluation', 'discussion']) setReviewLocation(key, null); onClose(); }}>返回首页</button>

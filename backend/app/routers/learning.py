@@ -33,7 +33,7 @@ from ..outcome_review import OutcomeReview
 from ..completion import CompletionService, CompletionRequest, CompletionReviewRequest, CompletionResponseRequest
 from ..managed_purge import ManagedPurge
 from ..question_discussion import QuestionDiscussionService
-from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest
+from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest, DiscussionBranchRequest
 from ..schemas import HelpDisplayRequest
 from ..verification_help import record_solution_display
 from ..schemas import (
@@ -1116,5 +1116,16 @@ def return_review(request: Request, identity: dict[str, Any] = Depends(current_i
 def return_choice(review_id: str, payload: ReturnChoice, request: Request, identity: dict[str, Any] = Depends(current_identity)):
     try:
         return ContinuityService(learning_service(request)).decide(identity, review_id, **payload.model_dump())
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post('/discussions/{discussion_id}/branches', status_code=201)
+def branch_discussion(discussion_id: str, payload: DiscussionBranchRequest, request: Request,
+                      identity=Depends(current_identity)):
+    from ..discussion_branches import create_branch
+    try:
+        return create_branch(request.app.state.discussions, identity, discussion_id,
+                             payload.turn_id, payload.request_key)
     except DomainError as error:
         _raise_learning_error(error)

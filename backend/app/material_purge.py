@@ -60,38 +60,11 @@ def erase_learning(c, owner, material_id, now, source_message_ids=(), source_tur
             WHERE owner_id=? AND material_id=? AND purged_at IS NULL''', (now, owner, material_id))
     if not _has_table(c, 'learning_discussion_turn'):
         return []
-    direct = [row['id'] for row in c.execute('''SELECT t.id,t.provider_snapshot_json,t.sources_json FROM learning_discussion_turn t
-        JOIN learning_question_discussion q ON q.id=t.discussion_id WHERE q.owner_id=?''', (owner,))
-        if row['id'] in source_ids or _references(row['provider_snapshot_json'], material_id)
-        or any(ref.get('message_id') in source_message_ids for ref in json.loads(row['sources_json'] or '[]'))]
-    # Same-discussion history and explicit cross-discussion retrieval may carry source text.
-    all_turns = [dict(row) for row in c.execute('''SELECT t.id,t.provider_snapshot_json,t.sources_json FROM learning_discussion_turn t
-        JOIN learning_question_discussion q ON q.id=t.discussion_id WHERE q.owner_id=?''', (owner,))]
-    changed = True
-    while changed:
-        expanded = set(direct)
-        for row in all_turns:
-            snapshot = json.loads(row['provider_snapshot_json'] or '{}')
-            history = (snapshot.get('reply') or {}).get('history_turn_ids', [])
-            refs = json.loads(row['sources_json'] or '[]')
-            if (set(history).intersection(direct) or any(ref.get('turn_id') in direct for ref in refs)):
-                expanded.add(row['id'])
-        changed = len(expanded) > len(direct)
-        direct = sorted(expanded)
-    # A discussion may have copied the source turn via local retrieval. Erase its downstream discussions too.
-    affected = set(direct)
-    if _has_table(c, 'learning_discussion_dependency') and direct:
-        discussion_ids = {row[0] for row in c.execute(
-            'SELECT DISTINCT discussion_id FROM learning_discussion_turn WHERE id IN (' + ','.join('?' for _ in direct) + ')', direct)}
-        while discussion_ids:
-            children = {row[0] for row in c.execute('SELECT discussion_id FROM learning_discussion_dependency WHERE source_discussion_id IN (' + ','.join('?' for _ in discussion_ids) + ')', tuple(discussion_ids))}
-            new_turns = {row[0] for row in c.execute('SELECT id FROM learning_discussion_turn WHERE discussion_id IN (' + ','.join('?' for _ in children) + ')', tuple(children))} if children else set()
-            if not new_turns - affected:
-                break
-            affected.update(new_turns)
-            discussion_ids = children
+    affected = _discussion_targets(c, owner, [material_id], source_ids, source_message_ids)
     for turn_id in affected:
         row = c.execute('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (turn_id,)).fetchone()
+        if row is None:
+            continue  # Older snapshots can predate the source turn while retaining a descendant.
         c.execute('''UPDATE learning_discussion_turn SET user_content=NULL,assistant_content=NULL,reasoning_content=NULL,
             sources_json='[]',provider_snapshot_json=?,status='purged',reason='content_purged',finished_at=?
             WHERE id=?''', (_marker(row[0], [material_id]), now, turn_id))
@@ -139,8 +112,15 @@ def _discussion_targets(c, owner, material_ids, source_turn_ids=(), source_messa
         source_discussions = {row['discussion_id'] for row in rows if row['id'] in targets}
         dependent_discussions = set()
         if source_discussions and _has_table(c,'learning_discussion_dependency'):
-            dependent_discussions = {row[0] for row in c.execute('''SELECT discussion_id FROM learning_discussion_dependency
-                WHERE source_discussion_id IN (''' + ','.join('?' for _ in source_discussions) + ')',tuple(source_discussions))}
+            # Whole-source deletion follows the branch edge, but material deletion
+            # follows the exact copied turn IDs. Later source messages are not inherited.
+            dependent_discussions = {row[0] for row in c.execute('''SELECT dep.discussion_id
+                FROM learning_discussion_dependency dep
+                WHERE dep.source_discussion_id IN (''' + ','.join('?' for _ in source_discussions) + ''')
+                AND NOT EXISTS (SELECT 1 FROM learning_discussion_turn t
+                    WHERE t.discussion_id=dep.discussion_id
+                    AND json_extract(t.provider_snapshot_json,'$.branch_origin.discussion_id')=dep.source_discussion_id)
+                ''',tuple(source_discussions))}
         for row in rows:
             snapshot = json.loads(row['provider_snapshot_json'] or '{}')
             refs = json.loads(row['sources_json'] or '[]')

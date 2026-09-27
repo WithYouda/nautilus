@@ -35,8 +35,10 @@ export default function LearningVerification({
   onBack,
   onCompleted,
   onDiscuss,
+  reviewRefreshKey,
 }: {
   brief: LearningRoomBrief;
+  reviewRefreshKey?: string;
   onBack: () => void;
   onCompleted?: () => void;
   onDiscuss: (id: string) => void;
@@ -326,7 +328,7 @@ export default function LearningVerification({
           </>)}
 
           {!answering && verification.latest_submission_id && <VerificationReview
-            id={verification.id} refreshKey={`${verification.latest_submission_id}:${verification.evaluation?.id}:${verification.evaluation?.status}`}
+            id={verification.id} refreshKey={`${verification.latest_submission_id}:${verification.evaluation?.id}:${verification.evaluation?.status}:${reviewRefreshKey ?? ''}`}
             onDiscuss={onDiscuss} onPurged={value => { drafts.current.delete(value.id); setResponses({}); setMaterial(""); setLearnerWork(""); updateVerification(value); }} onReadSolution={() => setIndependent(false)}
           />}
           {completionRecorded && <p>本次执行已记录完成，原验证结果保留。</p>}

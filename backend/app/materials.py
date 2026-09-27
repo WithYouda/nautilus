@@ -56,15 +56,19 @@ class MaterialService:
         return {'versions': versions}
 
     def inherited_versions(self, owner, kind, scope_id):
-        if kind != 'conversation':
-            return set()
+        if kind == 'conversation':
+            rows = self.conversations.database.fetchall('''SELECT config_snapshot_json FROM ai_run
+                WHERE identity_id=? AND conversation_id=?
+                  AND json_type(config_snapshot_json,'$.branch_origin')='object' ''', (owner, scope_id))
+        else:
+            rows = self.db.fetchall('''SELECT t.provider_snapshot_json FROM learning_discussion_turn t
+                JOIN learning_question_discussion d ON d.id=t.discussion_id
+                WHERE d.owner_id=? AND d.id=?
+                  AND json_type(t.provider_snapshot_json,'$.branch_origin')='object' ''', (owner, scope_id))
         # Only server-created branch copies grant access to these immutable IDs.
         result = set()
-        for row in self.conversations.database.fetchall('''SELECT config_snapshot_json FROM ai_run
-                WHERE identity_id=? AND conversation_id=?
-                  AND json_type(config_snapshot_json,'$.branch_origin')='object' ''', (owner, scope_id)):
-            snapshot = json.loads(row[0])
-            result.update(snapshot.get('branch_material_version_ids', []))
+        for row in rows:
+            result.update(json.loads(row[0]).get('branch_material_version_ids', []))
         return result
 
     def _web_item(self, owner, kind, scope_id, run_id, item_index):

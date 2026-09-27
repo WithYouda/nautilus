@@ -189,7 +189,7 @@ async def test_search_filters_owner_delegation_and_deleted_teaching_history(lear
     thread = discussion_service.create(IDENTITY, current['id'], current['latest_submission_id'], 'q1', 'search')
     raw = sqlite3.connect(':memory:')
     raw.row_factory = sqlite3.Row
-    raw.executescript('CREATE TABLE conversation(id,identity_id,deleted_at); CREATE TABLE message(id,conversation_id,role,content,status,sequence);')
+    raw.executescript('CREATE TABLE conversation(id,identity_id,deleted_at); CREATE TABLE message(id,conversation_id,role,content,status,sequence); CREATE TABLE ai_run(request_message_id,response_message_id,config_snapshot_json);')
     raw.executemany('INSERT INTO conversation VALUES (?,?,?)', [('same', 'owner-a', None), ('foreign', 'owner-b', None), ('deleted', 'owner-a', 'now'), ('unlinked', 'owner-a', None)])
     for key in ('same', 'foreign', 'deleted', 'unlinked'):
         raw.execute('INSERT INTO message VALUES (?,?,?,?,?,?)', (key, key, 'user', '合成关键词 '+key, 'complete', 1))
@@ -227,12 +227,17 @@ async def test_artifact_purge_erases_other_verification_discussion_that_retrieve
     await discussions.send(IDENTITY, second['id'], '再次讨论', 'two-turn')
     with learning_database.transaction() as c:
         c.execute("UPDATE learning_discussion_turn SET reasoning_content='合成引用思考'")
-    assert LearningRecords(service).detail(IDENTITY, current['id'])['purge_discussion_count'] == 2
+    from app.discussion_branches import create_branch
+    source_turn = discussions.get(IDENTITY, second['id'])['turns'][0]
+    branch = create_branch(discussions, IDENTITY, second['id'], source_turn['id'], 'branch')
+    assert LearningRecords(service).detail(IDENTITY, current['id'])['purge_discussion_count'] == 3
     core = LearningCore(learning_database)
     version = learning_database.fetchone('SELECT version FROM learning_action WHERE id=?', (current['action_id'],))[0]
     core.execute(OWNER, PurgeArtifact(artifact_id=current['artifact_id'], expected_version=version, confirmation='PURGE'), 'purge-through-artifact')
     assert discussions.get(IDENTITY, first['id'])['purged']
     assert discussions.get(IDENTITY, second['id'])['purged']
+    assert discussions.get(IDENTITY, branch['id'])['purged']
+    assert discussions.get(IDENTITY, branch['id'])['turns'][0]['reasoning_content'] is None
     assert discussions.get(IDENTITY, first['id'])['turns'][0]['reasoning_content'] is None
     assert discussions.get(IDENTITY, second['id'])['turns'][0]['reasoning_content'] is None
     assert LearningRecords(service).detail(IDENTITY, second_verification['id'])['content']['responses']['q1'] == '另一份合成作答'

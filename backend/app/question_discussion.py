@@ -171,7 +171,8 @@ class QuestionDiscussionService:
         evaluation = connection.execute("SELECT provider_snapshot_json FROM learning_verification_evaluation WHERE owner_id=? AND id=?",
             (owner, discussion['evaluation_id'])).fetchone() if discussion['evaluation_id'] else None
         evaluation_snapshot = json.loads(evaluation[0] or '{}') if evaluation else {}
-        return dict(id=discussion_id, identity_id=owner, verification_id=discussion['verification_id'], submission_id=discussion['submission_id'],
+        from .discussion_branches import branch_metadata
+        return dict(**branch_metadata(connection, discussion_id), id=discussion_id, identity_id=owner, verification_id=discussion['verification_id'], submission_id=discussion['submission_id'],
                     evaluation_id=discussion['evaluation_id'], help_displays={} if discussion['purged_at'] else evaluation_snapshot.get('help_displays') or {},
                     question_id=discussion['question_id'], purged=bool(discussion['purged_at']), source=source, turns=turns, provider_protocol=protocol)
 
@@ -179,6 +180,9 @@ class QuestionDiscussionService:
         turn = dict(turn)
         snapshot = json.loads(turn.pop('provider_snapshot_json'))
         reply = snapshot.get('reply', {})
+        if snapshot.get('branch_origin'):
+            origin = snapshot['branch_origin']
+            turn['inherited_from'] = dict(discussion_id=origin['discussion_id'], turn_id=origin['source_turn_id'])
         turn['history_searched'] = bool(snapshot.get('history_searched'))
         turn['source_scope'] = public_scope(snapshot.get('source_scope'), turn.get('assistant_content'))
         turn['search_trace'] = snapshot.get('search_trace')
@@ -206,7 +210,7 @@ class QuestionDiscussionService:
             if characters < 1 or characters > len(row['assistant_content']):
                 raise DomainError('verification_scope_invalid', 422)
             snapshot = json.loads(row['provider_snapshot_json'] or '{}')
-            if record_display(snapshot, characters, utc_timestamp()):
+            if not snapshot.get('branch_origin') and record_display(snapshot, characters, utc_timestamp()):
                 c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
                     (json.dumps(snapshot, ensure_ascii=False), turn_id))
             return public_help(snapshot, row['assistant_content'], row['status'], row['finished_at'])

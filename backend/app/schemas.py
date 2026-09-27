@@ -647,3 +647,8 @@ class QuestionDiscussionMessageRequest(BaseModel):
 class ConversationBranchRequest(BaseModel):
     message_id: str = Field(min_length=1)
     request_key: str = Field(min_length=1)
+
+
+class DiscussionBranchRequest(BaseModel):
+    turn_id: str = Field(min_length=1)
+    request_key: str = Field(min_length=1)

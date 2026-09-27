@@ -298,6 +298,7 @@ export default function AiLearningRoom({
   const [verificationOpen, setVerificationOpen] = useState(learningBrief?.open_verification === true);
   const [verificationCompleted, setVerificationCompleted] = useState(false);
   const [discussionId, setDiscussionId] = useState<string | null>(() => new URLSearchParams(window.location.search).get("discussion"));
+  const [discussionReviewVersion, setDiscussionReviewVersion] = useState(0);
   const [titleBusy, setTitleBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -1027,12 +1028,13 @@ export default function AiLearningRoom({
       {learningBrief?.action_id && learningBrief.delegation_id && <div className="verification-scroll" hidden={!verificationOpen || Boolean(discussionId)}>
       <LearningVerification
         brief={learningBrief}
+        reviewRefreshKey={String(discussionReviewVersion)}
         onBack={() => setVerificationOpen(false)}
         onDiscuss={id => { setDiscussionId(id); setReviewLocation("discussion", id); }}
         onCompleted={() => { setVerificationCompleted(true); onBack(); }}
       />
       </div>}
-    {discussionId && <QuestionDiscussion id={discussionId} onBack={() => { setDiscussionId(null); setReviewLocation("discussion", null); setVerificationOpen(true); }} />}
+    {discussionId && <QuestionDiscussion id={discussionId} onNavigate={id => { setDiscussionId(id); setReviewLocation("discussion", id); }} onBack={() => { setDiscussionId(null); setReviewLocation("discussion", null); setDiscussionReviewVersion(value => value + 1); setVerificationOpen(true); }} />}
     {learningBrief?.delegation_id && !learningBrief.history_only && <div className="verification-scroll" hidden={!completionOpen || verificationOpen || Boolean(discussionId)}><div className="verification-page">
       <button className="button button--quiet" type="button" onClick={() => setCompletionOpen(false)}>返回学习室</button>
       <LearningCompletion key={learningBrief.delegation_id} delegationId={learningBrief.delegation_id} onCompleted={onBack} />

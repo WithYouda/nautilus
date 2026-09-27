@@ -55,6 +55,8 @@ def submission_help_context(connection, owner, verification_id, user_report, cap
         if not (row['assistant_content'] or '').strip():
             continue
         snapshot = json.loads(row['provider_snapshot_json'] or '{}')
+        if snapshot.get('branch_origin'):
+            continue  # A copied historical reply is not a second provision of help.
         records.append(dict(kind='discussion_reply', discussion_id=row['discussion_id'], turn_id=row['id'],
             question_id=row['question_id'], provided_at=row['finished_at'],
             displayed_at=snapshot.get('help_display', {}).get('at'), characters=len(row['assistant_content']),
