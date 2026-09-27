@@ -126,8 +126,23 @@ async fn send_message(
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+    builder
         .setup(|app| {
+            #[cfg(target_os = "windows")]
+            let dir = match std::env::var_os("NAUTILUS_VALIDATION_DATA_DIR") {
+                Some(path) => std::path::PathBuf::from(path),
+                None => app.path().app_local_data_dir()?,
+            };
+            #[cfg(not(target_os = "windows"))]
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let mut store = Store::open(dir.join("native-validation.sqlite3"))

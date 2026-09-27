@@ -4,7 +4,7 @@
 
 ## 使用
 
-本次安装包：Windows下载文件夹的 `nautilus-independent-0.1.0-arm64-20260928.apk`（28,855,642字节，Android 7.0及以上ARM64，作者小米13待实测）。SHA256：`ef99649aed5ce3eaf17fa5ef79d65a7acd206d6fede17599177ddf1dbe282200`。
+本次安装包：Windows下载文件夹的 `nautilus-independent-0.1.0-arm64-20260928.apk`（28,855,642字节，Android 7.0及以上ARM64，作者已在小米13确认彻底退出后资料和回答保留）。SHA256：`ef99649aed5ce3eaf17fa5ef79d65a7acd206d6fede17599177ddf1dbe282200`。
 
 1. 安装提供的 Android APK，打开“Nautilus 独立验证”。
 2. 保存自己的模型服务 HTTPS 地址（通常以 `/v1` 结尾）和模型名称；填写 API 密钥。密钥只保留在当前应用内存，重开后重新输入。
@@ -42,4 +42,18 @@ python3 scripts/prepare-android.py
 
 Android原生库按[Android官方16 KB页面要求](https://developer.android.com/guide/practices/page-sizes?hl=zh-CN)设置链接对齐；打包后仍须真机验证。
 
-Windows需要MSVC构建工具及WebView2；当前机器尚未具备完整工具链，未产出/验证Windows安装包。Mac/iPhone尚无构建和真机验证资源。共享Rust代码通过Linux定向检查不等于四平台验收。
+### Windows
+
+本次程序：下载文件夹 `nautilus-independent-0.1.0-windows-x64-20260928-014337.exe`（14,468,608字节）。SHA256：`ced15d2702d4a959d524f097af319e0b14467852fda01016ccc0726b04d47488`。双击后按上方相同流程配置模型、粘贴测试资料和对话；它不依赖WSL服务。程序未签名，Windows可能提示未知发布者。实际Windows原生旅程检查已通过，仍待本人使用反馈；尚未实现手机与电脑同步。
+
+Windows需要微软C++构建工具、Windows SDK、Rust MSVC stable与WebView2。本机已获许可并安装构建组件；保留既有GNU默认工具链。先完成上述前端及图标生成，再用Windows PowerShell执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "\\wsl.localhost\Ubuntu\home\kingdom\ai_learning\native\scripts\build-windows.ps1"
+```
+
+脚本只复制构建输入到 `%LOCALAPPDATA%\NautilusBuild\windows-validation`，用MSVC构建后将EXE放到下载文件夹并输出SHA256。程序直接运行，依赖Windows已安装的WebView2；不是安装向导或商店发布包。数据库保存在 `%LOCALAPPDATA%\com.nautilus.validation\native-validation.sqlite3`，关闭程序或替换EXE不会清除它。重复打开会回到现有窗口，避免第二个进程把正在生成的回答误判为中断。
+
+实际原生检查脚本为 `scripts/smoke-windows.cjs`，由Windows Node执行，参数依次为EXE路径和含Playwright的 `frontend` 目录。它用临时数据目录、本机模拟模型及WebView2调试连接检查真实Rust调用、重复启动、取消和重开；不使用真实模型或trial。`NAUTILUS_VALIDATION_DATA_DIR` 仅供Windows隔离测试覆盖保存位置，正常使用无需设置。
+
+Mac/iPhone尚无构建和真机验证资源。共享Rust代码通过检查不等于四平台验收。

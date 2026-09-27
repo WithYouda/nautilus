@@ -16,3 +16,6 @@ nautilus-core = { path = "../core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri-plugin-single-instance = "2"
