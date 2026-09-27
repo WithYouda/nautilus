@@ -201,7 +201,7 @@ def test_031_to_032_preserves_existing_rows_and_adds_empty_tables(tmp_path):
               for table in tables}
     db.close()
     upgraded_db = Database(path, Settings.from_env().migrations_dir, migration_floor=11, migration_ceiling=None)
-    assert upgraded_db.fetchone('SELECT version FROM schema_migrations ORDER BY rowid DESC LIMIT 1')[0] == '032_delayed_follow_up'
+    assert upgraded_db.fetchone('SELECT version FROM schema_migrations ORDER BY rowid DESC LIMIT 1')[0] == '035_conversation_current_state'
     upgraded_db.close()
     with closing(sqlite3.connect(path)) as upgraded:
         assert all(upgraded.execute(f'SELECT * FROM {table} ORDER BY rowid').fetchall() == rows

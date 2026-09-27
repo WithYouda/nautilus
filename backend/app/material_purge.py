@@ -53,14 +53,39 @@ def _source_run_ids(c, owner, material_id, kind):
     return result
 
 
-def erase_learning(c, owner, material_id, now, source_message_ids=(), source_turn_ids=()):
+def erase_learning(c, owner, material_id, now, source_message_ids=(), source_turn_ids=(),
+                   affected_conversation_ids=()):
     source_ids = _source_run_ids(c,owner,material_id,'discussion') | set(source_turn_ids)
+    affected = _discussion_targets(c, owner, [material_id], source_ids, source_message_ids)
+    affected_discussions = {row[0] for row in c.execute('''SELECT DISTINCT discussion_id
+        FROM learning_discussion_turn WHERE id IN (''' + ','.join('?' for _ in affected) + ')', tuple(affected))} if affected else set()
+    if affected and 'branch_turn_id' in {row[1] for row in c.execute('PRAGMA table_info(learning_question_discussion)')}:
+        affected_discussions.update(row[0] for row in c.execute('''SELECT id FROM learning_question_discussion
+            WHERE owner_id=? AND branch_turn_id IN (''' + ','.join('?' for _ in affected) + ')',
+            (owner, *affected)))
+    if _has_table(c, 'learning_conversation_current_state'):
+        versions = {row[0] for row in c.execute('''SELECT id FROM learning_task_material
+            WHERE owner_id=? AND material_id=?''', (owner, material_id))}
+        for row in c.execute('''SELECT kind,scope_id,source_scope_json,search_override_json
+                FROM learning_conversation_current_state WHERE owner_id=?''', (owner,)).fetchall():
+            selected = json.loads(row['source_scope_json'] or '{}').get('version_ids', [])
+            if not (versions.intersection(selected)
+                    or (row['kind'] == 'conversation' and row['scope_id'] in affected_conversation_ids)
+                    or (row['kind'] == 'discussion' and row['scope_id'] in affected_discussions)):
+                continue
+            search = json.loads(row['search_override_json']) if row['search_override_json'] else None
+            if search is not None and 'parameters' in search:
+                search.pop('parameters', None)
+                search['parameters_purged'] = True
+            c.execute('''UPDATE learning_conversation_current_state SET
+                search_override_json=?,revision=revision+1,updated_at=?
+                WHERE owner_id=? AND kind=? AND scope_id=?''',
+                (json.dumps(search) if search is not None else None, now, owner, row['kind'], row['scope_id']))
     if _has_table(c, 'learning_task_material'):
         c.execute('''UPDATE learning_task_material SET title=NULL,content=NULL,url=NULL,provenance_json='{}',purged_at=?
             WHERE owner_id=? AND material_id=? AND purged_at IS NULL''', (now, owner, material_id))
     if not _has_table(c, 'learning_discussion_turn'):
         return []
-    affected = _discussion_targets(c, owner, [material_id], source_ids, source_message_ids)
     for turn_id in affected:
         row = c.execute('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (turn_id,)).fetchone()
         if row is None:
@@ -197,7 +222,8 @@ def erase_ordinary(c, owner, material_id, now, source_run_ids=()):
     return affected
 
 
-def _scrub_snapshot(path, owner, material_ids, now, source_run_ids=(), source_message_ids=(), source_turn_ids=()):
+def _scrub_snapshot(path, owner, material_ids, now, source_run_ids=(), source_message_ids=(),
+                    source_turn_ids=(), affected_conversation_ids=()):
     if path.is_symlink():
         raise ValueError('backup_is_symlink')
     path = validate_learning_path(path)
@@ -213,7 +239,8 @@ def _scrub_snapshot(path, owner, material_ids, now, source_run_ids=(), source_me
         try:
             for material_id in material_ids:
                 if _has_table(c, 'learning_raw_artifact'):
-                    erase_learning(c,owner,material_id,now,source_message_ids,source_turn_ids)
+                    erase_learning(c,owner,material_id,now,source_message_ids,source_turn_ids,
+                                   affected_conversation_ids)
                 else:
                     erase_ordinary(c,owner,material_id,now,source_run_ids)
             c.commit()
@@ -249,6 +276,7 @@ def purge(service, identity, material_id):
                       material_ids=material_ids,
                       source_run_ids=sorted(ordinary_source_ids),source_message_ids=sorted(source_message_ids),
                       source_turn_ids=sorted(discussion_source_ids),
+                      conversation_ids=sorted({run['conversation_id'] for run in ordinary_targets}),
                       external_limits=EXTERNAL_LIMITS,updated_at=now)
         def save_report():
             # Every group exposed by the UI must expose the same durable status;
@@ -266,7 +294,8 @@ def purge(service, identity, material_id):
                         ids = []
                         for group in material_ids:
                             ids.extend(erase(c,owner,group,now,ordinary_source_ids)
-                                       if erase is erase_ordinary else erase(c,owner,group,now,source_message_ids,discussion_source_ids))
+                                       if erase is erase_ordinary else erase(c,owner,group,now,source_message_ids,
+                                                                            discussion_source_ids,report['conversation_ids']))
                     if erase is erase_ordinary:
                         affected_run_ids = sorted(set(ids))
                     compact(db.connection)
@@ -285,7 +314,8 @@ def purge(service, identity, material_id):
                     path.exists() and (os.path.samefile(path,learning_path) or os.path.samefile(path,ordinary_path))):
                     raise ValueError('backup_alias')
                 register_backup(learning_path,path)
-                _scrub_snapshot(path,owner,material_ids,now,ordinary_source_ids,source_message_ids,discussion_source_ids)
+                _scrub_snapshot(path,owner,material_ids,now,ordinary_source_ids,source_message_ids,
+                                discussion_source_ids,report['conversation_ids'])
                 report['files'].append(dict(name=path.name,status='cleared'))
             except (sqlite3.Error,ValueError,OSError,RuntimeError):
                 report['files'].append(dict(name=path.name,status='failed',reason='backup_not_cleared'))

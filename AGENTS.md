@@ -9,6 +9,7 @@ The lead agent completes the baseline reading below. Delegated agents read this 
 3. Read `docs/progress/nautilus-development-status.md`.
 4. If working on PRD V2 or the first vertical slice, read `docs/progress/nautilus-prd-v2-review-2026-09-05.md` before proposing changes.
 5. Treat the current PRD V2 and confirmed product decision record as authoritative for product direction; the archived concept and superseded portions of the original baseline are historical context only.
+6. Read `docs/superpowers/plans/2026-09-27-nautilus-product-roadmap.md` for the confirmed current sequence and stage boundaries; the older first-slice implementation plan retains detailed contracts, not the future stage order.
 
 Collaboration and engineering judgment:
 
@@ -17,6 +18,7 @@ Collaboration and engineering judgment:
 - Do not accept a proposal merely because the user suggested it. If it is unsafe, internally inconsistent, premature, unnecessarily complex, or likely to produce a worse product, say so directly before implementation, explain the concrete trade-off, and recommend a better alternative.
 - Distinguish user preference, product requirement, and technical recommendation. When several approaches are valid, present the meaningful options and state which one you recommend and why.
 - Do not hide uncertainty or pretend agreement. Verify facts from the repository or relevant primary sources when needed, and make assumptions explicit.
+- When any task detail is unclear, first check the confirmed specifications and decisions; if it remains unresolved, ask the user before implementing the dependent behavior. Do not fill the gap with an assumed preference or treat a recommendation as approval. Continue only independent work while awaiting the answer. This clarification rule was explicitly requested by the user on 2026-09-27 and takes precedence over earlier guidance permitting routine choices when those choices remain unclear.
 - After the user has seen the trade-offs and made an informed decision within the safe project scope, execute that decision faithfully unless it conflicts with a higher-priority instruction or repository safety rule.
 - Optimize for the smallest coherent product slice: correctness, understandable workflows, usable interface, maintainability, and verification must advance together. Avoid both backend-complete but unusable features and expensive visual polish on an unvalidated workflow.
 

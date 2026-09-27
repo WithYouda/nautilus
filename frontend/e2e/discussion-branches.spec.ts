@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { authorize } from './fact-helpers';
 
-test('branches an earlier question answer while preserving the verification and both discussions', async ({ page }) => {
+test('branches an earlier question answer while preserving the verification and both discussions', async ({ page, browser }) => {
   test.setTimeout(90_000);
   const pageErrors: string[] = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -44,6 +44,7 @@ test('branches an earlier question answer while preserving the verification and 
   const materialsButton = discussion.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ });
   await materialsButton.click();
   const materials = discussion.locator('.task-materials-panel');
+  await expect(materials.getByLabel(/上传资料/)).toBeEnabled();
   await materials.getByLabel(/上传资料/).setInputFiles({ name: '讨论分支教材.txt', mimeType: 'text/plain', buffer: Buffer.from('合成资料：先检查边界。') });
   await expect(materials.getByRole('checkbox', { name: '讨论分支教材.txt · 文本资料' })).toBeChecked();
   await materialsButton.click();
@@ -130,6 +131,34 @@ test('branches an earlier question answer while preserving the verification and 
   expect((await (await page.request.get(`/api/learning/discussions/${branchId}`)).json()).turns).toHaveLength(2);
   expect((await (await page.request.get(`/api/learning/discussions/${sourceId}`)).json()).turns).toHaveLength(2);
   expect((await (await page.request.get(`/api/learning/verifications/${verificationId}`)).json()).discussions.map((item: { id: string }) => item.id)).toContain(branchId);
+  // A second browser has its own storage and restores server choices for this discussion.
+  const other = await browser.newContext();
+  const phone = await other.newPage();
+  phone.on('pageerror', error => pageErrors.push(error.message));
+  await authorize(phone);
+  await phone.goto(`/?view=records&discussion=${branchId}`);
+  const phoneRoom = phone.getByRole('region', { name: '题目学习室' });
+  await expect(phoneRoom.locator('.discussion-turn')).toHaveCount(2);
+  await phoneRoom.locator('.ai-composer').getByRole('button', { name: /^资料/ }).click();
+  const phoneMaterials = phoneRoom.locator('.task-materials-panel');
+  await expect(phoneMaterials.getByRole('checkbox', { name: /讨论分支教材.txt/ })).toBeChecked();
+  await materialsButton.click();
+  await materials.getByLabel('资料冲突时').selectOption('balanced');
+  await expect(materials.getByLabel('资料冲突时')).toHaveValue('balanced');
+  await phoneRoom.getByLabel('继续提问或回答拓展问题').fill('题目讨论跨端保留草稿');
+  await phoneMaterials.getByLabel('资料冲突时').selectOption('ask');
+  await expect(phoneRoom.getByText(/另一页面或设备已更新/)).toBeVisible();
+  await expect(phoneMaterials.getByLabel('资料冲突时')).toHaveValue('balanced');
+  await expect(phoneRoom.getByLabel('继续提问或回答拓展问题')).toHaveValue('题目讨论跨端保留草稿');
+  await materials.getByLabel('资料冲突时').selectOption('materials');
+  await expect(materials.getByLabel('资料冲突时')).toHaveValue('materials');
+  const rejected = phone.waitForResponse(r => r.url().endsWith(`/discussions/${branchId}/messages`) && r.request().method() === 'POST');
+  await phoneRoom.getByLabel('继续提问或回答拓展问题').press('Enter');
+  expect((await rejected).status()).toBe(409);
+  await expect(phoneRoom.getByLabel('继续提问或回答拓展问题')).toHaveValue('题目讨论跨端保留草稿');
+  expect((await (await page.request.get(`/api/learning/discussions/${branchId}`)).json()).turns).toHaveLength(2);
+  await materialsButton.click();
+  await other.close();
   await page.setViewportSize({ width: 390, height: 844 });
   await discussion.getByRole('button', { name: '分支图', exact: true }).click();
   const mobileMap = page.getByRole('dialog', { name: '分支图' });

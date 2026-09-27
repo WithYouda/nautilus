@@ -36,11 +36,12 @@ from .verification import VerificationService
 from .question_discussion import QuestionDiscussionService
 from .model_discovery import ModelDiscoveryService
 from .materials import MaterialService
+from .conversation_state import CurrentConversationState
 from .routers import materials
 from .network import wsl_ip
 from .plan_editor import PlanEditorService
 from .plans import PlanService
-from .routers import ai, auth, layouts, learning, plans, system, search
+from .routers import ai, auth, layouts, learning, plans, system, search, conversation_state
 
 logger = logging.getLogger("nautilus")
 
@@ -100,6 +101,9 @@ def create_app(
         )
         verification_service.evidence = evidence_service
         discussion_service = QuestionDiscussionService(verification_service)
+        current_state = CurrentConversationState(material_service, conversation_service, discussion_service, search_service)
+        conversation_service.current_state = current_state
+        discussion_service.current_state = current_state
         discussion_service.recover()
         CompletionService(verification_service).recover()
         PracticeService(verification_service).recover()
@@ -129,6 +133,7 @@ def create_app(
         app.state.learning_setup = learning_setup_service
         app.state.verification = verification_service
         app.state.discussions = discussion_service
+        app.state.conversation_state = current_state
         app.state.agent_runtime = agent_runtime
         app.state.state_derivation = state_derivation_service
         app.state.review = review_service
@@ -178,6 +183,7 @@ def create_app(
     app.include_router(practice.router)
     app.include_router(delayed_follow_up.router)
     app.include_router(ai.router)
+    app.include_router(conversation_state.router)
     app.include_router(search.router)
     app.include_router(materials.router)
     app.include_router(preferences.router)

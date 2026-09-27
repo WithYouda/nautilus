@@ -960,7 +960,7 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
-  versions: { edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {},
+  versions: { current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -2076,7 +2076,7 @@ export function getQuestionDiscussion(id: string): Promise<QuestionDiscussion> {
 export function branchQuestionDiscussion(id: string, turnId: string, requestKey: string): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/branches`, { method: 'POST', body: JSON.stringify({ turn_id: turnId, request_key: requestKey }) });
 }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {}): Promise<QuestionDiscussion> {
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {}): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
 }
 export function recordDiscussionHelpDisplay(discussionId: string, turnId: string, characters: number): Promise<HelpRecord> {
@@ -2171,3 +2171,17 @@ export function getBranchMap(kind: 'conversation' | 'discussion', id: string): P
 export function renameBranchNode(kind: 'conversation' | 'discussion', id: string, title: string): Promise<unknown> {
   return request(`${kind === 'conversation' ? '/api/ai/conversations' : '/api/learning/discussions'}/${id}${kind === 'discussion' ? '/title' : ''}`, { method: 'PATCH', body: JSON.stringify({ title }) });
 }
+
+export type ConversationStateValues = {
+  leaf_id: string | null;
+  paths: Record<string, string>;
+  source_scope: SourceScope;
+  search_override: SearchSelection | null;
+};
+export type ConversationState = ConversationStateValues & { initialized: boolean; revision: number; issues: string[] };
+export const getConversationState = (kind: MaterialKind, id: string) =>
+  request<ConversationState>(`/api/conversation-state/${kind}/${encodeURIComponent(id)}`);
+export const putConversationState = (kind: MaterialKind, id: string, value: ConversationStateValues, revision: number) =>
+  request<ConversationState>(`/api/conversation-state/${kind}/${encodeURIComponent(id)}`, {
+    method: 'PUT', body: JSON.stringify({ leaf_id: value.leaf_id, paths: value.paths, source_scope: value.source_scope, search_override: value.search_override, expected_revision: revision }),
+  });

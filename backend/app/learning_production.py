@@ -517,6 +517,7 @@ def _check_purge_receipts(target_path, candidate_path):
                                              'submit_fingerprint', 'result_json'],
                 'learning_delayed_view': ['provided_at', 'displayed_at', 'after_arranging'],
                 'learning_task_material': ['title','content','url','provenance_json'],
+                'learning_conversation_current_state': ['search_override_json'],
             }
             def snapshot():
                 result = {}
@@ -532,7 +533,8 @@ def _check_purge_receipts(target_path, candidate_path):
                     from .material_purge import erase_learning
                     for item_id in object_ids:
                         erase_learning(connection, owner, item_id, receipt['updated_at'],
-                                       receipt.get('source_message_ids', []), receipt.get('source_turn_ids', []))
+                                       receipt.get('source_message_ids', []), receipt.get('source_turn_ids', []),
+                                       receipt.get('conversation_ids', []))
                 else:
                     erase(connection, owner, kind, object_id, receipt['updated_at'],
                           submission_ids=receipt.get('submission_ids', []), artifact_ids=receipt.get('artifact_ids', []))

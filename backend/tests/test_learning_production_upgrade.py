@@ -31,7 +31,7 @@ def test_upgrade_029_to_current_preserves_existing_learning_facts(tmp_path):
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '029_discussion_reasoning'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '034_discussion_branch_map'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '035_conversation_current_state'
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute('SELECT * FROM learning_event ORDER BY position').fetchall() == before
         assert connection.execute('SELECT status FROM learning_session WHERE id=?', (context['session_id'],)).fetchone()[0] == 'running'

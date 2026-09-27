@@ -127,6 +127,12 @@ def test_learning_database_is_independent_from_legacy_database(client):
         "027_learning_continuity",
         "028_verification_discussions",
         "029_discussion_reasoning",
+        "030_learning_completion",
+        "031_targeted_practice",
+        "032_delayed_follow_up",
+        "033_task_materials",
+        "034_discussion_branch_map",
+        "035_conversation_current_state",
     ]
 
 

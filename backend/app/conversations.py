@@ -100,6 +100,7 @@ class ConversationService:
         self._provider_lock = threading.RLock()
         self.search_service = None
         self.materials = None
+        self.current_state = None
 
     def _protocol(self, profile, model_id=None):
         if profile is None:
@@ -1371,6 +1372,12 @@ class ConversationService:
         return self.conversation_detail(identity_id, conversation_id)
 
     def delete_conversation(self, identity_id: str, conversation_id: str) -> None:
+        if self.current_state is not None:
+            with self.current_state.lock:
+                return self._delete_conversation_locked(identity_id, conversation_id)
+        return self._delete_conversation_locked(identity_id, conversation_id)
+
+    def _delete_conversation_locked(self, identity_id: str, conversation_id: str) -> None:
         self.owned_conversation(identity_id, conversation_id)
         now = _now()
         with self.database.transaction() as connection:
@@ -1410,6 +1417,8 @@ class ConversationService:
                 "UPDATE ai_run SET config_snapshot_json=json_remove(config_snapshot_json, '$.learning_position') WHERE conversation_id=?",
                 (conversation_id,),
             )
+        if self.current_state is not None:
+            self.current_state.erase(identity_id, 'conversation', conversation_id)
 
     def _primary_task_id(self, conversation_id: str) -> str | None:
         row = self.database.fetchone(
@@ -1593,6 +1602,7 @@ class ConversationService:
         search: dict | None = None,
         help_request: str | None = None,
         source_scope: dict | None = None,
+        current_state_revision: int | None = None,
     ) -> dict[str, Any]:
         """写入用户消息、上下文快照、助手占位消息和 queued 运行记录。
 
@@ -1615,6 +1625,14 @@ class ConversationService:
         replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope)
         if replayed:
             return replayed
+        if self.current_state is not None:
+            from .learning_domain import DomainError
+            try:
+                self.current_state.check_send(identity_id, 'conversation', conversation_id, current_state_revision,
+                                              source_scope, search, parent_message_id,
+                                              bool(regenerate_message_id or edit_message_id))
+            except DomainError as error:
+                raise ConversationConflict(error.code) from error
 
         # 冻结本次运行使用的配置；提交后不再二次读取可变的 provider 状态。
         profile, config, config_snapshot = self.runtime_for_conversation(
@@ -1663,6 +1681,14 @@ class ConversationService:
                 )
                 if replayed:
                     return replayed
+                if self.current_state is not None:
+                    from .learning_domain import DomainError
+                    try:
+                        self.current_state.check_send(identity_id, 'conversation', conversation_id, current_state_revision,
+                                                      source_scope, search, parent_message_id,
+                                                      bool(regenerate_message_id or edit_message_id))
+                    except DomainError as error:
+                        raise ConversationConflict(error.code) from error
                 active = connection.execute(
                     """
                     SELECT id FROM ai_run
@@ -1818,6 +1844,10 @@ class ConversationService:
                     "UPDATE conversation SET last_message_at = ?, updated_at = ? WHERE id = ?",
                     (now, now, conversation_id),
                 )
+                if self.current_state is not None:
+                    # Commit current-state first. A failure rolls the message
+                    # transaction back before any provider task starts.
+                    self.current_state.advance(identity_id, 'conversation', conversation_id, assistant_message_id)
         except sqlite3.IntegrityError as error:
             # 并发提交命中唯一索引：另一个协程已经写入了同一个 client_message_id。
             # 返回对方的运行记录，不重复追加消息，也不报错。

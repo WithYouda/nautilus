@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 type Node = { id: string; parentId: string | null; groupId?: string };
+type SharedSelection = { leaf: string | null; paths: Record<string, string>; ready: boolean; select: (leaf: string, paths: Record<string, string>) => Promise<boolean> };
 const storageKey = (scope: string) => `nautilus.reply-selection.v1:${scope}`;
 function savedSelection(scope: string) {
   try { return window.localStorage.getItem(storageKey(scope)); } catch { return null; }
@@ -8,12 +9,12 @@ function savedSelection(scope: string) {
 
 // An answer version owns its descendants. Selecting an older version restores
 // that path; regenerating it creates a new leaf without erasing the old path.
-export default function useReplyHistory(scope: string, nodes: Node[], activeId?: string | null) {
+export default function useReplyHistory(scope: string, nodes: Node[], activeId?: string | null, shared?: SharedSelection) {
   const [following, setFollowing] = useState(true);
   useEffect(() => { setFollowing(true); }, [scope, activeId]);
   const [choices, setChoices] = useState<Record<string, string>>({});
   const paths = useRef<Record<string, Record<string, string>>>({});
-  if (!paths.current[scope]) {
+  if (!shared && !paths.current[scope]) {
     let saved: Record<string, string> = {};
     try {
       const value = JSON.parse(window.localStorage.getItem(`${storageKey(scope)}:paths`) ?? '{}');
@@ -23,7 +24,7 @@ export default function useReplyHistory(scope: string, nodes: Node[], activeId?:
     } catch { /* Optional view state. */ }
     paths.current[scope] = saved;
   }
-  const remembered = paths.current[scope];
+  const remembered = { ...(shared?.paths ?? paths.current[scope] ?? {}) };
   const byId = new Map(nodes.map(node => [node.id, node]));
   function ancestry(id: string | null) {
     const result: string[] = [];
@@ -34,20 +35,24 @@ export default function useReplyHistory(scope: string, nodes: Node[], activeId?:
     return result;
   }
   function select(id: string) {
+    if (shared && !shared.ready) return false;
     for (const ancestor of ancestry(id)) {
       remembered[ancestor] = id;
       const group = byId.get(ancestor)?.groupId;
       if (group) remembered[`group:${group}`] = ancestor;
     }
+    if (shared) return shared.select(id, remembered);
+    paths.current[scope] = remembered;
     setChoices(previous => ({ ...previous, [scope]: id }));
     try {
       window.localStorage.setItem(storageKey(scope), id);
       window.localStorage.setItem(`${storageKey(scope)}:paths`, JSON.stringify(remembered));
     } catch { /* Optional view state. */ }
+    return true;
   }
-  useEffect(() => { if (activeId) select(activeId); }, [scope, activeId]);
-  let leaf: string | null = activeId ?? choices[scope] ?? savedSelection(scope);
-  if (!leaf || !byId.has(leaf)) leaf = nodes.at(-1)?.id ?? null;
+  useEffect(() => { if (activeId && !shared) select(activeId); }, [scope, activeId]);
+  let leaf: string | null = shared ? shared.leaf : activeId ?? choices[scope] ?? savedSelection(scope);
+  if (!shared && (!leaf || !byId.has(leaf))) leaf = nodes.at(-1)?.id ?? null;
   const path = ancestry(leaf);
   function switchVersion(id: string) {
     setFollowing(false);
@@ -68,5 +73,5 @@ export default function useReplyHistory(scope: string, nodes: Node[], activeId?:
     const id = remembered[`group:${groupId}`];
     return id && byId.get(id)?.groupId === groupId ? id : fallback;
   }
-  return { path, leaf, select, locate: (id: string) => { setFollowing(false); select(id); }, switchVersion, preferredVersion, following };
+  return { path, leaf, select, locate: (id: string) => { setFollowing(false); return select(id); }, switchVersion, preferredVersion, following };
 }

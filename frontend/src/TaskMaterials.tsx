@@ -5,18 +5,6 @@ import { getPreferences, type ConflictPolicy } from './preferences';
 import './styles/task-materials.css';
 
 export const emptySourceScope = (): SourceScope => ({ mode: 'unspecified', version_ids: [] });
-const storageKey = (kind: MaterialKind, identity: string, id: string) => `nautilus.material-selection:${identity}:${kind}:${id}`;
-export function readSourceScope(kind: MaterialKind, identity: string, id: string): SourceScope {
-  try {
-    const value = JSON.parse(localStorage.getItem(storageKey(kind, identity, id)) || '{}');
-    if (['unspecified', 'reference', 'only'].includes(value.mode) && Array.isArray(value.version_ids) && value.version_ids.every((item: unknown) => typeof item === 'string'))
-      return { mode: value.mode, version_ids: value.version_ids, ...( ['ask', 'balanced', 'materials'].includes(value.conflict_policy) ? { conflict_policy: value.conflict_policy } : {}) };
-  } catch { /* Storage may be unavailable. */ }
-  return emptySourceScope();
-}
-export function writeSourceScope(kind: MaterialKind, identity: string, id: string, value: SourceScope) {
-  try { localStorage.setItem(storageKey(kind, identity, id), JSON.stringify(value)); } catch { /* In-memory selection still works. */ }
-}
 export type WebMaterialCandidate = { runId: string; itemIndex: number; title: string; url: string; text: string };
 export function webMaterialCandidates(rows: Array<{ runId: string | null | undefined; trace?: SearchTrace | null; complete: boolean }>): WebMaterialCandidate[] {
   return rows.flatMap(({ runId, trace, complete }) => !runId || !complete || trace?.status !== 'succeeded' ? [] : (trace.items ?? []).flatMap((item, itemIndex) => item.text?.trim()
@@ -86,7 +74,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     if (previousId.current && previousId.current !== id) setOpen(false);
     previousId.current = id;
     setFileReading(false); setVersions([]); onVersions?.([]); setEditing(null); setTitle(''); setContent(''); setError(''); setBusy(false); setPurgeId(null); setPurgeReport(null);
-    if (id) void getMaterials(kind, id).then(data => { if (epoch.current === current) { setVersions(data.versions); onVersions?.(data.versions); let hasSaved = false; try { hasSaved = !!identity && localStorage.getItem(storageKey(kind, identity, id)) !== null; } catch { /* Storage may be unavailable. */ } if (!hasSaved && scope.mode === 'unspecified' && scope.version_ids.length === 0) { const latest = latestActive(data.versions); if (latest.length) change({ ...scope, mode: 'reference', version_ids: latest.map(item => item.id) }); } } }).catch(() => { if (epoch.current === current) setError('资料列表加载失败，可重新打开重试。'); });
+    if (id) void getMaterials(kind, id).then(data => { if (epoch.current === current) { setVersions(data.versions); onVersions?.(data.versions); } }).catch(() => { if (epoch.current === current) setError('资料列表加载失败，可重新打开重试。'); });
     return () => { epoch.current++; };
   }, [kind, id, identity]);
   async function refresh(target: string, expectedEpoch = epoch.current) {
@@ -96,7 +84,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     return data.versions;
   }
   async function targetId() { return id; }
-  function change(value: SourceScope) { onChange(value); if (id && identity) writeSourceScope(kind, identity, id, value); }
+  function change(value: SourceScope) { onChange(value); }
   function selectSaved(item: MaterialVersion) {
     const other = scope.version_ids.filter(versionId => !versions.some(version => version.id === versionId && version.material_id === item.material_id));
     change({ ...scope, mode: scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: [...other, item.id] });
@@ -138,11 +126,9 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
       const result = await purgeMaterial(kind, id, materialId);
       if (epoch.current !== current) return;
       setPurgeReport({ materialId, report: result.purge });
-      const latest = await refresh(id, current);
+      await refresh(id, current);
       if (epoch.current !== current) return;
-      const stillActive = new Set(latest.filter(item => !item.purged_at).map(item => item.id));
-      const remaining = scope.version_ids.filter(versionId => stillActive.has(versionId));
-      change({ ...scope, mode: remaining.length ? scope.mode : 'unspecified', version_ids: remaining });
+      // Keep the invalid reference until the user explicitly chooses a new scope.
       await onPurged();
       if (epoch.current === current && result.purge.status === 'complete') setPurgeId(null);
     } catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '清除未完成，可重试。'); }
@@ -163,6 +149,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
         <option value="">沿用默认（{defaultPolicy ? policyLabel(defaultPolicy) : '读取后生效'}）</option><option value="ask">询问我</option><option value="balanced">由 AI 综合判断</option><option value="materials">以所选资料为准</option>
       </select></label>
       {scope.mode !== 'unspecified' && <p>当前参考 {selected.length} 份资料，共 {selectedChars} 字。{selected.length === 0 ? '请选择至少一个版本，才能发送。' : '资料不足时会指出缺口，由你决定是否扩展范围。'}</p>}
+      {scope.version_ids.some(versionId => !active.some(item => item.id === versionId)) && <p role="alert">原来选择的部分资料已不可用。<button type="button" className="button button--quiet" disabled={disabled || busy} onClick={() => change({ ...scope, mode: 'unspecified', version_ids: [] })}>取消全部资料参考，重新选择</button></p>}
       {!id && <p>正在打开当前对话，随后即可上传资料。</p>}
       {groups.length > 0 && <ul className="task-material-list">{groups.map(group => <li key={group.material_id}>
         <label><input type="checkbox" disabled={disabled || busy || !!group.purged_at} checked={versions.some(item => item.material_id === group.material_id && selected.includes(item.id))} onChange={() => { const own = versions.filter(item => item.material_id === group.material_id).map(item => item.id); const isSelected = own.some(value => selected.includes(value)); const remaining = selected.filter(value => !own.includes(value)); change({ ...scope, mode: isSelected && remaining.length === 0 ? 'unspecified' : scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: isSelected ? remaining : [...remaining, group.id] }); }} /><strong>{group.title || '已清除的资料'}</strong> · {materialKindLabel(group.content_kind)}{group.inherited && <span> · 从原对话继承（只读）</span>}{group.purged_at && <span> · 已清除</span>}</label>

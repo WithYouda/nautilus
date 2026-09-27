@@ -26,6 +26,7 @@ class QuestionDiscussionService:
         self.records = LearningRecords(verification)
         self.tasks = {}
         self.recorders = {}
+        self.current_state = None
 
     def recover(self):
         with self.db.transaction(immediate=True) as c:
@@ -218,7 +219,8 @@ class QuestionDiscussionService:
 
     @material_guard
     def start(self, identity, discussion_id, content, request_key, retry=False,
-              regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None, help_request=None, source_scope=None):
+              regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None, help_request=None, source_scope=None,
+              current_state_revision=None):
         if retry:
             raise DomainError('discussion_regeneration_required', 422)
         if edit_turn_id and (regenerate_turn_id or parent_turn_id):
@@ -227,6 +229,12 @@ class QuestionDiscussionService:
             raise DomainError('verification_response_required', 422)
         owner = self.learning.principal(identity).owner_id
         discussion = self._owned(owner, discussion_id)
+        existing_turn = self.db.fetchone('SELECT id FROM learning_discussion_turn WHERE discussion_id=? AND request_key=?',
+                                         (discussion_id, request_key))
+        if not existing_turn and self.current_state is not None:
+            self.current_state.check_send(owner, 'discussion', discussion_id, current_state_revision,
+                                          source_scope, search, parent_turn_id,
+                                          bool(regenerate_turn_id or edit_turn_id))
         source = self._source(identity, discussion)
         materials = getattr(self.chats, 'materials', None)
         frozen = materials.freeze(identity, 'discussion', discussion_id, source_scope) if materials else None
@@ -303,6 +311,8 @@ class QuestionDiscussionService:
                                        'source_request': source_scope or {'mode': 'unspecified', 'version_ids': []},
                                        'source_scope': public_scope(frozen),
                                        **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
+                if self.current_state is not None:
+                    self.current_state.advance(owner, 'discussion', discussion_id, turn_id, c)
         if turn_id:
             # Resolve the search instance immediately. The task receives a copy,
             # so changing/deleting settings cannot select another service midway.

@@ -13,3 +13,6 @@
 .task-material-upload { padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
 .task-material-upload input { font: inherit; }
 .task-material-use { margin: .5rem 0; font-size: .9em; }
+@media (max-width: 600px) {
+  .task-materials-panel { position: fixed; left: 12px; right: 12px; bottom: 88px; width: auto; max-height: calc(100dvh - 160px); box-sizing: border-box; z-index: 1000; }
+}

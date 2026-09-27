@@ -310,6 +310,7 @@ class ConversationUpdateRequest(BaseModel):
 
 
 class MessageSendRequest(BaseModel):
+    current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
     search: dict[str, Any] | None = None
     help_request: Literal["hint", "explain_step", "example", "try_first"] | None = None
@@ -633,6 +634,7 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 
 class QuestionDiscussionMessageRequest(BaseModel):
+    current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
     search: dict[str, Any] | None = None
     help_request: Literal["hint", "explain_step", "example", "try_first"] | None = None

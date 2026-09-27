@@ -97,6 +97,9 @@ async def test_033_upgrade_preserves_all_existing_business_columns(learning_data
     legacy_path = tmp_path/'legacy-033.sqlite3'
     with closing(sqlite3.connect(legacy_path)) as c:
         learning_database.connection.backup(c)
+        c.execute('DROP TRIGGER learning_discussion_purge_current_state')
+        c.execute('DROP TABLE learning_conversation_current_state')
+        c.execute("DELETE FROM schema_migrations WHERE version='035_conversation_current_state'")
         c.execute('DROP TRIGGER discussion_title_on_purge')
         c.execute('DROP TRIGGER discussion_title_on_turn_purge')
         for column in ('title', 'title_source', 'branch_parent_id', 'branch_turn_id'):

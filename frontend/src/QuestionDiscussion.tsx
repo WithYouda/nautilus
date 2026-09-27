@@ -1,4 +1,5 @@
-import useConversationSearch, { writeConversationSearch } from './useConversationSearch';
+import useConversationState, { isStateConflict, isStateRejected } from './useConversationState';
+import ConversationStateNotice from './ConversationStateNotice';
 import BranchMap from './BranchMap';
 import useReplyHistory from './useReplyHistory';
 import { useEffect, useRef, useState } from 'react';
@@ -11,7 +12,7 @@ import SearchControls, { type SearchSelection } from './SearchControls';
 import AssistantResponse from './AssistantResponse';
 import HelpControls from './HelpControls';
 import HelpRecord, { HelpRecordFacts } from './HelpRecord';
-import TaskMaterials, { MaterialUse, emptySourceScope, readSourceScope, writeSourceScope, webMaterialCandidates } from './TaskMaterials';
+import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
 import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
 
 const requestId = (): string => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
@@ -19,13 +20,19 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [mapLocation, setMapLocation] = useState<{ id: string; source: string } | null>(null);
   const [discussion, setDiscussion] = useState<Discussion | null>(null);
   const [content, setContent] = useState('');
-  const searchChoice = useConversationSearch('discussion', discussion?.identity_id ?? null, id);
+  const sharedState = useConversationState('discussion', discussion?.identity_id ?? null, id, async () => {
+    const version = generation.current;
+    const next = await getQuestionDiscussion(id);
+    if (generation.current === version) setDiscussion(next);
+  });
+  const sourceScope = sharedState.sourceScope;
+  const setSourceScope = (value: SourceScope) => { void sharedState.save({ source_scope: value }); };
+  const searchChoice = sharedState.search;
   const searchSelection = searchChoice.value;
   const [busy, setBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; sourceScope: SourceScope } | null>(null);
-  const [sourceScope, setSourceScope] = useState<SourceScope>(emptySourceScope);
   const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
   const [reconnect, setReconnect] = useState(0);
   const [connectionLost, setConnectionLost] = useState(false);
@@ -42,8 +49,8 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   useEffect(() => {
     let active = true;
     generation.current += 1;
-    setEditingTurnId(null); editRequest.current = null; searchByRequestKey.current.clear(); setDiscussion(null); setContent(drafts.current.get(id) ?? ''); setSourceScope(emptySourceScope()); setMaterialVersions([]); setError(''); setPending(null); setBusy(false); setBranchBusy(false); branching.current = false; sending.current = false; key.current = requestId();
-    getQuestionDiscussion(id).then(value => { if (active) { setDiscussion(value); setSourceScope(readSourceScope('discussion', value.identity_id ?? value.verification_id, id)); } }).catch(reason => { if (active) setError(String(reason.message ?? reason)); });
+    setEditingTurnId(null); editRequest.current = null; searchByRequestKey.current.clear(); setDiscussion(null); setContent(drafts.current.get(id) ?? ''); setMaterialVersions([]); setError(''); setPending(null); setBusy(false); setBranchBusy(false); branching.current = false; sending.current = false; key.current = requestId();
+    getQuestionDiscussion(id).then(value => { if (active) { setDiscussion(value); } }).catch(reason => { if (active) setError(String(reason.message ?? reason)); });
     return () => { active = false; generation.current += 1; };
   }, [id]);
   const runningTurn = discussion?.turns.find(turn => turn.status === 'running');
@@ -60,17 +67,22 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     return () => { active = false; };
   }, [id, runningTurn?.id]);
 
-  const replyHistory = useReplyHistory(`discussion:${id}`, (discussion?.turns ?? []).map(turn => ({id:turn.id, parentId:turn.parent_turn_id, groupId:turn.question_id})), runningTurn?.id);
+  const replyHistory = useReplyHistory(`discussion:${id}`, (discussion?.turns ?? []).map(turn => ({id:turn.id, parentId:turn.parent_turn_id, groupId:turn.question_id})), runningTurn?.id, { leaf: sharedState.snapshot.leaf_id, paths: sharedState.snapshot.paths, ready: sharedState.ready, select: (leaf_id, paths) => sharedState.save({ leaf_id, paths }) });
   const visibleTurns = replyHistory.path.map(turnId => discussion!.turns.find(turn => turn.id === turnId)!);
   useEffect(() => {
     if (!mapLocation || discussion?.id !== mapLocation.id || !discussion.turns.some(turn => turn.id === mapLocation.source)) return;
-    if (replyHistory.leaf !== mapLocation.source) { replyHistory.locate(mapLocation.source); return; }
+    if (!sharedState.ready) return;
+    if (replyHistory.leaf !== mapLocation.source) {
+      const source = mapLocation.source; setMapLocation(null);
+      void Promise.resolve(replyHistory.locate(source)).then(saved => { if (saved) requestAnimationFrame(() => document.getElementById(`turn-${source}`)?.scrollIntoView({ block: 'center' })); });
+      return;
+    }
     const frame = requestAnimationFrame(() => {
       document.getElementById(`turn-${mapLocation.source}`)?.scrollIntoView({ block: 'center' });
       setMapLocation(null);
     });
     return () => cancelAnimationFrame(frame);
-  }, [mapLocation, discussion, replyHistory.leaf]);
+  }, [mapLocation, discussion, replyHistory.leaf, sharedState.ready]);
 
 
   useEffect(() => {
@@ -109,7 +121,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
 
   async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false, regenerateTurnId?: string, editTurnId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
     if (!text.trim() || sending.current || branching.current || running) return false;
-    if (!searchChoice.ready) { setError("正在读取联网设置，请稍后发送。"); return false; }
+    if (sharedState.blocked) { setError("请先确认或修复当前学习状态，再发送消息。"); return false; }
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !searchByRequestKey.current.has(requestKey)) { setError('请先选择至少一个资料版本，或改为未指定资料。'); return false; }
     if (searchByRequestKey.current.size && (!searchByRequestKey.current.has(requestKey) || searchByRequestKey.current.get(requestKey)?.content !== text)) {
       setError('上次发送结果尚未确认。请先重试原消息，或重新打开讨论核对已保存的内容。');
@@ -123,22 +135,23 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     try {
       const frozenSearch = searchByRequestKey.current.get(requestKey)?.search ?? structuredClone(searchSelection);
       searchByRequestKey.current.set(requestKey, { search: frozenSearch, content: text, helpRequest: frozenHelp, sourceScope: frozenScope });
-      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, source_scope: frozenScope, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}) });
+      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, source_scope: frozenScope, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}) });
       if (generation.current !== currentGeneration) return false;
       searchByRequestKey.current.delete(requestKey);
       setDiscussion(previous => ({ ...saved, turns: saved.turns.map(turn => ({ ...turn, search_trace: turn.search_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.search_trace : turn.search_trace, generation_trace: turn.generation_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.generation_trace : turn.generation_trace })) })); setPending(null); key.current = requestId();
-      const sent = saved.turns.find(turn => turn.request_key === requestKey);
-      if (sent) replyHistory.select(sent.id);
+      await sharedState.reload();
       return true;
     } catch (reason) {
       if (generation.current !== currentGeneration) return false;
-      if (reason instanceof ApiError && [400, 422].includes(reason.status ?? 0)) {
+      const stateRejected = isStateRejected(reason);
+      if (stateRejected) await sharedState.reload(isStateConflict(reason));
+      if (stateRejected || (reason instanceof ApiError && [400, 422].includes(reason.status ?? 0))) {
         searchByRequestKey.current.delete(requestKey);
         if (editRequest.current?.key === requestKey) editRequest.current = null;
         if (key.current === requestKey) key.current = requestId();
         if (!retry && !regenerateTurnId && !editTurnId) { setPending(null); if (!preserveDraft) { setContent(text); drafts.current.set(id, text); } }
       } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ content: text, key: requestKey, failed: true, helpRequest: frozenHelp, sourceScope: frozenScope });
-      setError(reason instanceof Error ? reason.message : '消息发送未确认，请重试。');
+      setError(stateRejected ? '消息未发送，请核对最新状态后重新发送。' : reason instanceof Error ? reason.message : '消息发送未确认，请重试。');
       return false;
     } finally {
       if (generation.current === currentGeneration) { sending.current = false; setBusy(false); }
@@ -165,9 +178,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     try {
       const created = await branchQuestionDiscussion(sourceId, turnId, requestKey);
       if (generation.current !== currentGeneration) return;
-      const identity = created.identity_id ?? created.verification_id;
-      if (created.branch_source_scope) writeSourceScope('discussion', identity, created.id, created.branch_source_scope);
-      writeConversationSearch('discussion', identity, created.id, searchSelection);
+      await sharedState.initializeNew(created.id, { leaf_id: created.turns.at(-1)?.id ?? null, source_scope: created.branch_source_scope ?? emptySourceScope(), search_override: searchSelection });
       drafts.current.set(sourceId, content);
       drafts.current.set(created.id, content);
       branchKeys.current.delete(branchKey);
@@ -192,14 +203,14 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
       onNavigate={(nextId, source) => { drafts.current.set(id, content); if (source) setMapLocation({ id: nextId, source }); onNavigate(nextId); }}
       onRenamed={async () => { const version = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === version) setDiscussion(next); }} />
     <LearningChatPanel title={discussion?.title ?? "讨论这道题"} autoFollow={!editingTurnId && (replyHistory.following || busy) && Boolean(discussion?.turns.length || pending)} followToken={`${id}:${(discussion?.turns.length ?? 0) + (pending ? 1 : 0)}`}
-      notice={<>{searchChoice.error && <p role="status">{searchChoice.error}</p>}{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
+      notice={<><ConversationStateNotice state={sharedState} onSelectPath={() => { void sharedState.save({ leaf_id: discussion?.turns.filter(turn => turn.status !== 'purged').at(-1)?.id ?? null, paths: {} }); }} />{searchChoice.error && <p role="status">{searchChoice.error}</p>}{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
       composer={discussion && !discussion.purged && <LearningComposer
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
         onChange={value => { setContent(value); drafts.current.set(id, value); key.current = requestId(); }}
         onSubmit={event => { event.preventDefault(); void send(); }}
         placeholder="输入关于这道题的问题，或回答拓展问题" maxLength={12000}
-        disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
-        suggestions={<HelpControls disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onChoose={(kind, label) => void send(label, key.current, false, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !searchChoice.ready} providerKind={discussion.provider_protocol ?? undefined} /><TaskMaterials kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onPurged={async () => { const current = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === current) setDiscussion(next); }} candidates={webMaterialCandidates(discussion.turns.map(turn => ({ runId: turn.id, trace: turn.search_trace, complete: turn.status === 'succeeded' })))} /></>}
+        disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
+        suggestions={<HelpControls disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onChoose={(kind, label) => void send(label, key.current, false, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !searchChoice.ready} providerKind={discussion.provider_protocol ?? undefined} /><TaskMaterials kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onPurged={async () => { const current = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === current) { setDiscussion(next); await sharedState.reload(); } }} candidates={webMaterialCandidates(discussion.turns.map(turn => ({ runId: turn.id, trace: turn.search_trace, complete: turn.status === 'succeeded' })))} /></>}
         actions={running && <button className="button button--danger button--with-icon" type="button" disabled={cancelling} onClick={() => void cancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}
     >

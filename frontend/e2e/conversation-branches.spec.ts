@@ -25,6 +25,7 @@ test('branches an earlier learning answer into an independent conversation with 
   const materialsButton = page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ });
   await materialsButton.click();
   const panel = page.locator('.task-materials-panel');
+  await expect(panel.getByLabel(/上传资料/)).toBeEnabled();
   await panel.getByLabel(/上传资料/).setInputFiles({ name: '分支合成教材.txt', mimeType: 'text/plain', buffer: Buffer.from('合成教材只包含概念甲。') });
   await expect(panel.getByRole('checkbox', { name: '分支合成教材.txt · 文本资料' })).toBeChecked();
   await materialsButton.click();

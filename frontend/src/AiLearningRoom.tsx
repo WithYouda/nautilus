@@ -1,4 +1,5 @@
-import useConversationSearch, { writeConversationSearch } from './useConversationSearch';
+import useConversationState, { isStateConflict, isStateRejected } from './useConversationState';
+import ConversationStateNotice from './ConversationStateNotice';
 import BranchMap from './BranchMap';
 import useReplyHistory from "./useReplyHistory";
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
@@ -12,7 +13,7 @@ import type { SearchTrace } from "./SearchResults";
 import AssistantResponse, { type GenerationTrace } from "./AssistantResponse";
 import HelpControls from "./HelpControls";
 import HelpRecord, { HelpRecordFacts } from "./HelpRecord";
-import TaskMaterials, { MaterialUse, emptySourceScope, readSourceScope, writeSourceScope, webMaterialCandidates } from './TaskMaterials';
+import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
 import {
   ApiError,
   recordLearningRoomEntry,
@@ -328,7 +329,6 @@ export default function AiLearningRoom({
   const branchBusyRef = useRef(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [sourceScope, setSourceScope] = useState<SourceScope>(emptySourceScope);
   const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
@@ -339,22 +339,34 @@ export default function AiLearningRoom({
 
   const currentRun = detail?.active_run ?? null;
   const conversationId = detail?.conversation.id ?? null;
-  const searchChoice = useConversationSearch("conversation", detail?.conversation.identity_id ?? null, conversationId);
+  const sharedState = useConversationState('conversation', detail?.conversation.identity_id ?? null, conversationId, async () => {
+    if (!conversationId) return;
+    const next = await getAiConversation(conversationId);
+    if (conversationIdRef.current === conversationId) setDetail(next);
+  });
+  const sourceScope = sharedState.sourceScope;
+  const setSourceScope = (value: SourceScope) => { void sharedState.save({ source_scope: value }); };
+  const searchChoice = sharedState.search;
   const searchSelection = searchChoice.value;
-  const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id);
+  const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id, { leaf: sharedState.snapshot.leaf_id, paths: sharedState.snapshot.paths, ready: sharedState.ready, select: (leaf_id, paths) => sharedState.save({ leaf_id, paths }) });
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
   useEffect(() => {
     if (!mapLocation || conversationId !== mapLocation.id || !detail?.messages.some(item => item.id === mapLocation.source)) return;
-    if (replyHistory.leaf !== mapLocation.source) { replyHistory.locate(mapLocation.source); return; }
+    if (!sharedState.ready) return;
+    if (replyHistory.leaf !== mapLocation.source) {
+      const source = mapLocation.source; setMapLocation(null);
+      void Promise.resolve(replyHistory.locate(source)).then(saved => { if (saved) requestAnimationFrame(() => document.getElementById(`answer-${source}`)?.scrollIntoView({ block: 'center' })); });
+      return;
+    }
     const frame = requestAnimationFrame(() => {
       document.getElementById(`answer-${mapLocation.source}`)?.scrollIntoView({ block: 'center' });
       setMapLocation(null);
     });
     return () => cancelAnimationFrame(frame);
-  }, [mapLocation, conversationId, detail, replyHistory.leaf]);
+  }, [mapLocation, conversationId, detail, replyHistory.leaf, sharedState.ready]);
 
 
-  useEffect(() => { setEditingMessageId(null); setSourceScope(detail?.conversation ? readSourceScope('conversation', detail.conversation.identity_id, detail.conversation.id) : emptySourceScope()); setMaterialVersions([]); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
+  useEffect(() => { setEditingMessageId(null); setMaterialVersions([]); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
 
   conversationIdRef.current = conversationId;
   currentRunRef.current = currentRun;
@@ -670,6 +682,7 @@ export default function AiLearningRoom({
       setDraftConfig(null);
       saveCurrentSession({ conversationId: created.conversation.id, draftConfig: null });
     }
+    await sharedState.initializeNew(created.conversation.id);
     if (mountedRef.current) {
       setDetail(created);
       conversationContextRef.current = conversationContext(created);
@@ -757,7 +770,7 @@ export default function AiLearningRoom({
 
   async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
     if (!entryReady || !content || branchBusyRef.current || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
-    if (!searchChoice.ready) { setError("正在读取联网设置，请稍后发送。"); return false; }
+    if (sharedState.blocked) { setError("请先确认或修复当前学习状态，再发送消息。"); return false; }
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本，或改为未指定资料。'); return false; }
     const unresolved = pendingSubmissionRef.current;
     if (unresolved && (pendingContentRef.current !== content || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
@@ -795,7 +808,7 @@ export default function AiLearningRoom({
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, source_scope: frozenScope, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}) });
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, source_scope: frozenScope, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}) });
       if (!mountedRef.current) return false;
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
       pendingSubmissionRef.current = null;
@@ -823,21 +836,23 @@ export default function AiLearningRoom({
         title_source: conversation.conversation.title_source === "placeholder" ? "fallback" : conversation.conversation.title_source,
         last_message_at: new Date().toISOString(),
       }, true));
-      if (result.run.response_message_id) replyHistory.select(result.run.response_message_id);
+      await sharedState.reload(false, conversation.conversation.id);
       runIdRef.current = result.run.id;
       persistSession({ conversationId: conversation.conversation.id, runId: result.run.id, initialDraft: null });
       void subscribe(result.run);
       return true;
     } catch (reason: unknown) {
       if (!mountedRef.current) return false;
-      if (reason instanceof ApiError && [400, 422].includes(reason.status ?? 0)) {
+      const stateRejected = isStateRejected(reason);
+      if (stateRejected) await sharedState.reload(isStateConflict(reason));
+      if (stateRejected || (reason instanceof ApiError && [400, 422].includes(reason.status ?? 0))) {
         pendingSubmissionRef.current = null;
         pendingContentRef.current = null;
         persistSession({ pending: undefined });
       }
       if (!preserveDraft) setDraft(content);
       setStatus("failed");
-      setError(reason instanceof Error ? reason.message : "消息发送失败");
+      setError(stateRejected ? "消息未发送，请核对最新状态后重新发送。" : reason instanceof Error ? reason.message : "消息发送失败");
       return false;
     } finally {
       sendingRef.current = false;
@@ -930,6 +945,7 @@ export default function AiLearningRoom({
 
   async function handleBranch(messageId: string) {
     if (!conversationId || !detail || branchBusyRef.current || sendingRef.current || pendingSubmissionRef.current || currentRun || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status)) return;
+    if (sharedState.blocked) return;
     const sourceId = conversationId;
     const key = `${sourceId}:${messageId}`;
     const requestKey = branchKeysRef.current[key] ?? makeClientMessageId();
@@ -939,8 +955,7 @@ export default function AiLearningRoom({
       const created = await branchAiConversation(sourceId, messageId, requestKey);
       if (!mountedRef.current) return;
       const nextId = created.conversation.id;
-      if (created.branch_source_scope) writeSourceScope('conversation', created.conversation.identity_id, nextId, created.branch_source_scope);
-      writeConversationSearch('conversation', created.conversation.identity_id, nextId, searchSelection);
+      await sharedState.initializeNew(nextId, { leaf_id: created.messages.at(-1)?.id ?? null, source_scope: created.branch_source_scope ?? emptySourceScope(), search_override: searchSelection });
       conversationDrafts.current.set(sourceId, draft);
       conversationDrafts.current.set(nextId, draft);
       await activateConversation(nextId);
@@ -1035,7 +1050,7 @@ export default function AiLearningRoom({
   const activeModel = activeProvider?.models?.find((item) => item.id === selectedModelId) ?? activeProvider?.default_model ?? null;
   const selectedConfigValue = selectedProviderId && selectedModelId ? `${selectedProviderId}::${selectedModelId}` : "";
   const conversationTitle = detail?.conversation.title ?? "新的学习对话";
-  const canSend = entryReady && !branchBusy && searchChoice.ready && Boolean(
+  const canSend = entryReady && !branchBusy && !sharedState.blocked && Boolean(
     activeProvider?.has_api_key && activeProvider.enabled && (!selectedModelId || (activeModel?.enabled && activeModel.discovery_status !== "unavailable")),
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
 
@@ -1205,6 +1220,7 @@ export default function AiLearningRoom({
       </div></>}
 
       <div className="ai-chat-with-map">
+      <ConversationStateNotice state={sharedState} onSelectPath={() => { void sharedState.save({ leaf_id: detail?.messages.filter(message => !message.source_scope?.purged).at(-1)?.id ?? null, paths: {} }); }} />
       {conversationId && <BranchMap kind="conversation" id={conversationId} revision={`${detail?.conversation.title}:${detail?.messages.at(-1)?.status}:${detail?.messages.length}`} disabled={branchBusy || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
         onNavigate={async (id, source) => { await handleConversationSwitch(id); if (source) setMapLocation({ id, source }); }}
         onRenamed={async () => { const [next, list] = await Promise.all([getAiConversation(conversationId), listAiConversations()]); if (conversationIdRef.current === conversationId) { setDetail(next); setConversations(list); } }} />}
@@ -1218,8 +1234,8 @@ export default function AiLearningRoom({
           )}
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
-        placeholder={canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} disabled={!canSend || Boolean(editingMessageId) || !searchChoice.ready} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) setDetail(next); } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+        placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
+        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
               const versions = message.role === 'user'

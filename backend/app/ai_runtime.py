@@ -97,6 +97,7 @@ class AiRunManager:
         search: dict | None = None,
         help_request: str | None = None,
         source_scope: dict | None = None,
+        current_state_revision: int | None = None,
     ) -> dict[str, Any]:
         prepared = self.conversations.prepare_run(
             identity_id,
@@ -106,6 +107,7 @@ class AiRunManager:
             search=search,
             help_request=help_request,
             **({"source_scope": source_scope} if source_scope is not None else {}),
+            current_state_revision=current_state_revision,
             **({"regenerate_message_id": regenerate_message_id,
                 "parent_message_id": parent_message_id,
                 "edit_message_id": edit_message_id}

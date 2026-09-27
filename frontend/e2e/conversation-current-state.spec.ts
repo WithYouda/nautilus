@@ -1,0 +1,125 @@
+import { expect, test, type Page } from '@playwright/test';
+import { authorize } from './fact-helpers';
+
+test('migrates with consent and restores ordinary state across independent browsers without stale overwrite', async ({ page, browser }) => {
+  test.setTimeout(90_000);
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await authorize(page);
+  const schema = await (await page.request.get(`http://127.0.0.1:${process.env.NAUTILUS_E2E_BACKEND_PORT ?? '8012'}/openapi.json`)).json();
+  expect(schema.paths['/api/conversation-state/{kind}/{scope_id}']).toBeTruthy();
+  await page.request.put('/api/ai/provider', { data: { display_name: 'Synthetic current state', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL,
+    model: 'mock-success', api_key: 'synthetic-key', enabled: true, request_timeout_seconds: 15 } });
+  const created = await (await page.request.post('/api/ai/conversations', { data: { context_scope: 'independent' } })).json();
+  const id = created.conversation.id as string;
+  const owner = created.conversation.identity_id as string;
+  const url = `/api/conversation-state/conversation/${id}`;
+  const material = await (await page.request.post(`/api/materials/conversation/${id}`, { data: { title: '合成跨端资料', content: '这是隔离测试内容。' } })).json();
+  const scope = { mode: 'only', version_ids: [material.id], conflict_policy: 'materials' };
+  const first = await (await page.request.post(`/api/ai/conversations/${id}/messages`, { data: { content: '合成跨端问题', client_message_id: 'state-seed-1', source_scope: scope } })).json();
+  await expect.poll(async () => (await (await page.request.get(`/api/ai/conversations/${id}`)).json()).active_run).toBeNull();
+  const detail = await (await page.request.get(`/api/ai/conversations/${id}`)).json();
+  const oldAnswer = first.run.response_message_id;
+  const question = detail.messages[0].id;
+  await page.request.post(`/api/ai/conversations/${id}/messages`, { data: { content: '合成跨端问题', client_message_id: 'state-seed-2', regenerate_message_id: oldAnswer, source_scope: scope } });
+  await expect.poll(async () => (await (await page.request.get(`/api/ai/conversations/${id}`)).json()).active_run).toBeNull();
+  await page.evaluate(({ id, owner, oldAnswer, question, scope }) => {
+    localStorage.setItem(`nautilus.reply-selection.v1:${id}`, oldAnswer);
+    localStorage.setItem(`nautilus.reply-selection.v1:${id}:paths`, JSON.stringify({ [question]: oldAnswer, [oldAnswer]: oldAnswer }));
+    localStorage.setItem(`nautilus.material-selection:${owner}:conversation:${id}`, JSON.stringify(scope));
+    localStorage.setItem(`nautilus.search-selection:${owner}:conversation:${id}`, JSON.stringify({ mode: 'off' }));
+  }, { id, owner, oldAnswer, question, scope });
+  await page.reload();
+  await page.getByRole('button', { name: '学习室', exact: true }).click();
+  await expect(page.getByRole('region', { name: '沿用浏览器学习状态' })).toBeVisible();
+  expect((await (await page.request.get(url)).json()).initialized).toBe(false);
+  await page.getByRole('button', { name: '确认沿用这个浏览器的状态' }).click();
+  const composer = page.getByLabel('输入学习问题');
+  await expect(composer).toBeEnabled();
+  let state = await (await page.request.get(url)).json();
+  expect(state).toMatchObject({ initialized: true, leaf_id: oldAnswer, source_scope: scope, search_override: { mode: 'off' } });
+  await expect(page.locator(`#answer-${oldAnswer}`)).toBeVisible();
+
+  const other = await browser.newContext();
+  const phone = await other.newPage();
+  phone.on('pageerror', error => errors.push(error.message));
+  await authorize(phone);
+  await phone.getByRole('button', { name: '学习室', exact: true }).click();
+  await expect(phone.getByLabel('输入学习问题')).toBeEnabled();
+  await expect(phone.locator(`#answer-${oldAnswer}`)).toBeVisible();
+  expect(await phone.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('nautilus.material-selection:')).length)).toBe(0);
+  async function openMaterials(target: Page) {
+    await target.locator('.ai-composer').getByRole('button', { name: /^资料/ }).click();
+    return target.locator('.task-materials-panel');
+  }
+  const a = await openMaterials(page);
+  const b = await openMaterials(phone);
+  await expect(b.getByRole('checkbox', { name: '只依据所选资料（严格范围）' })).toBeChecked();
+  await expect(b.getByLabel('资料冲突时')).toHaveValue('materials');
+  await a.getByLabel('资料冲突时').selectOption('balanced');
+  await expect(a.getByLabel('资料冲突时')).toHaveValue('balanced');
+  await phone.getByLabel('输入学习问题').fill('保留的跨端草稿');
+  await b.getByLabel('资料冲突时').selectOption('ask');
+  await expect(phone.getByText(/另一页面或设备已更新这段对话/)).toBeVisible();
+  await expect(b.getByLabel('资料冲突时')).toHaveValue('balanced');
+  await expect(phone.getByLabel('输入学习问题')).toHaveValue('保留的跨端草稿');
+  expect((await (await page.request.get(url)).json()).source_scope.conflict_policy).toBe('balanced');
+
+  // A newer settings change must reject an old page's send before any message is created.
+  await a.getByLabel('资料冲突时').selectOption('materials');
+  await expect(a.getByLabel('资料冲突时')).toHaveValue('materials');
+  const before = await (await page.request.get(`/api/ai/conversations/${id}`)).json();
+  const rejected = phone.waitForResponse(r => r.url().endsWith(`/conversations/${id}/messages`) && r.request().method() === 'POST');
+  await phone.getByLabel('输入学习问题').press('Enter');
+  expect((await rejected).status()).toBe(409);
+  await expect(phone.getByLabel('输入学习问题')).toHaveValue('保留的跨端草稿');
+  await expect(phone.getByText('消息未发送，请核对最新状态后重新发送。')).toBeVisible();
+  expect((await (await page.request.get(`/api/ai/conversations/${id}`)).json()).messages).toEqual(before.messages);
+  await phone.getByLabel('输入学习问题').press('Enter');
+  await expect.poll(async () => (await (await page.request.get(`/api/ai/conversations/${id}`)).json()).messages.length).toBe(before.messages.length + 2);
+  await expect.poll(async () => (await (await page.request.get(`/api/ai/conversations/${id}`)).json()).active_run).toBeNull();
+  state = await (await page.request.get(url)).json();
+  await page.reload();
+  await expect(page.locator(`#answer-${state.leaf_id}`)).toBeVisible();
+  // Earlier versions still retain their original material policy.
+  const after = await (await page.request.get(`/api/ai/conversations/${id}`)).json();
+  expect(after.messages.find((m: { id: string }) => m.id === oldAnswer).source_scope.conflict_policy).toBe('materials');
+  await phone.setViewportSize({ width: 390, height: 844 });
+  expect(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const materialBox = await b.boundingBox();
+  expect(materialBox!.x).toBeGreaterThanOrEqual(8);
+  expect(materialBox!.x + materialBox!.width).toBeLessThanOrEqual(382);
+  await phone.screenshot({ path: '/tmp/nautilus-current-state-390.png' });
+  // A removed selected source stays invalid until the user explicitly chooses again.
+  const removed = await page.request.post(`/api/materials/conversation/${id}/${material.material_id}/purge`);
+  expect(removed.ok()).toBeTruthy();
+  await phone.reload();
+  await expect(phone.getByText(/保存的学习条件有失效项/)).toBeVisible();
+  const invalid = await (await phone.request.get(url)).json();
+  expect(invalid.source_scope).toMatchObject({ mode: 'only', version_ids: [material.id] });
+  expect(invalid.issues).toContain('material_unavailable');
+  await expect(phone.getByLabel('输入学习问题')).toBeDisabled();
+  const repair = await openMaterials(phone);
+  await repair.getByRole('button', { name: '取消全部资料参考，重新选择' }).click();
+  await expect.poll(async () => (await (await phone.request.get(url)).json()).source_scope.mode).toBe('unspecified');
+  await phone.locator('.ai-composer').getByRole('button', { name: /^资料/ }).click();
+  await phone.getByRole('button', { name: '使用最新可用路径' }).click();
+  await expect(phone.getByLabel('输入学习问题')).toBeEnabled();
+  const searchSettings = await (await phone.request.get('/api/search/settings')).json();
+  const services = [{ id: 'state-search-a', kind: 'bing', name: '合成服务甲', options: {}, secret_updates: {} }, { id: 'state-search-b', kind: 'bing', name: '合成服务乙', options: {}, secret_updates: {} }];
+  expect((await phone.request.put('/api/search/settings', { data: { ...searchSettings, services, selected_service_id: 'state-search-a' } })).ok()).toBeTruthy();
+  const repaired = await (await phone.request.get(url)).json();
+  expect((await phone.request.put(url, { data: { ...repaired, expected_revision: repaired.revision, search_override: { mode: 'external', service_id: 'state-search-a' } } })).ok()).toBeTruthy();
+  await phone.reload();
+  await expect(phone.getByRole('button', { name: '联网搜索：合成服务甲' })).toBeVisible();
+  const revisedSearch = await (await phone.request.get('/api/search/settings')).json();
+  expect((await phone.request.put('/api/search/settings', { data: { ...revisedSearch, services: [services[1]], selected_service_id: 'state-search-b' } })).ok()).toBeTruthy();
+  await phone.reload();
+  await expect(phone.getByText('所选搜索服务或参数已不可用，请重新选择服务或关闭联网。')).toBeVisible();
+  expect((await (await phone.request.get(url)).json()).search_override.service_id).toBe('state-search-a');
+  await phone.getByRole('button', { name: '联网搜索：请选择服务' }).click();
+  await phone.getByRole('button', { name: '关闭 不使用联网搜索', exact: true }).click();
+  await expect(phone.getByLabel('输入学习问题')).toBeEnabled();
+  await other.close();
+  expect(errors).toEqual([]);
+});
