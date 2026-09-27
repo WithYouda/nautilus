@@ -50,7 +50,7 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
         return <button key={plan.id} aria-pressed={selected?.id === plan.id} onClick={() => select(plan.id)}><strong>{plan.title}</strong><span>{planGoal?.title}{planGoal && ` · ${goalStatusLabel(planGoal.status)}`}</span><small>{actions.filter(action => action.status === 'completed').length} / {actions.length} 项任务已完成</small></button>;
       })}</nav>
       {selected ? <section className="learning-plan-detail" aria-label="计划详情">
-        <header><p className="eyebrow">学习目标</p><h2>{goal?.title || selected.title}</h2>{goal && <span className="learning-state-label">{goalStatusLabel(goal.status)}</span>}{goal?.description && <p>{goal.description}</p>}<p className="learning-plan-detail__route">{selected.title}</p>{goal && <button className="text-button" onClick={() => setReviewGoalId(goal.id)}>{closedGoal ? '查看收尾 / 重新开启' : '收尾目标'}</button>}</header>
+        <header><p className="eyebrow">学习目标</p><h2>{goal?.title || selected.title}</h2>{goal && <span className="learning-state-label">{goalStatusLabel(goal.status)}</span>}{goal?.description && <p>{goal.description}</p>}<p className="learning-plan-detail__route">{selected.title}</p>{goal && <button className="text-button" onClick={() => setReviewGoalId(goal.id)}>调整目标状态</button>}</header>
         <div className="learning-plan-detail__heading"><h3>学习任务</h3>{selected.status === 'active' && !closedGoal && <button className="button button--accent" onClick={() => onCreate(selected.id)}>添加下一步</button>}</div>
         {closedGoal && <p>目标{goalStatusLabel(goal!.status)}。已有任务和学习记录仍可查看；重新开启目标后可继续安排学习。</p>}
         {tasks.map((task, index) => {

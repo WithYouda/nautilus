@@ -38,6 +38,8 @@ Development agent delegation (confirmed 2026-09-25; quota controls adopted 2026-
 
 Product design discussion continuity:
 
+- Use plain, familiar language for important user-facing feature names and actions. Describe what the action does; avoid abstract or ceremonial wording such as “正式收尾”. The confirmed goal-management entry is “调整目标状态”, with “已达成”, “暂停目标”, and “停止追踪”; keep labels and explanations consistent.
+
 - Treat `docs/progress/nautilus-product-design-decisions.md` as the persistent record of confirmed product direction, architecture principles, and unresolved design questions.
 - Before advancing a product discussion, check that document and do not present an already confirmed conclusion as a new open question.
 - Whenever a product discussion produces a confirmed material decision, update that document in the same turn, append its update history, and distinguish the confirmed decision from recommendations, open questions, and unimplemented future work.

@@ -20,8 +20,8 @@ test('goal closure checks current tasks, preserves work, and can be reopened', a
   } });
   expect(started.status()).toBe(201);
   await page.getByRole('button', { name: '学习计划', exact: true }).click();
-  await page.getByRole('button', { name: '收尾目标', exact: true }).click();
-  let dialog = page.getByRole('dialog', { name: '正式收尾目标' });
+  await page.getByRole('button', { name: '调整目标状态', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: '调整目标状态' });
   await expect(dialog).toContainText('1 项任务');
   await expect(dialog).toContainText('1 个学习会话正在运行');
   // Another tab adds a task after the review was opened. Confirmation must refresh.
@@ -29,12 +29,12 @@ test('goal closure checks current tasks, preserves work, and can be reopened', a
     ...setup, plan_id: created.plan_id, action_title: '另一处新增的任务', idempotency_key: 'goal-step',
   } })).status()).toBe(201);
   await dialog.getByRole('radio', { name: /由我确认目标已达成/ }).check();
-  await dialog.getByRole('button', { name: '确认收尾', exact: true }).click();
+  await dialog.getByRole('button', { name: '确认修改', exact: true }).click();
   await expect(dialog.getByRole('alert')).toContainText('已变化');
-  await dialog.getByRole('button', { name: '刷新收尾检查' }).click();
+  await dialog.getByRole('button', { name: '刷新目标信息' }).click();
   await expect(dialog).toContainText('2 项任务');
   await dialog.getByRole('radio', { name: /由我确认目标已达成/ }).check();
-  await dialog.getByRole('button', { name: '确认收尾', exact: true }).click();
+  await dialog.getByRole('button', { name: '确认修改', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.locator('.learning-plan-detail')).toContainText('已达成');
   await expect(page.getByRole('button', { name: '添加下一步', exact: true })).toHaveCount(0);
@@ -49,8 +49,8 @@ test('goal closure checks current tasks, preserves work, and can be reopened', a
   await card.getByRole('button', { name: '查看目标' }).click();
 
   async function reopen() {
-    await page.getByRole('button', { name: '查看收尾 / 重新开启' }).click();
-    const review = page.getByRole('dialog', { name: '查看收尾与重新开启' });
+    await page.getByRole('button', { name: '调整目标状态' }).click();
+    const review = page.getByRole('dialog', { name: '调整目标状态' });
     await review.getByRole('radio', { name: /重新开启/ }).check();
     await review.getByRole('button', { name: '确认重新开启' }).click();
     await expect(review).toHaveCount(0);
@@ -59,21 +59,21 @@ test('goal closure checks current tasks, preserves work, and can be reopened', a
   await reopen();
   state = await (await page.request.get('/api/learning/state')).json();
   expect(state.sessions.every((item: {status:string}) => item.status !== 'running')).toBeTruthy();
-  for (const label of ['暂时停止', '放弃跟踪']) {
-    await page.getByRole('button', { name: '收尾目标', exact: true }).click();
-    dialog = page.getByRole('dialog', { name: '正式收尾目标' });
+  for (const label of ['暂停目标', '停止追踪']) {
+    await page.getByRole('button', { name: '调整目标状态', exact: true }).click();
+    dialog = page.getByRole('dialog', { name: '调整目标状态' });
     await dialog.getByRole('radio', { name: new RegExp(label) }).check();
-    await dialog.getByRole('button', { name: '确认收尾', exact: true }).click();
+    await dialog.getByRole('button', { name: '确认修改', exact: true }).click();
     await expect(dialog).toHaveCount(0);
-    if (label === '暂时停止') await reopen();
+    if (label === '暂停目标') await reopen();
   }
-  await page.getByRole('button', { name: '查看收尾 / 重新开启' }).click();
-  const history = page.getByRole('dialog', { name: '查看收尾与重新开启' });
+  await page.getByRole('button', { name: '调整目标状态' }).click();
+  const history = page.getByRole('dialog', { name: '调整目标状态' });
   await history.getByText('查看状态历史', { exact: true }).click();
   await expect(history.locator('ol li')).toHaveCount(5);
-  await expect(history).toContainText('已停止跟踪');
+  await expect(history).toContainText('已停止追踪');
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(history.getByRole('heading', { name: '查看收尾与重新开启' })).toBeInViewport({ ratio: 1 });
+  await expect(history.getByRole('heading', { name: '调整目标状态' })).toBeInViewport({ ratio: 1 });
   const cancel = history.getByRole('button', { name: '取消' });
   await expect(cancel).toBeVisible();
   const rect = await cancel.boundingBox();
