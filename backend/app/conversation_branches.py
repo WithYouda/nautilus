@@ -53,7 +53,9 @@ def create_branch(self, identity_id, conversation_id, message_id, request_key):
             raise ConversationConflict('路径中有正在生成或已清除的内容，无法创建分支')
         ids = {item['id']: str(uuid4()) for item in path}
         conversation = dict(source)
-        conversation.update(id=branch_id, title='分支对话', title_source='manual', title_generation_status='idle',
+        from .branch_maps import compact_title
+        question = next((item['content'] for item in reversed(path) if item['role'] == 'user'), source['title'])
+        conversation.update(id=branch_id, title=compact_title(question), title_source='fallback', title_generation_status='idle',
                             title_revision=0, title_generated_at=None, created_at=now, updated_at=now,
                             last_message_at=now, status='active')
         _insert(c, 'conversation', conversation)

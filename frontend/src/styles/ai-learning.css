@@ -268,3 +268,9 @@
 
 .ai-composer-suggestions { grid-column: 1 / -1; grid-row: 1; min-width: 0; }
 .ai-composer--suggestions textarea, .ai-composer--suggestions .ai-composer-actions { grid-row: 2; }
+
+.ai-chat-with-map { display: flex; gap: 10px; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }
+.ai-chat-with-map > .ai-room-chat { flex: 1; }
+@media (max-width: 760px) {
+  .ai-chat-with-map { flex-direction: column; gap: 4px; }
+}

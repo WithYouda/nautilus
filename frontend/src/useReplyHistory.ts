@@ -68,5 +68,5 @@ export default function useReplyHistory(scope: string, nodes: Node[], activeId?:
     const id = remembered[`group:${groupId}`];
     return id && byId.get(id)?.groupId === groupId ? id : fallback;
   }
-  return { path, leaf, select, switchVersion, preferredVersion, following };
+  return { path, leaf, select, locate: (id: string) => { setFollowing(false); select(id); }, switchVersion, preferredVersion, following };
 }

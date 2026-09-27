@@ -70,7 +70,7 @@ class QuestionDiscussionService:
                 if source is None or source['purged_at']:
                     raise DomainError('artifact_not_eligible', 409)
                 discussion_id = str(uuid4())
-                c.execute('INSERT INTO learning_question_discussion VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)',
+                c.execute('INSERT INTO learning_question_discussion (id,owner_id,verification_id,submission_id,question_id,evaluation_id,request_key,created_at,purged_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)',
                           (discussion_id, owner, verification_id, submission_id, question_id, detail['selected_evaluation_id'], request_key, utc_timestamp()))
         return self.get(identity, discussion_id)
 
@@ -172,7 +172,8 @@ class QuestionDiscussionService:
             (owner, discussion['evaluation_id'])).fetchone() if discussion['evaluation_id'] else None
         evaluation_snapshot = json.loads(evaluation[0] or '{}') if evaluation else {}
         from .discussion_branches import branch_metadata
-        return dict(**branch_metadata(connection, discussion_id), id=discussion_id, identity_id=owner, verification_id=discussion['verification_id'], submission_id=discussion['submission_id'],
+        from .branch_maps import discussion_title
+        return dict(title=discussion_title(connection, discussion), **branch_metadata(connection, discussion_id), id=discussion_id, identity_id=owner, verification_id=discussion['verification_id'], submission_id=discussion['submission_id'],
                     evaluation_id=discussion['evaluation_id'], help_displays={} if discussion['purged_at'] else evaluation_snapshot.get('help_displays') or {},
                     question_id=discussion['question_id'], purged=bool(discussion['purged_at']), source=source, turns=turns, provider_protocol=protocol)
 
@@ -533,6 +534,8 @@ class QuestionDiscussionService:
                 if not self._active(c, discussion_id, turn_id, attempt_id) or any(self._resolve(owner, discussion['delegation_id'], ref) is None for ref in refs):
                     raise DomainError('artifact_not_eligible', 409)
                 c.execute("UPDATE learning_discussion_turn SET assistant_content=?, status='succeeded', finished_at=? WHERE id=? AND status='running'", (reply, utc_timestamp(), turn_id))
+                from .branch_maps import name_new_discussion_turn
+                name_new_discussion_turn(c, discussion_id, turn_id)
         except BaseException as error:
             try:
                 recorder.finish('interrupted' if isinstance(error, asyncio.CancelledError) else 'failed')

@@ -2023,10 +2023,11 @@ export type VerificationReview = {
   evaluations: Array<{ id: string; status: string; reason: string | null; created_at: string; result: (NonNullable<LearningVerification['result']> & { question_feedback?: QuestionFeedback[] }) | null }>;
   selected_evaluation_id: string | null;
   result: (NonNullable<LearningVerification['result']> & { question_feedback?: QuestionFeedback[] }) | null;
-  discussions: Array<{ id: string; question_id: string; submission_id: string; created_at: string; purged_at: string | null }>;
+  discussions: Array<{ title: string; id: string; question_id: string; submission_id: string; created_at: string; purged_at: string | null }>;
   purge_discussion_count: number;
 };
 export type QuestionDiscussion = {
+  title: string;
   id: string; identity_id?: string; verification_id: string; submission_id: string; evaluation_id?: string | null; question_id: string; purged: boolean;
   branch_origin?: { discussion_id: string; turn_id: string } | null;
   branch_source_scope?: SourceScope | null;
@@ -2157,4 +2158,16 @@ export async function streamDiscussionTurn(id: string, turnId: string, onUpdate:
     if (event === 'done') complete = true;
   });
   if (!complete && !signal.aborted) throw new Error('连接已中断，正在恢复回复。');
+}
+
+export type BranchMapNode = {
+  id: string; title: string; parent_id: string | null; source_id: string | null;
+  source_excerpt: string | null; available: boolean; created_at: string;
+};
+export type BranchMapData = { current_id: string; nodes: BranchMapNode[] };
+export function getBranchMap(kind: 'conversation' | 'discussion', id: string): Promise<BranchMapData> {
+  return request(`${kind === 'conversation' ? '/api/ai/conversations' : '/api/learning/discussions'}/${id}/branch-map`);
+}
+export function renameBranchNode(kind: 'conversation' | 'discussion', id: string, title: string): Promise<unknown> {
+  return request(`${kind === 'conversation' ? '/api/ai/conversations' : '/api/learning/discussions'}/${id}${kind === 'discussion' ? '/title' : ''}`, { method: 'PATCH', body: JSON.stringify({ title }) });
 }

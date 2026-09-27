@@ -21,8 +21,8 @@ export function LearningChatPanel({ title, children, notice, composer, messagesR
   </section>;
 }
 
-export function LearningMessage({ role, status, state, children }: { role: 'user' | 'assistant'; status?: string; state?: string; children: ReactNode }) {
-  return <article className={`ai-message ai-message--${role}${state ? ` ai-message--${state}` : ''}`}>
+export function LearningMessage({ id, role, status, state, children }: { id?: string; role: 'user' | 'assistant'; status?: string; state?: string; children: ReactNode }) {
+  return <article id={id} className={`ai-message ai-message--${role}${state ? ` ai-message--${state}` : ''}`}>
     <div className="ai-message-meta">{role === 'user' ? <UserRound size={14} /> : <Bot size={14} />}<span>{role === 'user' ? '我' : 'AI 学习伙伴'}</span>{status && <small>{status}</small>}</div>
     {children}
   </article>;

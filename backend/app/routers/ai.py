@@ -605,3 +605,12 @@ def branch_conversation(conversation_id: str, payload: ConversationBranchRequest
                              payload.message_id, payload.request_key)
     except ConversationError as error:
         _raise(error)
+
+
+@router.get('/conversations/{conversation_id}/branch-map')
+def get_conversation_branch_map(conversation_id: str, request: Request, identity=Depends(current_identity)):
+    from ..branch_maps import conversation_map
+    try:
+        return conversation_map(conversation_service(request), identity['id'], conversation_id)
+    except ConversationError as error:
+        _raise(error)

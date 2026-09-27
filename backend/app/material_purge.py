@@ -65,6 +65,9 @@ def erase_learning(c, owner, material_id, now, source_message_ids=(), source_tur
         row = c.execute('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (turn_id,)).fetchone()
         if row is None:
             continue  # Older snapshots can predate the source turn while retaining a descendant.
+        from .purge_content import _update
+        _update(c, 'learning_question_discussion', dict(title=None, title_source='source'),
+                'owner_id=? AND id=(SELECT discussion_id FROM learning_discussion_turn WHERE id=?)', (owner, turn_id))
         c.execute('''UPDATE learning_discussion_turn SET user_content=NULL,assistant_content=NULL,reasoning_content=NULL,
             sources_json='[]',provider_snapshot_json=?,status='purged',reason='content_purged',finished_at=?
             WHERE id=?''', (_marker(row[0], [material_id]), now, turn_id))

@@ -1129,3 +1129,27 @@ def branch_discussion(discussion_id: str, payload: DiscussionBranchRequest, requ
                              payload.turn_id, payload.request_key)
     except DomainError as error:
         _raise_learning_error(error)
+
+
+@router.get('/discussions/{discussion_id}/branch-map')
+def get_discussion_branch_map(discussion_id: str, request: Request, identity=Depends(current_identity)):
+    from ..branch_maps import discussion_map
+    try:
+        return discussion_map(request.app.state.discussions, identity, discussion_id)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+class DiscussionTitleRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    title: str = Field(min_length=1)
+
+
+@router.patch('/discussions/{discussion_id}/title')
+def update_discussion_title(discussion_id: str, payload: DiscussionTitleRequest, request: Request,
+                            identity=Depends(current_identity)):
+    from ..branch_maps import rename_discussion
+    try:
+        return rename_discussion(request.app.state.discussions, identity, discussion_id, payload.title)
+    except DomainError as error:
+        _raise_learning_error(error)

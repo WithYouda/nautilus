@@ -58,6 +58,9 @@ def create_branch(self, identity, discussion_id, turn_id, request_key):
             (id,owner_id,verification_id,submission_id,question_id,evaluation_id,request_key,created_at,purged_at)
             VALUES (?,?,?,?,?,?,?,?,NULL)''', (bid, owner, source['verification_id'], source['submission_id'],
             source['question_id'], source['evaluation_id'], 'branch:' + bid, utc_timestamp()))
+        from .branch_maps import compact_title
+        c.execute('UPDATE learning_question_discussion SET branch_parent_id=?,branch_turn_id=?,title=? WHERE id=?',
+                  (discussion_id, turn_id, compact_title(path[-1]['user_content']), bid))
         c.execute('INSERT INTO learning_discussion_dependency VALUES (?,?)', (bid, discussion_id))
         for turn in path:
             row = c.execute('SELECT * FROM learning_discussion_turn WHERE id=?', (turn['id'],)).fetchone()

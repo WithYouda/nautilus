@@ -1433,7 +1433,8 @@ class ConversationService:
             """,
             (identity_id,),
         )
-        return [dict(row) for row in rows]
+        from .branch_maps import conversation_title
+        return [{**dict(row), "title": conversation_title(self.database.connection, dict(row))} for row in rows]
 
     def list_messages(self, identity_id: str, conversation_id: str) -> list[dict[str, Any]]:
         self.owned_conversation(identity_id, conversation_id)
@@ -1506,6 +1507,8 @@ class ConversationService:
 
     def conversation_detail(self, identity_id: str, conversation_id: str) -> dict[str, Any]:
         conversation = self.owned_conversation(identity_id, conversation_id)
+        from .branch_maps import conversation_title
+        conversation["title"] = conversation_title(self.database.connection, conversation)
         context: dict[str, Any] | None = None
         try:
             context = self.context_for_conversation(identity_id, conversation_id)
@@ -1923,6 +1926,9 @@ class ConversationService:
                 "UPDATE conversation SET last_message_at = ?, updated_at = ? WHERE id = ?",
                 (now, now, row["conversation_id"]),
             )
+            if status == "succeeded":
+                from .branch_maps import name_new_conversation_turn
+                name_new_conversation_turn(connection, run_id)
             return status
 
     # ==================================================================

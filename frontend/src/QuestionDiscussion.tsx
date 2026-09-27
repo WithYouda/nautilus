@@ -1,4 +1,5 @@
 import useConversationSearch, { writeConversationSearch } from './useConversationSearch';
+import BranchMap from './BranchMap';
 import useReplyHistory from './useReplyHistory';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Bot, Square } from 'lucide-react';
@@ -15,6 +16,7 @@ import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussi
 
 const requestId = (): string => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: string; onBack: () => void; onNavigate: (id: string) => void }) {
+  const [mapLocation, setMapLocation] = useState<{ id: string; source: string } | null>(null);
   const [discussion, setDiscussion] = useState<Discussion | null>(null);
   const [content, setContent] = useState('');
   const searchChoice = useConversationSearch('discussion', discussion?.identity_id ?? null, id);
@@ -46,8 +48,30 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   }, [id]);
   const runningTurn = discussion?.turns.find(turn => turn.status === 'running');
   const running = Boolean(runningTurn);
+  const previousRun = useRef<string | null>(null);
+  useEffect(() => {
+    const completed = previousRun.current && !runningTurn;
+    previousRun.current = runningTurn?.id ?? null;
+    if (!completed) return;
+    let active = true;
+    getQuestionDiscussion(id).then(next => {
+      if (active) setDiscussion(previous => previous?.id === id ? { ...previous, title: next.title } : previous);
+    }).catch(() => { /* The saved title will also be read when reopening. */ });
+    return () => { active = false; };
+  }, [id, runningTurn?.id]);
+
   const replyHistory = useReplyHistory(`discussion:${id}`, (discussion?.turns ?? []).map(turn => ({id:turn.id, parentId:turn.parent_turn_id, groupId:turn.question_id})), runningTurn?.id);
   const visibleTurns = replyHistory.path.map(turnId => discussion!.turns.find(turn => turn.id === turnId)!);
+  useEffect(() => {
+    if (!mapLocation || discussion?.id !== mapLocation.id || !discussion.turns.some(turn => turn.id === mapLocation.source)) return;
+    if (replyHistory.leaf !== mapLocation.source) { replyHistory.locate(mapLocation.source); return; }
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`turn-${mapLocation.source}`)?.scrollIntoView({ block: 'center' });
+      setMapLocation(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [mapLocation, discussion, replyHistory.leaf]);
+
 
   useEffect(() => {
     if (!runningTurn) return;
@@ -163,7 +187,11 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
       </div>
       <span className="question-discussion-context">题目讨论</span>
     </header>
-    <LearningChatPanel title="讨论这道题" autoFollow={!editingTurnId && (replyHistory.following || busy) && Boolean(discussion?.turns.length || pending)} followToken={`${id}:${(discussion?.turns.length ?? 0) + (pending ? 1 : 0)}`}
+    <div className="ai-chat-with-map">
+    <BranchMap kind="discussion" id={id} revision={`${discussion?.title}:${discussion?.turns.at(-1)?.status}:${discussion?.turns.length}`} disabled={!discussion || discussion.id !== id || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
+      onNavigate={(nextId, source) => { drafts.current.set(id, content); if (source) setMapLocation({ id: nextId, source }); onNavigate(nextId); }}
+      onRenamed={async () => { const version = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === version) setDiscussion(next); }} />
+    <LearningChatPanel title={discussion?.title ?? "讨论这道题"} autoFollow={!editingTurnId && (replyHistory.following || busy) && Boolean(discussion?.turns.length || pending)} followToken={`${id}:${(discussion?.turns.length ?? 0) + (pending ? 1 : 0)}`}
       notice={<>{searchChoice.error && <p role="status">{searchChoice.error}</p>}{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
       composer={discussion && !discussion.purged && <LearningComposer
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
@@ -198,7 +226,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         {visibleTurns.map(turn => {
           const questionVersions = [...new Map(discussion.turns.filter(item => (item.question_version_id ?? item.question_id) === (turn.question_version_id ?? turn.question_id)).map(item => [item.question_id, item])).values()];
           const questionIndex = questionVersions.findIndex(item => item.question_id === turn.question_id);
-          return <div key={turn.id} className="discussion-turn">
+          return <div key={turn.id} className="discussion-turn" id={`turn-${turn.id}`}>
           {turn.status === 'purged' ? <p>这轮讨论内容已删除。</p> : <>
             <LearningUserMessage content={turn.user_content ?? ''} maxLength={12000}
               editing={editingTurnId === turn.id} editDisabled={busy || branchBusy || running || Boolean(pending) || (Boolean(editingTurnId) && editingTurnId !== turn.id)} sendDisabled={busy || branchBusy || running || Boolean(pending)}
@@ -233,5 +261,6 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         </>}
       </>}
     </LearningChatPanel>
+    </div>
   </section>;
 }

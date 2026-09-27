@@ -296,7 +296,10 @@ def _backup_restores_verification_content(current, backup):
         private_content = 'user_content IS NOT NULL OR assistant_content IS NOT NULL'
         if 'reasoning_content' in turn_columns:
             private_content += ' OR reasoning_content IS NOT NULL'
+        discussion_columns = {row[1] for row in backup.execute('PRAGMA table_info(learning_question_discussion)')}
         for row in current.execute("SELECT id FROM learning_question_discussion WHERE purged_at IS NOT NULL"):
+            if 'title' in discussion_columns and backup.execute('SELECT 1 FROM learning_question_discussion WHERE id=? AND title IS NOT NULL', (row[0],)).fetchone():
+                return True
             saved = backup.execute("SELECT purged_at FROM learning_question_discussion WHERE id=?", (row[0],)).fetchone()
             if saved and (saved[0] is None or backup.execute(f"SELECT 1 FROM learning_discussion_turn WHERE discussion_id=? AND ({private_content})", (row[0],)).fetchone()):
                 return True
@@ -499,6 +502,7 @@ def _check_purge_receipts(target_path, candidate_path):
                 'learning_verification': ['challenge_json', 'answer_key_json', 'submission_json', 'result_json', 'contract_snapshot_json'],
                 'learning_verification_submission': ['content_json'],
                 'learning_verification_evaluation': ['result_json', 'provider_snapshot_json'],
+                'learning_question_discussion': ['title'],
                 'learning_discussion_turn': ['user_content', 'assistant_content', 'reasoning_content', 'sources_json', 'provider_snapshot_json'],
                 'learning_evidence_event': ['payload_json'],
                 'learning_evidence_private_content': ['content_json'],

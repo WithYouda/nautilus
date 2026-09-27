@@ -201,7 +201,7 @@ def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifac
             break
         discussions = expanded
     for discussion in discussions:
-        _update(connection, 'learning_question_discussion', dict(purged_at=now), 'owner_id=? AND id=?', (owner, discussion))
+        _update(connection, 'learning_question_discussion', dict(purged_at=now, title=None, title_source='source'), 'owner_id=? AND id=?', (owner, discussion))
         _update(connection, 'learning_discussion_turn', dict(user_content=None, assistant_content=None, reasoning_content=None,
             sources_json='[]', provider_snapshot_json='{}', status='purged', reason='content_purged', finished_at=now),
             'discussion_id=?', (discussion,))

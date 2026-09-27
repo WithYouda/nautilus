@@ -1,4 +1,5 @@
 import useConversationSearch, { writeConversationSearch } from './useConversationSearch';
+import BranchMap from './BranchMap';
 import useReplyHistory from "./useReplyHistory";
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
@@ -321,6 +322,8 @@ export default function AiLearningRoom({
   const pendingContentRef = useRef<string | null>(null);
   const initialDraftSentRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
+  const conversationDrafts = useRef(new Map<string, string>());
+  const [mapLocation, setMapLocation] = useState<{ id: string; source: string } | null>(null);
   const branchKeysRef = useRef<Record<string, string>>({});
   const branchBusyRef = useRef(false);
   const [branchBusy, setBranchBusy] = useState(false);
@@ -340,6 +343,16 @@ export default function AiLearningRoom({
   const searchSelection = searchChoice.value;
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id);
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
+  useEffect(() => {
+    if (!mapLocation || conversationId !== mapLocation.id || !detail?.messages.some(item => item.id === mapLocation.source)) return;
+    if (replyHistory.leaf !== mapLocation.source) { replyHistory.locate(mapLocation.source); return; }
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`answer-${mapLocation.source}`)?.scrollIntoView({ block: 'center' });
+      setMapLocation(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [mapLocation, conversationId, detail, replyHistory.leaf]);
+
 
   useEffect(() => { setEditingMessageId(null); setSourceScope(detail?.conversation ? readSourceScope('conversation', detail.conversation.identity_id, detail.conversation.id) : emptySourceScope()); setMaterialVersions([]); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
 
@@ -903,10 +916,11 @@ export default function AiLearningRoom({
     pendingContentRef.current = null;
     setOpenLayer(null);
     setError("");
-    setDraft("");
+    if (conversationId) conversationDrafts.current.set(conversationId, draft);
     setStatus("loading");
     try {
       await activateConversation(id);
+      setDraft(conversationDrafts.current.get(id) ?? "");
     } catch (reason: unknown) {
       if (!mountedRef.current) return;
       setStatus("failed");
@@ -927,6 +941,8 @@ export default function AiLearningRoom({
       const nextId = created.conversation.id;
       if (created.branch_source_scope) writeSourceScope('conversation', created.conversation.identity_id, nextId, created.branch_source_scope);
       writeConversationSearch('conversation', created.conversation.identity_id, nextId, searchSelection);
+      conversationDrafts.current.set(sourceId, draft);
+      conversationDrafts.current.set(nextId, draft);
       await activateConversation(nextId);
       delete branchKeysRef.current[key];
     } catch (reason) {
@@ -1188,6 +1204,10 @@ export default function AiLearningRoom({
         {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}
       </div></>}
 
+      <div className="ai-chat-with-map">
+      {conversationId && <BranchMap kind="conversation" id={conversationId} revision={`${detail?.conversation.title}:${detail?.messages.at(-1)?.status}:${detail?.messages.length}`} disabled={branchBusy || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
+        onNavigate={async (id, source) => { await handleConversationSwitch(id); if (source) setMapLocation({ id, source }); }}
+        onRenamed={async () => { const [next, list] = await Promise.all([getAiConversation(conversationId), listAiConversations()]); if (conversationIdRef.current === conversationId) { setDetail(next); setConversations(list); } }} />}
       <LearningChatPanel title={conversationTitle} autoFollow={!editingMessageId && (replyHistory.following || status === "submitting")} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
           {detail?.branch_origin && <p className="ai-branch-origin">从另一对话分出 · <button className="text-button" type="button" disabled={branchBusy} onClick={() => void handleConversationSwitch(detail.branch_origin!.conversation_id)}>返回原对话</button></p>}
           {searchChoice.error && <p role="status">{searchChoice.error}</p>}
@@ -1251,6 +1271,7 @@ export default function AiLearningRoom({
               </div>
             )}
       </LearningChatPanel>
+      </div>
       {helpHistoryOpen && <ConversationHelpDialog key={conversationId ?? 'new'} messages={detail?.messages ?? []} title={conversationTitle} failedDisplays={failedHelpDisplays} triggerRef={helpHistoryTriggerRef} onRetryDisplay={async message => {
         const characters = failedHelpDisplays[message.id];
         if (!characters || message.conversation_id !== conversationIdRef.current) return;
@@ -1437,7 +1458,7 @@ function MessageBubble({ message, automatic = false, onRetry, retryDisabled, onB
     editing={editing} editDisabled={editDisabled} sendDisabled={sendDisabled}
     onStartEdit={onStartEdit} onCancelEdit={onCancelEdit} onSendEdit={onSendEdit} />;
   return (
-    <LearningMessage role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
+    <LearningMessage id={`answer-${message.id}`} role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
       {message.inherited_from && <small className="ai-inherited-answer">继承的历史回答</small>}
       <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
       <MaterialUse scope={message.source_scope} versions={materialVersions} />

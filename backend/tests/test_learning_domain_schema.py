@@ -88,6 +88,8 @@ def test_independent_schema_and_reopen_are_stable(tmp_path):
                 "030_learning_completion",
                 "031_targeted_practice",
                 "032_delayed_follow_up",
+                "033_task_materials",
+                "034_discussion_branch_map",
             ]
             assert database.fetchone("PRAGMA integrity_check")[0] == "ok"
             assert database.fetchall("PRAGMA foreign_key_check") == []
@@ -166,6 +168,8 @@ def test_learning_database_upgrades_from_016_with_existing_rows(tmp_path):
             "030_learning_completion",
             "031_targeted_practice",
             "032_delayed_follow_up",
+            "033_task_materials",
+            "034_discussion_branch_map",
         ]
         assert database.fetchone(
             "SELECT display_name FROM local_identity WHERE id='upgrade-owner'"

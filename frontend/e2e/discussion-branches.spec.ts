@@ -3,8 +3,11 @@ import { authorize } from './fact-helpers';
 
 test('branches an earlier question answer while preserving the verification and both discussions', async ({ page }) => {
   test.setTimeout(90_000);
+  const pageErrors: string[] = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
   const routes = await (await page.request.get(`http://127.0.0.1:${process.env.NAUTILUS_E2E_BACKEND_PORT ?? '8012'}/openapi.json`)).json();
   expect(routes.paths['/api/learning/discussions/{discussion_id}/branches']).toBeTruthy();
+  expect(routes.paths['/api/learning/discussions/{discussion_id}/branch-map']).toBeTruthy();
 
   await authorize(page);
   expect((await page.request.put('/api/ai/provider', { data: {
@@ -89,19 +92,37 @@ test('branches an earlier question answer while preserving the verification and 
   await expect(materials.getByText(/继承（只读）/).first()).toBeVisible();
   await expect(materials.getByRole('button', { name: '编辑为新版本' })).toHaveCount(0);
   await materialsButton.click();
-  await discussion.getByRole('button', { name: '返回原讨论' }).click();
+
+  const map = await (await page.request.get(`/api/learning/discussions/${branchId}/branch-map`)).json();
+  expect(map.current_id).toBe(branchId);
+  expect(map.nodes).toHaveLength(2);
+  expect(map.nodes.find((node: { id: string }) => node.id === branchId)).toMatchObject({ parent_id: sourceId, source_id: firstTurnId, available: true });
+  expect(map.nodes.find((node: { id: string }) => node.id === sourceId)).toMatchObject({ parent_id: null, available: true });
+  await expect(discussion.locator('.branch-map-tree-item')).toHaveCount(2);
+  await discussion.getByRole('button', { name: '放大分支图' }).click();
+  const branchMap = page.getByRole('dialog', { name: '分支图' });
+  await expect(branchMap.locator('.branch-map-node')).toHaveCount(2);
+  await branchMap.screenshot({ path: '/tmp/nautilus-discussion-branch-map-desktop.png' });
+  await branchMap.getByRole('button', { name: '编辑标题' }).click();
+  const branchTitle = '合成边界问题的独立讨论';
+  await branchMap.getByLabel('修改标题').fill(branchTitle);
+  await branchMap.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(branchMap.locator('.branch-map-detail-title')).toHaveText(branchTitle);
+  expect((await (await page.request.get(`/api/learning/discussions/${branchId}/branch-map`)).json()).nodes.find((node: { id: string }) => node.id === branchId).title).toBe(branchTitle);
+  await branchMap.getByRole('button', { name: '查看分出位置' }).click();
+  await expect(branchMap).toBeHidden();
   expect(new URL(page.url()).searchParams.get('discussion')).toBe(sourceId);
   await expect(input).toHaveValue('合成未发送草稿');
-  await expect(discussion.locator('.discussion-turn')).toHaveCount(2);
+  await expect(discussion.locator(`#turn-${firstTurnId}`)).toBeInViewport();
+  await expect(discussion.locator(`#turn-${secondTurnId}`)).toHaveCount(0);
 
   await page.reload();
-  await expect(discussion.locator('.discussion-turn')).toHaveCount(2);
+  await expect(discussion.locator('.discussion-turn')).toHaveCount(1);
   expect(new URL(page.url()).searchParams.get('discussion')).toBe(sourceId);
   await discussion.getByRole('button', { name: '返回验证记录' }).click();
-  await expect(review.getByRole('button', { name: '打开题目讨论 1' })).toBeVisible();
-  await expect(review.getByRole('button', { name: '打开题目讨论 2' })).toBeVisible();
-  // Verification review lists the newest discussion first.
-  await review.getByRole('button', { name: '打开题目讨论 1' }).click();
+  await expect(review.getByRole('button', { name: `打开讨论：${sourceBefore.title}` })).toBeVisible();
+  await expect(review.getByRole('button', { name: `打开讨论：${branchTitle}` })).toBeVisible();
+  await review.getByRole('button', { name: `打开讨论：${branchTitle}` }).click();
   expect(new URL(page.url()).searchParams.get('discussion')).toBe(branchId);
   await expect(discussion.getByText('从另一段题目讨论分出')).toBeVisible();
   await expect(discussion.locator('.discussion-turn')).toHaveCount(1);
@@ -110,7 +131,12 @@ test('branches an earlier question answer while preserving the verification and 
   expect((await (await page.request.get(`/api/learning/discussions/${sourceId}`)).json()).turns).toHaveLength(2);
   expect((await (await page.request.get(`/api/learning/verifications/${verificationId}`)).json()).discussions.map((item: { id: string }) => item.id)).toContain(branchId);
   await page.setViewportSize({ width: 390, height: 844 });
+  await discussion.getByRole('button', { name: '分支图', exact: true }).click();
+  const mobileMap = page.getByRole('dialog', { name: '分支图' });
+  await expect(mobileMap.locator('.branch-map-node')).toHaveCount(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await mobileMap.screenshot({ path: '/tmp/nautilus-discussion-branch-map-390.png' });
+  await page.getByRole('button', { name: '关闭分支图' }).click();
   await discussion.locator('.ai-message-list').evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: '/tmp/nautilus-discussion-branch-mobile.png' });
   await discussion.getByRole('button', { name: '返回验证记录' }).click();
@@ -124,5 +150,6 @@ test('branches an earlier question answer while preserving the verification and 
     expect(erased.source).toBeNull();
     expect(erased.turns.every((turn: {user_content:string|null;assistant_content:string|null}) => !turn.user_content && !turn.assistant_content)).toBe(true);
   }
+  expect(pageErrors).toEqual([]);
 
 });

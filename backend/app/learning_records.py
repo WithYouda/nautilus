@@ -43,7 +43,12 @@ class LearningRecords:
         if evaluation_id and chosen is None:
             raise DomainError('not_found', 404)
         discussions = [dict(r) for r in connection.execute(
-            'SELECT id, question_id, submission_id, created_at, purged_at FROM learning_question_discussion WHERE owner_id=? AND verification_id=? ORDER BY rowid DESC', (owner, verification_id))]
+            'SELECT id, owner_id, verification_id, title, question_id, submission_id, created_at, purged_at FROM learning_question_discussion WHERE owner_id=? AND verification_id=? ORDER BY rowid DESC', (owner, verification_id))]
+        from .branch_maps import discussion_title
+        for discussion in discussions:
+            discussion['title'] = discussion_title(connection, discussion)
+            discussion.pop('owner_id')
+            discussion.pop('verification_id')
         return dict(verification=public, submissions=submissions, selected_submission_id=selected_id,
                     content=content, evaluations=evaluations, selected_evaluation_id=chosen['id'] if chosen else None,
                     result=chosen['result'] if chosen else None, discussions=discussions,
