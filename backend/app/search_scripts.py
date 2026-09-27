@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from datetime import datetime, timezone
+import hashlib
 import ipaddress
 import json
 import os
 from pathlib import Path
 import sys
 from urllib.parse import urlsplit
+
+import httpx
 
 from .search_adapters import SearchError
 
@@ -103,7 +107,7 @@ def _normalize_scrape(result):
     return {"urls": urls, "retrieved_at": _stamp()}
 
 
-async def execute_script(options: dict, params: dict, common: dict, fetch: bool = False) -> dict:
+async def execute_script(options: dict, params: dict, common: dict, fetch: bool = False, *, before_request=None) -> dict:
     """Execute search(query,maxResults) or scrape(urls) in a killable QuickJS worker."""
     if not isinstance(options, dict) or not isinstance(params, dict) or not isinstance(common, dict):
         raise SearchError("自定义脚本配置格式不正确", "invalid_config")
@@ -125,19 +129,44 @@ async def execute_script(options: dict, params: dict, common: dict, fetch: bool 
         if not isinstance(argument, str) or not argument.strip() or len(argument) > 8000:
             raise SearchError("请填写搜索词", "invalid_query")
     payload = json.dumps({"script": script, "argument": argument, "mode": mode,
-                          "result_size": size, "timeout": timeout, "max_requests": max_requests}, ensure_ascii=False).encode()
+                          "result_size": size, "timeout": timeout, "max_requests": max_requests,
+                          "approval_bridge": before_request is not None}, ensure_ascii=False).encode()
     if len(payload) > 300_000:
         raise SearchError("自定义脚本输入超过大小限制", "invalid_config")
     process = None
+    approval_error = None
     try:
         process = await asyncio.create_subprocess_exec(sys.executable, "-I", str(WORKER),
                                                        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                                                       stderr=asyncio.subprocess.DEVNULL, limit=1_100_000,
+                                                       stderr=asyncio.subprocess.DEVNULL, limit=1_600_000,
                                                        env={"LANG": "C.UTF-8", "PATH": os.defpath})
-        stdout, _ = await asyncio.wait_for(process.communicate(payload), timeout=timeout + 1)
-        if process.returncode != 0 or len(stdout) > 1_000_000:
+        process.stdin.write(payload + b"\n")
+        await process.stdin.drain()
+        while True:
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=timeout + 1)
+            if not line:
+                raise SearchError("自定义脚本执行失败，请检查脚本和服务配置", "script_failed")
+            if len(line) > 1_600_000:
+                raise SearchError("自定义脚本执行失败，请检查脚本和服务配置", "script_failed")
+            response = json.loads(line)
+            if response.get("type") != "request":
+                break
+            if before_request is None:
+                raise SearchError("自定义脚本请求格式不正确", "script_failed")
+            outbound = httpx.Request(response["method"], response["url"], headers=response["headers"],
+                                     content=base64.b64decode(response["body"], validate=True),
+                                     extensions={"sni_hostname": response["sni_hostname"]})
+            try:
+                await before_request(outbound)
+            except Exception as error:
+                approval_error = error
+                raise
+            digest = hashlib.sha256(line.rstrip(b"\n")).hexdigest()
+            process.stdin.write(json.dumps({"allow": digest}).encode() + b"\n")
+            await process.stdin.drain()
+        await asyncio.wait_for(process.wait(), timeout=1)
+        if process.returncode != 0 or len(line) > 1_000_000:
             raise SearchError("自定义脚本执行失败，请检查脚本和服务配置", "script_failed")
-        response = json.loads(stdout)
         if not isinstance(response, dict) or response.get("ok") is not True:
             raise SearchError("自定义脚本执行失败，请检查脚本和服务配置", "script_failed")
         return _normalize_scrape(response.get("result")) if fetch else _normalize_search(response.get("result"), size)
@@ -146,6 +175,8 @@ async def execute_script(options: dict, params: dict, common: dict, fetch: bool 
     except SearchError:
         raise
     except Exception:
+        if approval_error is not None:
+            raise approval_error
         raise SearchError("自定义脚本执行失败，请检查脚本和服务配置", "script_failed") from None
     finally:
         if process is not None and process.returncode is None:

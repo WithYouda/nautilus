@@ -310,6 +310,7 @@ class ConversationUpdateRequest(BaseModel):
 
 
 class MessageSendRequest(BaseModel):
+    public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
     search: dict[str, Any] | None = None
@@ -634,6 +635,7 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 
 class QuestionDiscussionMessageRequest(BaseModel):
+    public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
     search: dict[str, Any] | None = None

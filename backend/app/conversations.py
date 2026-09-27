@@ -1600,6 +1600,7 @@ class ConversationService:
         parent_message_id: str | None = None,
         edit_message_id: str | None = None,
         search: dict | None = None,
+        public_search_query: str | None = None,
         help_request: str | None = None,
         source_scope: dict | None = None,
         current_state_revision: int | None = None,
@@ -1750,6 +1751,11 @@ class ConversationService:
                                  if item['status'] == 'complete' and item['content']][-HISTORY_LIMIT:]
                 history = [self._history_message(connection, item, bool(search_run and search_run.selection['mode'] == 'external'))
                            for item in history_items]
+                if search_run and search_run.selection['mode'] == 'native':
+                    from .outbound import native_public_only, NATIVE_PRIVATE_MESSAGE
+                    if (context or material_bound or not native_public_only(
+                            [*history, {'role': 'user', 'content': text}], public_search_query)):
+                        raise ConversationError(NATIVE_PRIVATE_MESSAGE)
                 config_snapshot['source_history_message_ids'] = [item['id'] for item in history_items]
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.

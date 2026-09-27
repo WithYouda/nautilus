@@ -76,7 +76,9 @@ router = APIRouter(prefix="/api/learning", dependencies=[Depends(_private_respon
 
 
 def _raise_learning_error(error: DomainError) -> None:
+    from ..outbound import NATIVE_PRIVATE_MESSAGE
     messages = {
+        "native_private_search": NATIVE_PRIVATE_MESSAGE,
         "goal_not_active": "这个目标已收尾或暂停，请先在学习计划中重新开启目标。",
         "goal_review_changed": "目标下的任务或会话已变化，请刷新收尾信息后重新确认。",
         "goal_invalid_transition": "目标状态已变化，请刷新后选择可用操作。",

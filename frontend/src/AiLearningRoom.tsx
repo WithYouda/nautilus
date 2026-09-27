@@ -9,6 +9,7 @@ import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, typ
 import { ArrowLeft, Bot, Check, CircleAlert, History, ListChecks, MapPin, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
 import LearningMarkdown from "./LearningMarkdown";
 import SearchControls, { type SearchSelection } from "./SearchControls";
+import OutboundApproval from './OutboundApproval';
 import type { SearchTrace } from "./SearchResults";
 import AssistantResponse, { type GenerationTrace } from "./AssistantResponse";
 import HelpControls from "./HelpControls";
@@ -72,6 +73,7 @@ type PendingSubmission = {
   conversationId: string | null;
   clientMessageId: string;
   search?: SearchSelection;
+  publicQuery?: string;
   sourceScope?: SourceScope;
   helpRequest?: HelpRequestKind | null;
   regenerateMessageId?: string;
@@ -156,7 +158,13 @@ function isContextScope(value: unknown): value is AiContextScope {
 function writeSession(session: RoomSession | null) {
   try {
     if (!session) window.sessionStorage.removeItem(SESSION_KEY);
-    else window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      ...session,
+      pending: session.pending ? {
+        ...session.pending,
+        publicQuery: undefined,
+      } : undefined,
+    }));
   } catch {
     // Storage may be unavailable in private browsing; in-memory state still works.
   }
@@ -282,6 +290,7 @@ export default function AiLearningRoom({
   const helpHistoryTriggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { setCompletionOpen(false); }, [learningBrief?.delegation_id]);
   const [draft, setDraft] = useState("");
+  const [publicQuery, setPublicQuery] = useState('');
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [conversations, setConversations] = useState<AiConversation[]>([]);
@@ -324,6 +333,7 @@ export default function AiLearningRoom({
   const initialDraftSentRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const conversationDrafts = useRef(new Map<string, string>());
+  const previousConversationId = useRef<string | null>(null);
   const [mapLocation, setMapLocation] = useState<{ id: string; source: string } | null>(null);
   const branchKeysRef = useRef<Record<string, string>>({});
   const branchBusyRef = useRef(false);
@@ -366,7 +376,11 @@ export default function AiLearningRoom({
   }, [mapLocation, conversationId, detail, replyHistory.leaf, sharedState.ready]);
 
 
-  useEffect(() => { setEditingMessageId(null); setMaterialVersions([]); setHelpHistoryOpen(false); setFailedHelpDisplays({}); }, [conversationId]);
+  useEffect(() => {
+    if (previousConversationId.current && previousConversationId.current !== conversationId) setPublicQuery('');
+    previousConversationId.current = conversationId;
+    setEditingMessageId(null); setMaterialVersions([]); setHelpHistoryOpen(false); setFailedHelpDisplays({});
+  }, [conversationId]);
 
   conversationIdRef.current = conversationId;
   currentRunRef.current = currentRun;
@@ -773,6 +787,7 @@ export default function AiLearningRoom({
     if (sharedState.blocked) { setError("请先确认或修复当前学习状态，再发送消息。"); return false; }
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本，或改为未指定资料。'); return false; }
     const unresolved = pendingSubmissionRef.current;
+
     if (unresolved && (pendingContentRef.current !== content || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
       setError("上次发送结果尚未确认。请先用原问题重试，或重新打开对话核对已保存的消息。");
       return false;
@@ -801,15 +816,17 @@ export default function AiLearningRoom({
       const clientMessageId = canReusePending ? savedPending!.clientMessageId : `${automatic ? LEARNING_PROMPT_ID_PREFIX : ""}${makeClientMessageId()}`;
       const parentMessageId = canReusePending ? savedPending!.parentMessageId : (!regenerateMessageId && !editMessageId ? replyHistory.leaf ?? undefined : undefined);
       const frozenSearch = canReusePending ? savedPending!.search ?? { mode: "off" as const } : automatic ? { mode: "off" as const } : structuredClone(searchSelection);
+      const frozenPublicQuery = canReusePending ? savedPending!.publicQuery ?? publicQuery.trim() : !automatic && !regenerateMessageId && !editMessageId && frozenSearch.mode === 'external' ? publicQuery.trim() : '';
       const frozenHelp = canReusePending ? savedPending!.helpRequest ?? null : requestedHelp !== undefined ? requestedHelp : regenerateMessageId ? detail?.messages.find(message => message.id === regenerateMessageId)?.help_record?.request?.kind ?? null : null;
       const frozenScope = canReusePending ? savedPending!.sourceScope ?? emptySourceScope() : sourceScope;
-      const pending: PendingSubmission = { search: frozenSearch, sourceScope: frozenScope, helpRequest: frozenHelp, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
+      const pending: PendingSubmission = { search: frozenSearch, publicQuery: frozenPublicQuery, sourceScope: frozenScope, helpRequest: frozenHelp, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, source_scope: frozenScope, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}) });
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, source_scope: frozenScope, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (!mountedRef.current) return false;
+      if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
       pendingSubmissionRef.current = null;
       pendingContentRef.current = null;
@@ -838,7 +855,7 @@ export default function AiLearningRoom({
       }, true));
       await sharedState.reload(false, conversation.conversation.id);
       runIdRef.current = result.run.id;
-      persistSession({ conversationId: conversation.conversation.id, runId: result.run.id, initialDraft: null });
+      persistSession({ conversationId: conversation.conversation.id, runId: result.run.id, initialDraft: null, pending: undefined });
       void subscribe(result.run);
       return true;
     } catch (reason: unknown) {
@@ -914,6 +931,7 @@ export default function AiLearningRoom({
     setTitleBusy(false);
     setError("");
     setDraft("");
+    setPublicQuery('');
     setStatus("idle");
     persistSession({ conversationId: null, runId: null, draftConfig: null });
   }
@@ -931,6 +949,7 @@ export default function AiLearningRoom({
     pendingContentRef.current = null;
     setOpenLayer(null);
     setError("");
+    setPublicQuery('');
     if (conversationId) conversationDrafts.current.set(conversationId, draft);
     setStatus("loading");
     try {
@@ -1225,6 +1244,7 @@ export default function AiLearningRoom({
         onNavigate={async (id, source) => { await handleConversationSwitch(id); if (source) setMapLocation({ id, source }); }}
         onRenamed={async () => { const [next, list] = await Promise.all([getAiConversation(conversationId), listAiConversations()]); if (conversationIdRef.current === conversationId) { setDetail(next); setConversations(list); } }} />}
       <LearningChatPanel title={conversationTitle} autoFollow={!editingMessageId && (replyHistory.following || status === "submitting")} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
+          <OutboundApproval kind="conversation" scopeId={conversationId} active={Boolean(currentRun)} />
           {detail?.branch_origin && <p className="ai-branch-origin">从另一对话分出 · <button className="text-button" type="button" disabled={branchBusy} onClick={() => void handleConversationSwitch(detail.branch_origin!.conversation_id)}>返回原对话</button></p>}
           {searchChoice.error && <p role="status">{searchChoice.error}</p>}
           {error && <div className="ai-room-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div>}
@@ -1235,7 +1255,7 @@ export default function AiLearningRoom({
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+        disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
               const versions = message.role === 'user'

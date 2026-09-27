@@ -14,6 +14,7 @@ from .conversations import ConversationError, ConversationService
 from .providers import ProviderChunk, ProviderConfig, ProviderError, build_provider
 from .search_runtime import external_stream, apply_native_event
 from .generation_trace import GenerationRecorder, interrupt_trace
+from .outbound import OutboundApprovals, RunOutbound, ProviderLease
 
 logger = logging.getLogger("nautilus.ai")
 
@@ -82,6 +83,7 @@ class AiRunManager:
         self._runs: "OrderedDict[str, RunState]" = OrderedDict()
         self._provider_slots = asyncio.Semaphore(MAX_CONCURRENT_PROVIDER_RUNS)
         self._title_tasks: set[asyncio.Task] = set()
+        self.outbound = getattr(conversations, "outbound", None) or OutboundApprovals()
 
     # ------------------------------------------------------------------
     async def start(
@@ -95,6 +97,7 @@ class AiRunManager:
         parent_message_id: str | None = None,
         edit_message_id: str | None = None,
         search: dict | None = None,
+        public_search_query: str | None = None,
         help_request: str | None = None,
         source_scope: dict | None = None,
         current_state_revision: int | None = None,
@@ -105,6 +108,7 @@ class AiRunManager:
             content=content,
             client_message_id=client_message_id,
             search=search,
+            public_search_query=public_search_query,
             help_request=help_request,
             **({"source_scope": source_scope} if source_scope is not None else {}),
             current_state_revision=current_state_revision,
@@ -139,7 +143,7 @@ class AiRunManager:
             if help_kind in HELP_PROMPTS:
                 messages[0] = {**messages[0], "content": messages[0]["content"] + "\n" + HELP_PROMPTS[help_kind]}
             state.task = asyncio.create_task(
-                self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"))
+                self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"), public_search_query)
             )
         except Exception as error:
             self._finish(
@@ -166,12 +170,13 @@ class AiRunManager:
         messages: list[dict[str, str]],
         config: ProviderConfig,
         search_run=None,
+        public_search_query=None,
     ) -> None:
         stream: AsyncIterator[ProviderChunk] | None = None
         try:
             search_enabled = search_run is not None and search_run.selection["mode"] == "native"
             provider = build_provider(replace(config, web_search=search_enabled), transport=self.transport)
-            async with self._provider_slots:
+            async with ProviderLease(self._provider_slots) as lease:
                 if not self.conversations.mark_run_running(state.run_id):
                     run = self.conversations.owned_run(state.identity_id, state.run_id)
                     state.status = run["status"]
@@ -180,10 +185,20 @@ class AiRunManager:
                     return
                 state.status = "running"
                 state.recorder = GenerationRecorder(lambda trace: self._publish_generation(state, trace))
-                async with asyncio.timeout(float(config.timeout_seconds)):
+                async with asyncio.timeout(float(config.timeout_seconds)) as deadline:
+                    def active():
+                        if state.finished or state.cancel_requested:
+                            return False
+                        row = self.conversations.database.fetchone(
+                            "SELECT r.status,c.deleted_at FROM ai_run r JOIN conversation c ON c.id=r.conversation_id WHERE r.id=?",
+                            (state.run_id,))
+                        return bool(row and row['status'] == 'running' and row['deleted_at'] is None)
+                    outbound = RunOutbound(self.outbound, owner=state.identity_id, kind='conversation',
+                        scope_id=state.conversation_id, run_id=state.run_id, active=active,
+                        public_query=public_search_query, timeout=deadline, lease=lease)
                     if search_run is not None and search_run.selection["mode"] == "external":
                         stream = external_stream(self.conversations.search_service, search_run, messages, provider,
-                            lambda trace: self._publish_search(state, trace))
+                            lambda trace: self._publish_search(state, trace), outbound=outbound)
                     else:
                         stream = provider.stream_chat(messages)
                     async for chunk in stream:

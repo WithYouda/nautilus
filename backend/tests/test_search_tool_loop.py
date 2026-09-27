@@ -1,5 +1,6 @@
 """The external-search path follows actual provider tool calls."""
 import json
+import time
 
 import httpx
 
@@ -25,6 +26,20 @@ def _run(client, conversation, key, *, search=None, content="Question"):
     selected = search or {"mode": "external", "service_id": "tavily-test"}
     sent = send(client, conversation, key, selected, content=content)
     assert sent.status_code == 202, sent.text
+    # These protocol tests explicitly approve their synthetic tool payloads;
+    # private/unknown withholding and public grants are tested separately.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        items = client.get('/api/outbound/requests', params={'kind': 'conversation', 'scope_id': conversation}).json()['items']
+        for item in items:
+            approved = client.post(f"/api/outbound/requests/{item['id']}/decision",
+                                   json={'digest': item['digest'], 'decision': 'approve'})
+            assert approved.status_code == 200, approved.text
+        if client.get(f'/api/ai/conversations/{conversation}').json()['active_run'] is None:
+            break
+        time.sleep(.005)
+    else:
+        raise AssertionError('Synthetic tool run did not finish')
     events = read_sse(client, sent.json()["run"]["id"])
     assert events[-1][0] == "done", events
     return events[-1][1]

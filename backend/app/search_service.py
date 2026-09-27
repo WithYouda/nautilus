@@ -239,14 +239,14 @@ class SearchService:
         for key, value in values.items():
             check(properties[key], value)
 
-    async def invoke(self, run: SearchRun, params: dict, *, fetch=False):
+    async def invoke(self, run: SearchRun, params: dict, *, fetch=False, before_request=None):
         if run.service is None or run.selection["mode"] != "external":
             raise SearchError("尚未选择外部搜索服务", "service_unavailable")
         if run.service["kind"] == "custom_js":
             from .search_scripts import execute_script
-            return await execute_script(run.service["options"], params, run.common, fetch=fetch)
+            return await execute_script(run.service["options"], params, run.common, fetch=fetch, **({"before_request": before_request} if before_request else {}))
         method = scrape if fetch else search
-        return await method(run.service["kind"], params, run.common, run.service["options"], transport=self.transport)
+        return await method(run.service["kind"], params, run.common, run.service["options"], transport=self.transport, **({"before_request": before_request} if before_request else {}))
 
     async def test(self, owner, payload, *, fetch=False):
         with self._lock:

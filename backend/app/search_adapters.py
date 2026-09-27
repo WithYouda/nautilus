@@ -108,11 +108,20 @@ def _configured_endpoint(value, default):
     return _url(value or default, endpoint=True)
 
 
-async def _request(method, url, *, common, transport=None, headers=None, body=None, params=None):
+async def _request(method, url, *, common, transport=None, headers=None, body=None, params=None, before_request=None):
     timeout = _timeout(common)
+    approval_error = None
     try:
         async with httpx.AsyncClient(transport=transport, timeout=timeout, follow_redirects=False, trust_env=False) as client:
-            async with client.stream(method, url, headers=headers, json=body, params=params) as response:
+            request = client.build_request(method, url, headers=headers, json=body, params=params)
+            if before_request is not None:
+                try:
+                    await before_request(request)
+                except Exception as error:
+                    approval_error = error
+                    raise
+            response = await client.send(request, stream=True)
+            try:
                 if response.status_code < 200 or response.status_code >= 300:
                     raise SearchError("搜索服务请求失败。", "service_failure")
                 content = bytearray()
@@ -121,13 +130,17 @@ async def _request(method, url, *, common, transport=None, headers=None, body=No
                     if len(content) > MAX_RESPONSE_BYTES:
                         raise SearchError("搜索服务返回的数据超过大小限制。", "response_too_large")
                 return bytes(content)
+            finally:
+                await response.aclose()
     except SearchError:
         raise
     except (httpx.HTTPError, ValueError, UnicodeError):
+        if approval_error is not None:
+            raise approval_error
         raise SearchError("无法连接搜索服务。", "service_failure") from None
 
 
-async def _bing_request(query, *, common, transport=None, headers=None):
+async def _bing_request(query, *, common, transport=None, headers=None, before_request=None):
     """Bing's public page may redirect; keyed service requests must not follow it.
 
     Keep cookies within this one request chain, and allow only known Bing HTTPS
@@ -137,13 +150,22 @@ async def _bing_request(query, *, common, transport=None, headers=None):
     allowed_hosts = {"www.bing.com", "cn.bing.com", "bing.com"}
     headers = dict(headers or {})
     headers.pop("Cookie", None)
+    approval_error = None
     try:
         async with asyncio.timeout(timeout):
             async with httpx.AsyncClient(transport=transport, timeout=timeout, follow_redirects=False, trust_env=False) as client:
                 client.cookies.set("SRCHHPGUSR", "ULSR=1", domain=".bing.com", path="/")
                 target = httpx.URL("https://www.bing.com/search", params={"q": query})
                 for redirect_count in range(4):
-                    async with client.stream("GET", target, headers=headers) as response:
+                    request = client.build_request("GET", target, headers=headers)
+                    if before_request is not None:
+                        try:
+                            await before_request(request)
+                        except Exception as error:
+                            approval_error = error
+                            raise
+                    response = await client.send(request, stream=True)
+                    try:
                         if response.status_code in {301, 302, 303, 307, 308}:
                             if redirect_count == 3:
                                 raise SearchError("Bing 搜索重定向次数过多。", "redirect_limit")
@@ -171,18 +193,26 @@ async def _bing_request(query, *, common, transport=None, headers=None):
                             if len(content) > MAX_RESPONSE_BYTES:
                                 raise SearchError("搜索服务返回的数据超过大小限制。", "response_too_large")
                         return bytes(content)
+                    finally:
+                        await response.aclose()
     except SearchError:
         raise
     except (TimeoutError, httpx.TimeoutException):
+        if approval_error is not None:
+            raise approval_error
         raise SearchError("Bing 搜索请求超时，请稍后重试。", "timeout") from None
     except httpx.ConnectError:
+        if approval_error is not None:
+            raise approval_error
         raise SearchError("无法建立到 Bing 的连接，请检查服务端网络。", "connection_failure") from None
     except (httpx.HTTPError, ValueError, UnicodeError):
+        if approval_error is not None:
+            raise approval_error
         raise SearchError("Bing 搜索响应传输失败。", "service_failure") from None
 
 
-async def _json(method, url, *, common, transport=None, headers=None, body=None, params=None):
-    raw = await _request(method, url, common=common, transport=transport, headers=headers, body=body, params=params)
+async def _json(method, url, *, common, transport=None, headers=None, body=None, params=None, before_request=None):
+    raw = await _request(method, url, common=common, transport=transport, headers=headers, body=body, params=params, before_request=before_request)
     try:
         parsed = json.loads(raw)
     except (ValueError, UnicodeError):
@@ -330,7 +360,7 @@ def _bing_language(options):
     return language if language.lower() == primary.lower() else f"{language},{primary};q=0.9"
 
 
-async def search(kind: str, params: dict, common: dict, options: dict, *, transport: httpx.AsyncBaseTransport | None = None) -> dict:
+async def search(kind: str, params: dict, common: dict, options: dict, *, transport: httpx.AsyncBaseTransport | None = None, before_request=None) -> dict:
     if kind not in KINDS:
         raise SearchError("不支持该搜索服务。", "unknown_service")
     if kind == "custom_js":
@@ -356,7 +386,7 @@ async def search(kind: str, params: dict, common: dict, options: dict, *, transp
         }
         if language:
             bing_headers["Accept-Language"] = language
-        raw = await _bing_request(query, common=common, transport=transport, headers=bing_headers)
+        raw = await _bing_request(query, common=common, transport=transport, headers=bing_headers, before_request=before_request)
         parser = _BingParser()
         parser.feed(raw.decode("utf-8", "replace"))
         for item in parser.items:
@@ -472,7 +502,7 @@ async def search(kind: str, params: dict, common: dict, options: dict, *, transp
             url = "https://google.serper.dev/search"
             body = {"q": query, "num": size}
             headers = _headers(key, header="X-API-KEY", bearer=False)
-    data = await _json(method, url, common=common, transport=transport, headers=headers, body=body if method == "POST" else None, params=request_params)
+    data = await _json(method, url, common=common, transport=transport, headers=headers, body=body if method == "POST" else None, params=request_params, before_request=before_request)
     try:
         return _parse_search(kind, data, size, options)
     except SearchError:
@@ -589,7 +619,7 @@ def _parse_search(kind, data, size, options):
     return _result(_items(values, size=size, **mapping), answer, images)
 
 
-async def scrape(kind: str, params: dict, common: dict, options: dict, *, transport: httpx.AsyncBaseTransport | None = None) -> dict:
+async def scrape(kind: str, params: dict, common: dict, options: dict, *, transport: httpx.AsyncBaseTransport | None = None, before_request=None) -> dict:
     if kind not in KINDS:
         raise SearchError("不支持该搜索服务。", "unknown_service")
     if kind == "custom_js":
@@ -600,7 +630,9 @@ async def scrape(kind: str, params: dict, common: dict, options: dict, *, transp
     _size(common)
     if not isinstance(params, dict):
         raise SearchError("请填写网页地址。", "invalid_url")
-    page = await _public_page(params.get("url"), resolve=transport is None)
+    # Parsing is local; resolving a hostname before approval would itself
+    # disclose a private URL to DNS. Resolve only after the request is approved.
+    page = await _public_page(params.get("url"), resolve=False)
     key = _key(options)
     headers = _headers(key)
     body = {}
@@ -629,7 +661,13 @@ async def scrape(kind: str, params: dict, common: dict, options: dict, *, transp
         endpoint = "https://api.fetch.tinyfish.ai"
         body = {"urls": [page], "format": "markdown"}
         headers = _headers(key, header="X-API-Key", bearer=False)
-    data = await _json("POST", endpoint, common=common, transport=transport, headers=headers, body=body)
+    async def before_scrape_request(request):
+        if before_request is not None:
+            await before_request(request)
+        if transport is None:
+            await _public_page(page, resolve=True)
+
+    data = await _json("POST", endpoint, common=common, transport=transport, headers=headers, body=body, before_request=before_scrape_request)
     try:
         return _parse_scrape(kind, data, page)
     except SearchError:

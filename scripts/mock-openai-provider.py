@@ -75,6 +75,10 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self.path.startswith('/search?'):
+            STATE.requested('outbound-search')
+            self._json(200, {'results': [{'title': '合成公开来源', 'url': 'https://example.com/outbound-proof', 'content': '合成检索响应，仅用于隔离验证。'}]})
+            return
         if self.path == "/health":
             self._json(200, {"status": "ok"})
             return

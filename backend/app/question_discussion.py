@@ -13,6 +13,7 @@ from .verification import _clean_json
 from .search_adapters import SearchError
 from .search_runtime import external_stream, apply_native_event
 from .generation_trace import GenerationRecorder, interrupt_trace
+from .outbound import OutboundApprovals, RunOutbound, OutboundCanceled
 from .help_records import HELP_PROMPTS, public_help, record_display
 from .source_runtime import material_guard, scope_key, public_scope, compatible_scope
 
@@ -27,6 +28,7 @@ class QuestionDiscussionService:
         self.tasks = {}
         self.recorders = {}
         self.current_state = None
+        self.outbound = getattr(self.chats, "outbound", None) or OutboundApprovals()
 
     def recover(self):
         with self.db.transaction(immediate=True) as c:
@@ -220,7 +222,7 @@ class QuestionDiscussionService:
     @material_guard
     def start(self, identity, discussion_id, content, request_key, retry=False,
               regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None, help_request=None, source_scope=None,
-              current_state_revision=None):
+              current_state_revision=None, public_search_query=None):
         if retry:
             raise DomainError('discussion_regeneration_required', 422)
         if edit_turn_id and (regenerate_turn_id or parent_turn_id):
@@ -231,6 +233,9 @@ class QuestionDiscussionService:
         discussion = self._owned(owner, discussion_id)
         existing_turn = self.db.fetchone('SELECT id FROM learning_discussion_turn WHERE discussion_id=? AND request_key=?',
                                          (discussion_id, request_key))
+        if not existing_turn and (search or {}).get('mode') == 'native':
+            # Every question discussion includes the private submission/feedback.
+            raise DomainError('native_private_search', 400)
         if not existing_turn and self.current_state is not None:
             self.current_state.check_send(owner, 'discussion', discussion_id, current_state_revision,
                                           source_scope, search, parent_turn_id,
@@ -326,7 +331,7 @@ class QuestionDiscussionService:
             except (SearchError, ConversationError, DomainError) as error:
                 preparation_error = error
             task = asyncio.create_task(self._generate(identity, discussion, source, content, turn_id, attempt_id,
-                                                      search_run, prepared_runtime, preparation_error, frozen))
+                                                      search_run, prepared_runtime, preparation_error, frozen, public_search_query))
             self.tasks[turn_id] = task
             def finished(done):
                 if self.tasks.get(turn_id) is done:
@@ -427,7 +432,7 @@ class QuestionDiscussionService:
         return row is not None
 
     async def _generate(self, identity, discussion, source, content, turn_id, attempt_id,
-                        search_run=None, prepared_runtime=None, preparation_error=None, frozen=None):
+                        search_run=None, prepared_runtime=None, preparation_error=None, frozen=None, public_search_query=None):
         owner, discussion_id = discussion['owner_id'], discussion['id']
         trace = search_run.initial_trace() if search_run else {'mode': 'off', 'status': 'off', 'items': []}
         if preparation_error:
@@ -462,7 +467,7 @@ class QuestionDiscussionService:
             native = search_run is not None and search_run.selection['mode'] == 'native'
             provider = build_provider(replace(config, web_search=native), transport=self.verification.transport)
             publish_search(trace)
-            async with asyncio.timeout(config.timeout_seconds):
+            async with asyncio.timeout(config.timeout_seconds) as deadline:
                 selection = {'history_query': None}
                 if not frozen or frozen['mode'] == 'unspecified':
                     plan = await provider.generate_text([
@@ -505,7 +510,13 @@ class QuestionDiscussionService:
                 if help_kind in HELP_PROMPTS:
                     messages[0] = {**messages[0], 'content': messages[0]['content'] + '\n' + HELP_PROMPTS[help_kind]}
                 if search_run is not None and search_run.selection['mode'] == 'external':
-                    stream = external_stream(self.chats.search_service, search_run, messages, provider, publish_search)
+                    def active():
+                        with self.db.transaction() as c:
+                            return (self._active(c, discussion_id, turn_id, attempt_id)
+                                    and all(self._resolve(owner, discussion['delegation_id'], ref) is not None for ref in refs))
+                    outbound = RunOutbound(self.outbound, owner=owner, kind='discussion', scope_id=discussion_id,
+                        run_id=attempt_id, active=active, public_query=public_search_query, timeout=deadline)
+                    stream = external_stream(self.chats.search_service, search_run, messages, provider, publish_search, outbound=outbound)
                 else:
                     stream = provider.stream_chat(messages)
                 reply = ''
@@ -548,7 +559,7 @@ class QuestionDiscussionService:
                 name_new_discussion_turn(c, discussion_id, turn_id)
         except BaseException as error:
             try:
-                recorder.finish('interrupted' if isinstance(error, asyncio.CancelledError) else 'failed')
+                recorder.finish('canceled' if isinstance(error, OutboundCanceled) else 'interrupted' if isinstance(error, asyncio.CancelledError) else 'failed')
             except DomainError:
                 pass  # Cancellation/purge has already sealed or removed the snapshot.
             with self.db.transaction(immediate=True) as c:
@@ -558,7 +569,7 @@ class QuestionDiscussionService:
                               (json.dumps({'search_trace': trace}), turn_id))
                 if isinstance(error, DomainError) and error.code == 'artifact_not_eligible':
                     c.execute("UPDATE learning_discussion_turn SET assistant_content=NULL, reasoning_content=NULL, sources_json='[]', provider_snapshot_json=json_remove(provider_snapshot_json,'$.generation_trace','$.model_turn','$.search_trace') WHERE id=? AND status='running' AND json_extract(provider_snapshot_json,'$.attempt_id')=?", (turn_id, attempt_id))
-                c.execute("UPDATE learning_discussion_turn SET status='failed', reason=?, finished_at=? WHERE id=? AND status='running' AND json_extract(provider_snapshot_json,'$.attempt_id')=?", ('interrupted' if isinstance(error, asyncio.CancelledError) else 'generation_failed', utc_timestamp(), turn_id, attempt_id))
+                c.execute("UPDATE learning_discussion_turn SET status='failed', reason=?, finished_at=? WHERE id=? AND status='running' AND json_extract(provider_snapshot_json,'$.attempt_id')=?", ('cancelled' if isinstance(error, OutboundCanceled) else 'interrupted' if isinstance(error, asyncio.CancelledError) else 'generation_failed', utc_timestamp(), turn_id, attempt_id))
             if isinstance(error, asyncio.CancelledError):
                 raise
             if not isinstance(error, Exception):

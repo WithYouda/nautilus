@@ -960,12 +960,34 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
-  versions: { current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {},
+  versions: { current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
     body: JSON.stringify({ content, client_message_id: clientMessageId, ...versions }),
   });
+}
+
+export type OutboundRequest = {
+  id: string;
+  digest: string;
+  run_id: string;
+  call_id: string;
+  service_name: string;
+  reason: string;
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+};
+
+export function getOutboundRequests(kind: 'conversation' | 'discussion', scopeId: string): Promise<{ items: OutboundRequest[] }> {
+  const query = new URLSearchParams({ kind, scope_id: scopeId });
+  return request(`/api/outbound/requests?${query}`, { cache: 'no-store' });
+}
+
+export function decideOutboundRequest(id: string, digest: string, decision: 'approve' | 'deny' | 'cancel'): Promise<{ status: string }> {
+  return request(`/api/outbound/requests/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ digest, decision }) });
 }
 
 export function recordAiHelpDisplay(conversationId: string, messageId: string, characters: number): Promise<HelpRecord> {
@@ -2076,7 +2098,7 @@ export function getQuestionDiscussion(id: string): Promise<QuestionDiscussion> {
 export function branchQuestionDiscussion(id: string, turnId: string, requestKey: string): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/branches`, { method: 'POST', body: JSON.stringify({ turn_id: turnId, request_key: requestKey }) });
 }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {}): Promise<QuestionDiscussion> {
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; source_scope?: SourceScope } = {}): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
 }
 export function recordDiscussionHelpDisplay(discussionId: string, turnId: string, characters: number): Promise<HelpRecord> {

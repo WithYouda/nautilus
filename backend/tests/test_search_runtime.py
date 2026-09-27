@@ -84,7 +84,7 @@ def test_off_external_sources_replay_versions_and_conflict(tmp_path):
         assert messages[1]["search_trace"]["status"] == "off"
 
         selected = {"mode": "external", "service_id": "tavily-test", "query": "focused"}
-        first = send(client, conversation, "external", selected)
+        first = send(client, conversation, "external", selected, public_search_query="focused")
         assert first.status_code == 202, first.text
         first_id = first.json()["run"]["id"]
         events = read_sse(client, first_id)
@@ -125,7 +125,8 @@ def test_search_failure_still_answers_with_failed_trace(tmp_path):
         configure_provider(client)
         save_tavily(client)
         conversation = start_conversation(client, create_task(client))
-        result = send(client, conversation, "failure", {"mode": "external", "service_id": "tavily-test"})
+        result = send(client, conversation, "failure", {"mode": "external", "service_id": "tavily-test"},
+                      public_search_query="focused")
         assert result.status_code == 202, result.text
         events = read_sse(client, result.json()["run"]["id"])
         assert events[-1][0] == "done" and events[-1][1]["content"] == "Answer"
@@ -166,22 +167,23 @@ def test_native_responses_requires_real_tool_event_and_citation(tmp_path, with_m
         authorize(client)
         provider = client.put("/api/ai/provider", json={"display_name": "Responses", "api_protocol": "openai_responses", "base_url": "https://api.example.com/v1", "model": "gpt-test", "api_key": "fake-key"})
         assert provider.status_code == 200, provider.text
-        conversation = start_conversation(client, create_task(client))
+        conversation = start_conversation(client, create_task(client) if with_material else None)
         extra = {}
         if with_material:
             material = client.post(f'/api/materials/conversation/{conversation}', json={
                 'title': '教材', 'content': 'NATIVE-MATERIAL-TEXT'}).json()
             extra['source_scope'] = {'mode': 'reference', 'version_ids': [material['id']]}
-        sent = send(client, conversation, "native", {"mode": "native"}, **extra)
+        sent = send(client, conversation, "native", {"mode": "native"}, public_search_query="Question", **extra)
+        if with_material:
+            assert sent.status_code == 400, sent.text
+            assert not invoked
+            return
         assert sent.status_code == 202, sent.text
         events = read_sse(client, sent.json()["run"]["id"])
         trace = events[-1][1]["search_trace"]
         assert trace["status"] == "succeeded" and trace["items"][0]["url"] == SEARCH_URL
         assert events[-1][1]["content"] == "Grounded answer"
-        if with_material:
-            assert 'NATIVE-MATERIAL-TEXT' in json.dumps(invoked)
-        else:
-            assert any(call.get("stream") is False and "tools" not in call for call in invoked)
+        assert any(call.get("stream") is False and "tools" not in call for call in invoked)
 
 
 def test_native_without_tool_is_not_used(tmp_path):
@@ -199,8 +201,8 @@ def test_native_without_tool_is_not_used(tmp_path):
         authorize(client)
         provider = client.put("/api/ai/provider", json={"display_name": "Responses", "api_protocol": "openai_responses", "base_url": "https://api.example.com/v1", "model": "gpt-test", "api_key": "fake-key"})
         assert provider.status_code == 200
-        conversation = start_conversation(client, create_task(client))
-        sent = send(client, conversation, "native-unused", {"mode": "native"})
+        conversation = start_conversation(client, None)
+        sent = send(client, conversation, "native-unused", {"mode": "native"}, public_search_query="Question")
         assert sent.status_code == 202
         events = read_sse(client, sent.json()["run"]["id"])
         assert events[-1][1]["search_trace"]["status"] == "not_used"
@@ -280,7 +282,8 @@ def test_external_selection_is_frozen_while_settings_are_removed(tmp_path):
 
         async def scenario():
             started = await manager.start(owner, conversation, content="Question", client_message_id="frozen",
-                                          search={"mode": "external", "service_id": "tavily-test"})
+                                          search={"mode": "external", "service_id": "tavily-test"},
+                                          public_search_query="Question")
             await asyncio.wait_for(entered.wait(), 2)
             settings = client.app.state.search.get(owner)
             client.app.state.search.save(owner, {"revision": settings["revision"], "services": [],
@@ -327,7 +330,8 @@ def test_cancel_during_search_does_not_accept_late_trace(tmp_path):
 
         async def scenario():
             started = await manager.start(owner, conversation, content="Question", client_message_id="cancel",
-                                          search={"mode": "external", "service_id": "tavily-test"})
+                                          search={"mode": "external", "service_id": "tavily-test"},
+                                          public_search_query="Question")
             await asyncio.wait_for(entered.wait(), 2)
             await manager.cancel(owner, started["run"]["id"])
             release.set()
@@ -366,7 +370,7 @@ async def test_discussion_purge_while_search_waits_cannot_resurrect_trace(learni
 
         _validate_parameters = staticmethod(SearchService._validate_parameters)
 
-        async def invoke(self, run, params, *, fetch=False):
+        async def invoke(self, run, params, *, fetch=False, before_request=None):
             assert params["query"] == private
             entered.set()
             await release.wait()
@@ -419,7 +423,7 @@ async def test_discussion_keeps_completed_search_if_answer_stream_fails(learning
 
         _validate_parameters = staticmethod(SearchService._validate_parameters)
 
-        async def invoke(self, run, params, *, fetch=False):
+        async def invoke(self, run, params, *, fetch=False, before_request=None):
             return {"answer": None, "items": [{"title": "Source", "url": SEARCH_URL, "text": "Verified evidence"}],
                     "images": [], "retrieved_at": "2026-09-26T00:00:00Z"}
 
@@ -470,7 +474,7 @@ async def test_discussion_cancel_while_search_waits_finalizes_trace(learning_dat
 
         _validate_parameters = staticmethod(SearchService._validate_parameters)
 
-        async def invoke(self, run, params, *, fetch=False):
+        async def invoke(self, run, params, *, fetch=False, before_request=None):
             entered.set()
             await release.wait()
             return {"answer": None, "items": [{"title": "Late", "url": SEARCH_URL, "text": "late private"}],

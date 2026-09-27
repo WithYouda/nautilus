@@ -151,7 +151,7 @@ def test_material_network_is_independent_and_conflict_defaults_freeze(tmp_path, 
         def send(key, selected, network):
             response = client.post(f'/api/ai/conversations/{cid}/messages', json={
                 'content': '解释教材与公开资料', 'client_message_id': key,
-                'source_scope': selected, 'search': network})
+                'source_scope': selected, 'search': network, 'public_search_query': 'focused'})
             assert response.status_code == 202, response.text
             read_sse(client, response.json()['run']['id'])
             return response
@@ -234,7 +234,7 @@ async def test_discussion_materials_allow_external_tools(learning_database, tmp_
     material = service.chats.materials.create(IDENTITY, 'discussion', current['id'], title='教材', content='PRIVATE-DISCUSSION')
     result = await service.send(IDENTITY, current['id'], '比较依据', 'one',
         source_scope={'mode': 'reference', 'version_ids': [material['id']], 'conflict_policy': 'materials'},
-        search={'mode': 'external', 'service_id': 'tavily-test'})
+        search={'mode': 'external', 'service_id': 'tavily-test'}, public_search_query='focused')
     turn = result['turns'][-1]
     assert turn['status'] == 'succeeded'
     assert turn['source_scope']['conflict_policy'] == 'materials'

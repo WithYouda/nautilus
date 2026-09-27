@@ -16,6 +16,8 @@ from .config import Settings
 from .conversations import ConversationService
 from .credentials import CredentialStore
 from .search_service import SearchService
+from .outbound import OutboundApprovals
+from .routers import outbound
 from .preferences import PreferencesService
 from .routers import preferences
 from .evidence import EvidenceService, ProviderSemanticAnalyzer
@@ -75,6 +77,8 @@ def create_app(
         credential_store = CredentialStore(app_settings.credentials_dir)
         conversation_service = ConversationService(database, plan_service, credential_store)
         search_service = SearchService(credential_store, transport=provider_transport)
+        outbound_approvals = OutboundApprovals()
+        conversation_service.outbound = outbound_approvals
         conversation_service.search_service = search_service
         preferences_service = PreferencesService(credential_store, search_service)
         material_service = MaterialService(learning_service, conversation_service, preferences_service)
@@ -143,6 +147,7 @@ def create_app(
         app.state.evidence_events = evidence_events
         app.state.credentials = credential_store
         app.state.search = search_service
+        app.state.outbound = outbound_approvals
         app.state.preferences = preferences_service
         app.state.materials = material_service
         app.state.conversations = conversation_service
@@ -154,6 +159,7 @@ def create_app(
         try:
             yield
         finally:
+            outbound_approvals.close()
             await discussion_service.shutdown()
             await ai_run_manager.shutdown()
             learning_service.close()
@@ -185,6 +191,7 @@ def create_app(
     app.include_router(ai.router)
     app.include_router(conversation_state.router)
     app.include_router(search.router)
+    app.include_router(outbound.router)
     app.include_router(materials.router)
     app.include_router(preferences.router)
     return app

@@ -23,7 +23,7 @@ function Parameters({ schema, value, onChange, disabled }: { schema?: SearchPara
   })}</div>;
 }
 export { Parameters as SearchParameters };
-export default function SearchControls({ value, onChange, disabled, providerKind, onOpenSettings, onReset, overridden }: { value: SearchSelection; onChange: (value: SearchSelection) => void; disabled?: boolean; providerKind?: string; onOpenSettings?: () => void; onReset?: () => void; overridden?: boolean }) {
+export default function SearchControls({ value, onChange, disabled, providerKind, onOpenSettings, onReset, overridden, publicQuery = '', onPublicQueryChange }: { value: SearchSelection; onChange: (value: SearchSelection) => void; disabled?: boolean; providerKind?: string; onOpenSettings?: () => void; onReset?: () => void; overridden?: boolean; publicQuery?: string; onPublicQueryChange?: (value: string) => void }) {
   const [services, setServices] = useState<SearchService[]>([]);
   const [catalog, setCatalog] = useState<SearchCatalogItem[]>([]);
   const [defaultId, setDefaultId] = useState<string | null>(null);
@@ -111,6 +111,7 @@ export default function SearchControls({ value, onChange, disabled, providerKind
         <button type="button" className={value.mode === 'external' ? 'is-active' : ''} onClick={() => changeMode('external')}><Globe2 size={17} /><span><strong>外部服务</strong><small>{value.mode === 'external' ? service?.name ?? '请选择服务' : services.find((entry) => entry.id === (lastExternalId.current ?? defaultId))?.name ?? '选择已配置服务'}</small></span>{value.mode === 'external' && <Check size={16} />}</button>
         <button type="button" className={value.mode === 'native' ? 'is-active' : ''} disabled={!nativeAllowed} title={nativeAllowed ? '' : '当前模型提供方未接入内置搜索'} onClick={() => changeMode('native')}><Sparkles size={17} /><span><strong>模型内置</strong><small>{nativeAllowed ? '由当前模型决定是否调用' : '当前模型不可用'}</small></span>{value.mode === 'native' && <Check size={16} />}</button>
       </div>
+      {value.mode === 'external' && onPublicQueryChange && <label className="field search-public-query"><span>公开检索词（可选，仅下一次发送）</span><textarea rows={2} value={publicQuery} disabled={disabled} onChange={event => onPublicQueryChange(event.target.value)} placeholder="输入可公开发送的准确检索词" /><small className="form-hint">这条检索词会发送给所选外部服务，并读取其返回的公开页面。AI 后续提出其他词或参数时，仍会请你确认。</small></label>}
       {(value.mode === 'external' || !services.length) && <div className="search-picker-services"><div className="search-picker-section-title"><strong>搜索服务</strong>{service && <span>当前：{service.name}</span>}</div>
         {value.mode === 'external' && value.service_id && !service && <p className="form-error">所选服务已不存在，请重新选择。</p>}
         {services.length ? <div className="search-picker-service-list">{services.map((item) => <button type="button" key={item.id} className={item.id === value.service_id ? 'is-active' : ''} onClick={() => chooseService(item.id)}>{item.name}{item.id === value.service_id && <Check size={15} />}</button>)}</div> : <p className="form-hint">还没有配置搜索服务。请打开搜索设置添加。</p>}
