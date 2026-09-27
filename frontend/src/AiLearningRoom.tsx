@@ -918,7 +918,7 @@ export default function AiLearningRoom({
     if (!conversationId || !detail || branchBusyRef.current || sendingRef.current || pendingSubmissionRef.current || currentRun || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status)) return;
     const sourceId = conversationId;
     const key = `${sourceId}:${messageId}`;
-    const requestKey = branchKeysRef.current[key] ?? crypto.randomUUID();
+    const requestKey = branchKeysRef.current[key] ?? makeClientMessageId();
     branchKeysRef.current[key] = requestKey;
     branchBusyRef.current = true; setBranchBusy(true); setError('');
     try {

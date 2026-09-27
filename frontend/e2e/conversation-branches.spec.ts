@@ -3,6 +3,10 @@ import { authorize } from './fact-helpers';
 
 test('branches an earlier learning answer into an independent conversation with inherited material', async ({ page }) => {
   test.setTimeout(60_000);
+  // The trial is opened over HTTP on a WSL IP, where randomUUID is unavailable.
+  await page.addInitScript(() => Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }));
+  const pageErrors: string[] = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
   const routes = await (await page.request.get(`http://127.0.0.1:${process.env.NAUTILUS_E2E_BACKEND_PORT ?? '8012'}/openapi.json`)).json();
   expect(routes.paths['/api/ai/conversations/{conversation_id}/branches']).toBeTruthy();
 
@@ -89,4 +93,5 @@ test('branches an earlier learning answer into an independent conversation with 
   const erasedSource = await (await page.request.get(`/api/ai/conversations/${sourceId}`)).json();
   expect(erasedBranch.messages.filter((message: { role: string }) => message.role === 'assistant').every((message: { content: string }) => !message.content)).toBe(true);
   expect(erasedSource.messages.filter((message: { role: string }) => message.role === 'assistant').every((message: { content: string }) => !message.content)).toBe(true);
+  expect(pageErrors).toEqual([]);
 });
