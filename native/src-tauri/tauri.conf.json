@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nautilus 独立验证",
+  "version": "0.1.0",
+  "identifier": "com.nautilus.validation",
+  "build": {"frontendDist": "../dist"},
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{"title": "Nautilus 独立验证", "width": 900, "height": 780}],
+    "security": {"csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"}
+  },
+  "bundle": {"active": true, "targets": "all", "android": {"minSdkVersion": 24}}
+}

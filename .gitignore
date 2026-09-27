@@ -44,3 +44,8 @@ temp/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Native validation build artifacts (keep Cargo.lock for reproducible builds)
+/native/target/
+/native/src-tauri/gen/
+/native/src-tauri/icons/

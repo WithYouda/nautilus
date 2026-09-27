@@ -1,0 +1,1 @@
+{"extends":"./tsconfig.app.json","compilerOptions":{"tsBuildInfoFile":"./node_modules/.tmp/tsconfig.native.tsbuildinfo"},"include":["native","src/LearningMarkdown.tsx"]}
