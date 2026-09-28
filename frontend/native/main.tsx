@@ -93,11 +93,27 @@ function App() {
   const selectionHeadRef = useRef<string | null>(null);
   const nameDirtyRef = useRef(false);
   const refreshSequence = useRef(0);
+  const knownTurnIds = useRef(new Set<string>());
 
   async function refresh() {
     const sequence = ++refreshSequence.current;
     const next = await bridge().core.invoke<Snapshot>('snapshot');
     if (!alive.current || sequence !== refreshSequence.current) return next;
+    const previousIds = knownTurnIds.current;
+    knownTurnIds.current = new Set(next.turns.map(turn => turn.id));
+    if (initialized.current && !activeRequestRef.current) {
+      setActiveTip(current => {
+        // Follow new continuations only; do not switch to a sibling or leave an
+        // explicitly selected empty conversation when history already exists.
+        if (current === null && previousIds.size > 0) return current;
+        let tip = current;
+        while (true) {
+          const children = next.turns.filter(turn => turn.parent_id === tip);
+          if (children.length !== 1 || previousIds.has(children[0].id)) return tip;
+          tip = children[0].id;
+        }
+      });
+    }
     setSnapshot(next);
     const head = selectedHead(next);
     if (!initialized.current) {

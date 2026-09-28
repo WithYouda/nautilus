@@ -129,6 +129,7 @@ async function close() {
       const now = await snapshot();
       return now.materials.some(material => material.id === peerMaterial.id) && now.turns.some(turn => turn.id === rootId);
     },30000);
+    await until('first synced answer visible without clicking branch', async () => await page.locator('.turn').getByText('Shared root question',{exact:true}).isVisible());
     assert.equal(await page.getByLabel('继续提问').inputValue(),'Draft survives incoming sync');
     await page.getByLabel('标题',{exact:true}).fill('Windows note');
     await page.getByPlaceholder('粘贴需要参考的文字').fill('Windows synthetic material');
@@ -158,6 +159,19 @@ async function close() {
     assert(await page.locator('.turn').last().getByText('Peer sibling question').isVisible());
     await page.getByRole('button',{name:'Windows branch question'}).click();
     assert(await page.locator('.turn').last().getByText('Windows branch question').isVisible());
+    const continuedId = await control('create_completed_turn',{question:'Remote continuation visible immediately',answer:'Remote continuation answer',materialIds:[],parentId:windowsTurn.id});
+    await until('synced continuation visible in numbered turns without branch click', async () =>
+      await page.locator('.turn').last().getByText('Remote continuation answer',{exact:true}).isVisible(),30000);
+    assert.equal(await page.locator('.turn').count(),3);
+    assert(await page.locator('.turn').last().getByText('第 3 轮',{exact:true}).isVisible());
+    assert(await page.getByRole('button',{name:'Remote continuation visible immediately'}).isVisible());
+    assert.equal(await page.getByLabel('继续提问').inputValue(),'Unsent draft after branch sync');
+    await page.getByRole('button',{name:'开始新对话',exact:true}).click();
+    await control('create_completed_turn',{question:'Another remote continuation',answer:'Kept on its own path',materialIds:[],parentId:continuedId});
+    await until('next remote continuation arrives', async () => (await snapshot()).turns.some(turn => turn.question === 'Another remote continuation'),30000);
+    assert.equal(await page.locator('.turn').count(),0,'explicit new conversation should stay empty');
+    await page.getByRole('button',{name:'Another remote continuation'}).click();
+    assert.equal(await page.locator('.turn').count(),4);
     console.log('pairing and branch steps passed; checking conflicts');
     // Both stores edit the same retained material head while transport is offline.
     await control('pause');
