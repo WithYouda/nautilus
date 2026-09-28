@@ -23,7 +23,7 @@ const server = http.createServer(async (req, res) => {
   requests++;
   res.writeHead(200, {'Content-Type':'text/event-stream'});
   res.write(`data: ${JSON.stringify({choices:[{delta:{content:'Synthetic answer'}}]})}\n\n`);
-  if (requests === 1) {
+  if (requests !== 2) {
     res.end(`data: ${JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);
   } else lastResponse = res;
 });
@@ -89,19 +89,28 @@ async function close() {
     await page.getByRole('button',{name:'停止回答'}).click();
     await page.getByText('已取消',{exact:true}).waitFor();
     assert.equal(requests,2);
+    await page.getByLabel('继续提问').fill('Continue after cancellation');
+    await page.getByRole('button',{name:'发送',exact:true}).click();
+    await page.getByText('回答已保存。',{exact:true}).waitFor();
+    assert.equal(requests,3);
     await close();
     await launch();
     const restored = await page.evaluate(()=>window.__TAURI__.core.invoke('snapshot'));
     assert.equal(restored.materials[0].content,'Windows synthetic material');
-    assert.equal(restored.turns.length,2);
+    assert.equal(restored.turns.length,3);
     assert.equal(restored.turns[0].status,'complete');
     assert.equal(restored.turns[0].answer,'Synthetic answer');
     assert.equal(restored.turns[1].status,'canceled');
     assert.equal(restored.turns[1].answer,'Synthetic answer');
+    assert.equal(restored.turns[2].status,'complete');
+    assert.equal(restored.turns[2].parent_id,restored.turns[1].id);
     assert.equal(await page.getByLabel('API Key（只保留在当前应用内存，重启后需重新输入）').inputValue(),'');
-    assert.equal(requests,2);
+    assert.equal(requests,3);
     assert.deepEqual(pageErrors,[]);
     await page.screenshot({path:path.join(dataDir,'windows-smoke.png'),fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+    await page.screenshot({path:path.join(dataDir,'windows-smoke-390.png'),fullPage:true});
     console.log(`PASS native Windows: real IPC, local model stream, single instance, cancel, reopen, memory-only key; data=${dataDir}`);
   } finally { await close(); lastResponse?.destroy(); server.closeAllConnections(); server.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

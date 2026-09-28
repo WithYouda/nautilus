@@ -126,8 +126,14 @@ async fn persisted_turn_survives_reopen_after_stream_and_replay() {
     let material = store
         .save_material(None, "合成资料".into(), "合成内容".into())
         .unwrap();
+    store.save_selection(vec![material.id.clone()]).unwrap();
     let prepared = store
-        .begin_turn("one".into(), "解释资料".into(), vec![material.id.clone()])
+        .begin_turn(
+            "one".into(),
+            "解释资料".into(),
+            vec![material.id.clone()],
+            None,
+        )
         .unwrap();
     let (_tx, rx) = watch::channel(false);
     let mut answer = String::new();
@@ -153,7 +159,7 @@ async fn persisted_turn_survives_reopen_after_stream_and_replay() {
     reopened.recover().unwrap();
     assert_eq!(reopened.snapshot().unwrap().turns[0].answer, "本机回答");
     let replay = reopened
-        .begin_turn("one".into(), "解释资料".into(), vec![material.id])
+        .begin_turn("one".into(), "解释资料".into(), vec![material.id], None)
         .unwrap();
     assert!(!replay.created);
     assert!(replay.messages.is_empty());

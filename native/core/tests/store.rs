@@ -20,11 +20,13 @@ fn persists_identity_settings_materials_and_turns_across_reopen() {
     let material = db
         .save_material(None, "Title".into(), "Content".into())
         .unwrap();
+    db.save_selection(vec![material.id.clone()]).unwrap();
     let prepared = db
         .begin_turn(
             "request-1".into(),
             "Explain".into(),
             vec![material.id.clone()],
+            None,
         )
         .unwrap();
     assert!(prepared.created);
@@ -51,7 +53,7 @@ fn persists_identity_settings_materials_and_turns_across_reopen() {
     let reopened = Store::open(dir.path().join("native.db")).unwrap();
     let snapshot = reopened.snapshot().unwrap();
     assert_eq!(snapshot.device_id, device);
-    assert_eq!(snapshot.schema_version, 1);
+    assert_eq!(snapshot.schema_version, 2);
     assert_eq!(snapshot.settings.model, "changed");
     assert_eq!(snapshot.materials, vec![material]);
     assert_eq!(snapshot.turns[0].provider.model, "study");
@@ -65,17 +67,24 @@ fn freezes_material_versions_and_limits_history_to_consecutive_compatible_turns(
     let material = db
         .save_material(None, "First".into(), "Old private text".into())
         .unwrap();
+    db.save_selection(vec![material.id.clone()]).unwrap();
     let a = db
         .begin_turn(
             "a".into(),
             "First question".into(),
             vec![material.id.clone()],
+            None,
         )
         .unwrap();
     db.update_turn(&a.turn.id, "First answer", "").unwrap();
     db.finish_turn(&a.turn.id, "complete", None).unwrap();
     let b = db
-        .begin_turn("b".into(), "Follow-up".into(), vec![material.id.clone()])
+        .begin_turn(
+            "b".into(),
+            "Follow-up".into(),
+            vec![material.id.clone()],
+            Some(a.turn.id.clone()),
+        )
         .unwrap();
     assert!(b.messages.iter().any(|m| m.content == "First answer"));
     db.update_turn(&b.turn.id, "Second answer", "").unwrap();
@@ -90,7 +99,12 @@ fn freezes_material_versions_and_limits_history_to_consecutive_compatible_turns(
         .unwrap();
     assert_eq!(edited.version, 2);
     let c = db
-        .begin_turn("c".into(), "After edit".into(), vec![edited.id.clone()])
+        .begin_turn(
+            "c".into(),
+            "After edit".into(),
+            vec![edited.id.clone()],
+            Some(b.turn.id.clone()),
+        )
         .unwrap();
     assert!(!c
         .messages
@@ -103,8 +117,9 @@ fn freezes_material_versions_and_limits_history_to_consecutive_compatible_turns(
     assert_eq!(db.snapshot().unwrap().turns[0].materials, vec![material]);
     db.finish_turn(&c.turn.id, "complete", None).unwrap();
 
+    db.save_selection(vec![]).unwrap();
     let d = db
-        .begin_turn("d".into(), "Without material".into(), vec![])
+        .begin_turn("d".into(), "Without material".into(), vec![], None)
         .unwrap();
     assert!(!d
         .messages
@@ -118,18 +133,26 @@ fn reordering_same_selected_material_versions_keeps_history() {
     let (_dir, mut db) = store();
     let first = db.save_material(None, "A".into(), "A text".into()).unwrap();
     let second = db.save_material(None, "B".into(), "B text".into()).unwrap();
+    db.save_selection(vec![first.id.clone(), second.id.clone()])
+        .unwrap();
     let previous = db
         .begin_turn(
             "first".into(),
             "Question".into(),
             vec![first.id.clone(), second.id.clone()],
+            None,
         )
         .unwrap();
     db.update_turn(&previous.turn.id, "Compatible answer", "")
         .unwrap();
     db.finish_turn(&previous.turn.id, "complete", None).unwrap();
     let reordered = db
-        .begin_turn("second".into(), "Next".into(), vec![second.id, first.id])
+        .begin_turn(
+            "second".into(),
+            "Next".into(),
+            vec![second.id, first.id],
+            Some(previous.turn.id.clone()),
+        )
         .unwrap();
     assert!(reordered
         .messages
@@ -141,38 +164,40 @@ fn reordering_same_selected_material_versions_keeps_history() {
 fn request_replay_is_idempotent_and_pending_is_exclusive() {
     let (_dir, mut db) = store();
     let a = db
-        .begin_turn("same".into(), "Question".into(), vec![])
+        .begin_turn("same".into(), "Question".into(), vec![], None)
         .unwrap();
     let replay = db
-        .begin_turn("same".into(), "Question".into(), vec![])
+        .begin_turn("same".into(), "Question".into(), vec![], None)
         .unwrap();
     assert!(!replay.created);
     assert!(replay.messages.is_empty());
     assert_eq!(replay.turn.id, a.turn.id);
     assert!(db
-        .begin_turn("same".into(), "Changed".into(), vec![])
+        .begin_turn("same".into(), "Changed".into(), vec![], None)
         .is_err());
     assert!(db
-        .begin_turn("another".into(), "Question".into(), vec![])
+        .begin_turn("another".into(), "Question".into(), vec![], None)
         .is_err());
     assert_eq!(db.snapshot().unwrap().turns.len(), 1);
     db.finish_turn(&a.turn.id, "canceled", None).unwrap();
     assert!(db
-        .begin_turn("another".into(), "Question".into(), vec![])
+        .begin_turn("another".into(), "Question".into(), vec![], None)
         .is_ok());
 }
 
 #[test]
 fn partial_failure_and_recovery_do_not_invent_completed_answers() {
     let (dir, mut db) = store();
-    let failed = db.begin_turn("failed".into(), "Q".into(), vec![]).unwrap();
+    let failed = db
+        .begin_turn("failed".into(), "Q".into(), vec![], None)
+        .unwrap();
     db.update_turn(&failed.turn.id, "partial", "partial thought")
         .unwrap();
     db.finish_turn(&failed.turn.id, "failed", Some("网络中断"))
         .unwrap();
     assert!(db.update_turn(&failed.turn.id, "late", "late").is_err());
     let pending = db
-        .begin_turn("pending".into(), "Q2".into(), vec![])
+        .begin_turn("pending".into(), "Q2".into(), vec![], None)
         .unwrap();
     db.update_turn(&pending.turn.id, "another partial", "")
         .unwrap();
@@ -185,7 +210,7 @@ fn partial_failure_and_recovery_do_not_invent_completed_answers() {
     assert_eq!(turns[1].status, "interrupted");
     assert_eq!(turns[1].answer, "another partial");
     let next = reopened
-        .begin_turn("next".into(), "Q3".into(), vec![])
+        .begin_turn("next".into(), "Q3".into(), vec![], Some(pending.turn.id))
         .unwrap();
     assert!(!next.messages.iter().any(|m| m.content.contains("partial")));
 }

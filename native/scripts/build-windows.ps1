@@ -12,11 +12,11 @@ if (-not $SourceRoot) { $SourceRoot = Split-Path $PSScriptRoot -Parent }
 # Use a local build cache: Windows native tools do not all support WSL UNC paths.
 # Copy only build inputs, never the trial, installed app data, or Android outputs.
 $files = @(
-    'Cargo.toml', 'Cargo.lock', 'core\Cargo.toml',
+    'Cargo.toml', 'Cargo.lock', 'core\Cargo.toml', 'sync\Cargo.toml',
     'src-tauri\Cargo.toml', 'src-tauri\build.rs', 'src-tauri\tauri.conf.json',
     'src-tauri\icons\icon.ico', 'src-tauri\icons\icon.png'
 )
-$directories = @('core\src', 'src-tauri\src', 'src-tauri\capabilities', 'dist')
+$directories = @('core\src', 'sync\src', 'src-tauri\src', 'src-tauri\capabilities', 'dist')
 foreach ($relative in $files + $directories) {
     if (-not (Test-Path (Join-Path $SourceRoot $relative))) {
         throw "Missing build input: $relative. Build the native frontend and icons first."
@@ -71,7 +71,8 @@ exit /b %errorlevel%
     }
     $binary = Join-Path $BuildRoot 'target\x86_64-pc-windows-msvc\release\nautilus-device.exe'
     New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
-    $filename = 'nautilus-independent-0.1.0-windows-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.exe'
+    $version = (Get-Content (Join-Path $SourceRoot 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
+    $filename = 'nautilus-independent-' + $version + '-windows-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.exe'
     $output = Join-Path $OutputDirectory $filename
     Copy-Item -LiteralPath $binary -Destination $output
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $output).Hash

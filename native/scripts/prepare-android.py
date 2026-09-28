@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import re
+import shutil
 import xml.etree.ElementTree as ET
 
 project = Path(__file__).resolve().parents[1] / 'src-tauri/gen/android'
@@ -9,6 +10,12 @@ manifest = project / 'app/src/main/AndroidManifest.xml'
 namespace = 'http://schemas.android.com/apk/res/android'
 ET.register_namespace('android', namespace)
 tree = ET.parse(manifest)
+for permission in ('android.permission.ACCESS_WIFI_STATE', 'android.permission.CHANGE_WIFI_MULTICAST_STATE', 'android.permission.ACCESS_LOCAL_NETWORK'):
+    if not any(node.get(f'{{{namespace}}}name') == permission for node in tree.getroot().findall('uses-permission')):
+        ET.SubElement(tree.getroot(), 'uses-permission', {f'{{{namespace}}}name': permission})
+activity = project / 'app/src/main/java/com/nautilus/validation/MainActivity.kt'
+shutil.copyfile(Path(__file__).resolve().parents[1] / 'android/MainActivity.kt', activity)
+
 application = tree.getroot().find('application')
 if application is None:
     raise SystemExit('Android manifest has no application')

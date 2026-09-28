@@ -1,4 +1,4 @@
 [workspace]
-members = ["core", "src-tauri"]
+members = ["core", "sync", "src-tauri"]
 default-members = ["core"]
 resolver = "2"
