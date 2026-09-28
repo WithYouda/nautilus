@@ -21,6 +21,8 @@ Key以系统保护的密文保存到独立credentials目录，不在SQLite或同
 
 ## 构建
 
+交付APK和EXE统一放入Windows下载目录的Nautilus文件夹。每个平台的新包通过相关检查后，删除该平台旧的Nautilus安装包，仅保留各平台最新包；不删除应用数据、签名或备份。Windows构建脚本默认使用此目录；Android构建后将受测APK复制到同一目录并核验哈希，再清理旧APK。
+
 JavaScript依赖复用 `frontend/package-lock.json`；Rust依赖固定于本目录 `Cargo.lock`。
 
 ```sh
@@ -57,7 +59,7 @@ Windows需要微软C++构建工具、Windows SDK、Rust MSVC stable与WebView2�
 powershell -NoProfile -ExecutionPolicy Bypass -File "\\wsl.localhost\Ubuntu\home\kingdom\ai_learning\native\scripts\build-windows.ps1"
 ```
 
-脚本只复制构建输入到 `%LOCALAPPDATA%\NautilusBuild\windows-validation`，用MSVC构建后将EXE放到下载文件夹并输出SHA256。程序直接运行，依赖Windows已安装的WebView2；不是安装向导或商店发布包。数据库保存在 `%LOCALAPPDATA%\com.nautilus.validation\native-validation.sqlite3`，关闭程序或替换EXE不会清除它。重复打开会回到现有窗口，避免第二个进程把正在生成的回答误判为中断。
+脚本只复制构建输入到 `%LOCALAPPDATA%\NautilusBuild\windows-validation`，用MSVC构建后将EXE放到下载文件夹的Nautilus子目录并输出SHA256。程序直接运行，依赖Windows已安装的WebView2；不是安装向导或商店发布包。数据库保存在 `%LOCALAPPDATA%\com.nautilus.validation\native-validation.sqlite3`，关闭程序或替换EXE不会清除它。重复打开会回到现有窗口，避免第二个进程把正在生成的回答误判为中断。
 
 实际原生检查脚本为 `scripts/smoke-windows.cjs` 和 `scripts/smoke-windows-sync.cjs`，由Windows Node执行，前两个参数为EXE路径和含Playwright的 `frontend` 目录；同步旅程另外需要合成对端地址、端口和临时控制令牌，完整参数见脚本头部。它们用临时数据目录、本机模拟模型及WebView2调试连接检查真实Rust调用、重复启动、取消和重开；不使用真实模型或trial。`NAUTILUS_VALIDATION_DATA_DIR` 仅供Windows隔离测试覆盖保存位置，正常使用无需设置。
 

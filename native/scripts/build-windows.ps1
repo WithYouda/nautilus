@@ -2,7 +2,7 @@
 param(
     [string]$SourceRoot = '',
     [string]$BuildRoot = (Join-Path $env:LOCALAPPDATA 'NautilusBuild\windows-validation'),
-    [string]$OutputDirectory = (Join-Path $env:USERPROFILE 'Downloads')
+    [string]$OutputDirectory = (Join-Path $env:USERPROFILE 'Downloads\Nautilus')
 )
 $ErrorActionPreference = 'Stop'
 # WSL-launched PowerShell may inherit PATHEXT=.CPL, hiding SDK discovery helpers.
