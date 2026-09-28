@@ -14,10 +14,10 @@ const {chromium} = require(path.join(frontend, 'node_modules/playwright'));
 const dataDir = fs.mkdtempSync(path.join(process.env.TEMP, 'nautilus-windows-smoke-'));
 let child, browser, page, requests = 0, lastResponse, debugPort;
 const server = http.createServer(async (req, res) => {
-  if (req.method !== 'POST' || req.url !== '/v1/chat/completions') { res.writeHead(404).end(); return; }
+  if (req.method !== 'POST' || !['/v1/chat/completions','/other/chat/completions'].includes(req.url)) { res.writeHead(404).end(); return; }
   let body = ''; for await (const part of req) body += part;
   const payload = JSON.parse(body);
-  assert.equal(req.headers.authorization, 'Bearer synthetic-key');
+  assert.equal(req.headers.authorization, req.url === '/other/chat/completions' ? 'Bearer synthetic-other-key' : 'Bearer synthetic-key');
   assert.equal(payload.tools, undefined);
   assert(payload.messages.some(m => m.content.includes('Windows synthetic material')));
   requests++;
@@ -67,7 +67,13 @@ async function close() {
     await page.getByLabel('模型名称').fill('synthetic');
     await page.getByRole('button',{name:'保存模型设置'}).click();
     await page.getByText('模型设置已保存在这台设备。').waitFor();
-    await page.getByLabel('API Key（只保留在当前应用内存，重启后需重新输入）').fill('synthetic-key');
+    await page.getByLabel('API Key',{exact:true}).fill('synthetic-old-key');
+    await page.getByRole('button',{name:'保存 Key',exact:true}).click();
+    await page.getByText('Key 已保存在本机，重开应用后会自动使用。',{exact:true}).waitFor();
+    await page.getByLabel('API Key',{exact:true}).fill('synthetic-key');
+    await page.getByRole('button',{name:'保存 Key',exact:true}).click();
+    await page.getByText('Key 已保存在本机，重开应用后会自动使用。',{exact:true}).waitFor();
+    assert.equal(await page.getByLabel('API Key',{exact:true}).inputValue(),'');
     await page.getByLabel('标题',{exact:true}).fill('Windows test');
     await page.getByLabel('内容',{exact:true}).fill('Windows synthetic material');
     await page.getByRole('button',{name:'保存并选用'}).click();
@@ -104,13 +110,77 @@ async function close() {
     assert.equal(restored.turns[1].answer,'Synthetic answer');
     assert.equal(restored.turns[2].status,'complete');
     assert.equal(restored.turns[2].parent_id,restored.turns[1].id);
-    assert.equal(await page.getByLabel('API Key（只保留在当前应用内存，重启后需重新输入）').inputValue(),'');
+    assert.equal(await page.getByLabel('API Key').inputValue(),'');
     assert.equal(requests,3);
+    await page.getByText('此接口的 Key 已保存在本机，重开后自动使用。',{exact:true}).waitFor();
+    await page.getByLabel('继续提问').fill('Saved key after restart');
+    await page.getByRole('button',{name:'发送',exact:true}).click();
+    await page.getByText('回答已保存。',{exact:true}).waitFor();
+    assert.equal(requests,4);
+    const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
+    async function endpoint(url, model='synthetic') {
+      await page.getByLabel('兼容 OpenAI 的 HTTPS 地址（以 /v1 结尾）').fill(url);
+      await page.getByLabel('模型名称',{exact:true}).fill(model);
+      await page.getByRole('button',{name:'保存模型设置'}).click();
+      await page.getByText('模型设置已保存在这台设备。',{exact:true}).waitFor();
+    }
+    await page.getByLabel('API Key',{exact:true}).fill('unsaved-must-not-cross-endpoint');
+    await endpoint(`http://127.0.0.1:${server.address().port}/other`);
+    assert.equal(await page.getByLabel('API Key',{exact:true}).inputValue(),'');
+    await page.getByText('此接口尚未保存 Key。',{exact:true}).waitFor();
+    await page.getByLabel('API Key',{exact:true}).fill('synthetic-other-key');
+    await page.getByRole('button',{name:'保存 Key',exact:true}).click();
+    await page.getByText('Key 已保存在本机，重开应用后会自动使用。',{exact:true}).waitFor();
+    await page.getByLabel('继续提问').fill('Other endpoint key');
+    await page.getByRole('button',{name:'发送',exact:true}).click();
+    await page.getByText('回答已保存。',{exact:true}).waitFor();
+    assert.equal(requests,5);
+    await endpoint(baseUrl + '/', 'another-model');
+    await page.getByText('此接口的 Key 已保存在本机，重开后自动使用。',{exact:true}).waitFor();
+    await page.getByLabel('继续提问').fill('Original key restored with another model');
+    await page.getByRole('button',{name:'发送',exact:true}).click();
+    await page.getByText('回答已保存。',{exact:true}).waitFor();
+    assert.equal(requests,6);
+    const credentialDir = path.join(dataDir,'credentials');
+    const files=fs.readdirSync(credentialDir);
+    assert.equal(files.length,2);
+    for(const file of files) {
+      const blob=fs.readFileSync(path.join(credentialDir,file));
+      assert(!blob.includes('synthetic-key') && !blob.includes('synthetic-other-key'));
+    }
+    const snapshotText=JSON.stringify(await page.evaluate(()=>window.__TAURI__.core.invoke('snapshot')));
+    assert(!snapshotText.includes('synthetic-key') && !snapshotText.includes('synthetic-other-key'));
+    const hash=require('node:crypto').createHash('sha256').update(baseUrl).digest('hex');
+    const keyFile=path.join(credentialDir,hash+'.key');
+    const original=fs.readFileSync(keyFile);
+    const invalidSave = await page.evaluate(async baseUrl => { try { await window.__TAURI__.core.invoke('save_credential',{baseUrl,key:''}); return null; } catch(error) { return String(error); } },baseUrl);
+    assert(invalidSave.includes('请先输入 Key'));
+    assert.deepEqual(fs.readFileSync(keyFile),original,'failed save replaced the existing key');
+    const staleSend = await page.evaluate(async () => { try { await window.__TAURI__.core.invoke('send_message',{requestId:'stale-endpoint-check',question:'Should not leave device',materialIds:[],apiKey:'',parentId:null,expectedBaseUrl:'https://different.example/v1',expectedSelectionIds:[],expectedRevisionIds:[]}); return null; } catch(error) { return String(error); } });
+    assert(staleSend.includes('模型接口地址已变化'));
+    assert.equal(requests,6);
+    const otherFile=files.find(file=>file!==hash+'.key');
+    fs.copyFileSync(path.join(credentialDir,otherFile),keyFile);
+    await page.getByLabel('继续提问').fill('Keep draft when key cannot be read');
+    await page.getByRole('button',{name:'发送',exact:true}).click();
+    await page.getByText('无法读取本机 Key，请重新保存或删除后再设置',{exact:true}).waitFor();
+    assert.equal(requests,6,'wrong-endpoint encrypted key reached Provider');
+    assert.equal(await page.getByLabel('继续提问').inputValue(),'Keep draft when key cannot be read');
+    assert.equal((await page.evaluate(()=>window.__TAURI__.core.invoke('snapshot'))).turns.length,6,'failed key lookup wrote a pending turn');
+    fs.writeFileSync(keyFile,original);
+    await page.getByRole('button',{name:'删除本机 Key',exact:true}).click();
+    await page.getByText('已删除此接口在本机保存的 Key，其他设备不受影响。',{exact:true}).waitFor();
+    assert(!fs.existsSync(keyFile));
+    assert.equal(fs.readdirSync(credentialDir).length,1);
+    await close(); await launch();
+    await page.getByText('此接口尚未保存 Key。',{exact:true}).waitFor();
+    await endpoint(`http://127.0.0.1:${server.address().port}/other`);
+    await page.getByText('此接口的 Key 已保存在本机，重开后自动使用。',{exact:true}).waitFor();
     assert.deepEqual(pageErrors,[]);
     await page.screenshot({path:path.join(dataDir,'windows-smoke.png'),fullPage:true});
     await page.setViewportSize({width:390,height:844});
     assert(await page.evaluate(()=>document.documentElement.scrollWidth <= document.documentElement.clientWidth));
     await page.screenshot({path:path.join(dataDir,'windows-smoke-390.png'),fullPage:true});
-    console.log(`PASS native Windows: real IPC, local model stream, single instance, cancel, reopen, memory-only key; data=${dataDir}`);
+    console.log(`PASS native Windows: real IPC, local model stream, single instance, cancel, reopen, protected per-endpoint keys, saved-key requests after restart, endpoint isolation, deletion; data=${dataDir}`);
   } finally { await close(); lastResponse?.destroy(); server.closeAllConnections(); server.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

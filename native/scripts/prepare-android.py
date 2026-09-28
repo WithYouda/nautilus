@@ -15,6 +15,8 @@ for permission in ('android.permission.ACCESS_WIFI_STATE', 'android.permission.C
         ET.SubElement(tree.getroot(), 'uses-permission', {f'{{{namespace}}}name': permission})
 activity = project / 'app/src/main/java/com/nautilus/validation/MainActivity.kt'
 shutil.copyfile(Path(__file__).resolve().parents[1] / 'android/MainActivity.kt', activity)
+credential_plugin = activity.with_name('CredentialPlugin.kt')
+shutil.copyfile(Path(__file__).resolve().parents[1] / 'android/CredentialPlugin.kt', credential_plugin)
 
 application = tree.getroot().find('application')
 if application is None:

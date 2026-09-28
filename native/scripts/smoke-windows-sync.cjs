@@ -142,12 +142,15 @@ async function close() {
     await page.getByLabel('兼容 OpenAI 的 HTTPS 地址（以 /v1 结尾）').fill(`http://127.0.0.1:${modelServer.address().port}/v1`);
     await page.getByLabel('模型名称').fill('synthetic');
     await page.getByRole('button',{name:'保存模型设置'}).click();
-    await page.getByLabel('API Key（只保留在当前应用内存，重启后需重新输入）').fill('synthetic-key');
+    await page.getByLabel('API Key',{exact:true}).fill('synthetic-key');
+    await page.getByRole('button',{name:'保存 Key',exact:true}).click();
+    await page.getByText('Key 已保存在本机，重开应用后会自动使用。',{exact:true}).waitFor();
     await page.getByLabel('继续提问').fill('Windows branch question');
     await page.getByRole('button',{name:'发送',exact:true}).click();
     const windowsTurn = await until('Windows turn complete', async () => (await snapshot()).turns.find(turn => turn.question === 'Windows branch question' && turn.status === 'complete'),30000);
     assert.equal(windowsTurn.parent_id,rootId);
     await until('Windows turn auto-arrives at peer', async () => (await control('snapshot')).turns.some(turn => turn.id === windowsTurn.id),30000);
+    assert(!JSON.stringify(await control('snapshot')).includes('synthetic-key'),'credential appeared in peer business data');
     await page.getByLabel('继续提问').fill('Unsent draft after branch sync');
     const peerBranchId = await control('create_completed_turn',{question:'Peer sibling question',answer:'Peer sibling answer',materialIds:[],parentId:rootId});
     await until('peer sibling auto-arrives', async () => (await snapshot()).turns.some(turn => turn.id === peerBranchId),30000);

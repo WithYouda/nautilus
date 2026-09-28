@@ -1,3 +1,4 @@
+mod credentials;
 use nautilus_core::{
     store::Store,
     types::{Material, ProviderSettings, Snapshot, Turn},
@@ -18,6 +19,7 @@ struct LocalState {
     initial_error: Mutex<Option<String>>,
     needs_upgrade: Mutex<bool>,
     path: PathBuf,
+    credential_lock: tokio::sync::Mutex<()>,
     upgrade_lock: tokio::sync::Mutex<()>,
     network_lock: tokio::sync::Mutex<()>,
     cancel: Mutex<Option<(String, watch::Sender<bool>)>>,
@@ -73,6 +75,35 @@ fn local_status(state: tauri::State<LocalState>) -> Result<LocalStatus, String> 
 #[tauri::command]
 fn snapshot(state: tauri::State<LocalState>) -> Result<Snapshot, String> {
     with_store(&state, |s| s.snapshot())
+}
+#[tauri::command]
+async fn credential_status(
+    base_url: String,
+    state: tauri::State<'_, LocalState>,
+) -> Result<bool, String> {
+    let scope = credentials::scope(&base_url)?;
+    let _guard = state.credential_lock.lock().await;
+    credentials::exists(state.path.parent().ok_or(LOCK_ERROR)?, &scope)
+}
+#[tauri::command]
+async fn save_credential(
+    base_url: String,
+    key: String,
+    state: tauri::State<'_, LocalState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let scope = credentials::scope(&base_url)?;
+    let _guard = state.credential_lock.lock().await;
+    credentials::save(&app, state.path.parent().ok_or(LOCK_ERROR)?, &scope, &key).await
+}
+#[tauri::command]
+async fn delete_credential(
+    base_url: String,
+    state: tauri::State<'_, LocalState>,
+) -> Result<(), String> {
+    let scope = credentials::scope(&base_url)?;
+    let _guard = state.credential_lock.lock().await;
+    credentials::delete(state.path.parent().ok_or(LOCK_ERROR)?, &scope)
 }
 #[tauri::command]
 fn save_settings(
@@ -341,6 +372,7 @@ async fn send_message(
     question: String,
     material_ids: Vec<String>,
     api_key: String,
+    expected_base_url: String,
     parent_id: Option<String>,
     expected_selection_ids: Vec<String>,
     expected_revision_ids: Vec<String>,
@@ -350,12 +382,27 @@ async fn send_message(
     if question.trim().is_empty() {
         return Err("请先输入问题".into());
     }
+    let settings = with_store(&state, |s| Ok(s.snapshot()?.settings))?;
+    if settings.base_url != expected_base_url {
+        return Err("模型接口地址已变化，请核对后重新发送".into());
+    }
+    let scope = credentials::scope(&settings.base_url)?;
+    let api_key = if api_key.is_empty() {
+        let _guard = state.credential_lock.lock().await;
+        credentials::load(&app, state.path.parent().ok_or(LOCK_ERROR)?, &scope)
+            .await?
+            .unwrap_or_default()
+    } else {
+        api_key
+    };
     // Register cancellation before exposing the persisted pending turn.
     let (prepared, receiver) = {
         let mut active = state.cancel.lock().map_err(|_| LOCK_ERROR)?;
         let shared_store = state.store()?;
         let mut store = shared_store.lock().map_err(|_| LOCK_ERROR)?;
-        let settings = store.snapshot()?.settings;
+        if store.snapshot()?.settings != settings {
+            return Err("模型设置已变化，请核对后重新发送".into());
+        }
         if settings.base_url.trim().is_empty() || settings.model.trim().is_empty() {
             return Err("请先保存模型服务地址和模型名称".into());
         }
@@ -440,6 +487,8 @@ async fn send_message(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(credentials::plugin());
     #[cfg(target_os = "windows")]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         if let Some(window) = app.get_webview_window("main") {
@@ -490,6 +539,7 @@ pub fn run() {
                 initial_error: Mutex::new(initial_error),
                 needs_upgrade: Mutex::new(needs_upgrade),
                 path,
+                credential_lock: tokio::sync::Mutex::new(()),
                 upgrade_lock: tokio::sync::Mutex::new(()),
                 network_lock: tokio::sync::Mutex::new(()),
                 cancel: Mutex::new(None),
@@ -499,6 +549,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             snapshot,
+            credential_status,
+            save_credential,
+            delete_credential,
             save_settings,
             save_material,
             send_message,

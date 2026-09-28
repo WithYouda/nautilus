@@ -72,6 +72,8 @@ function App() {
   const [joinCode, setJoinCode] = useState('');
   const [settings, setSettings] = useState<ProviderSettings>({ base_url: '', model: '' });
   const [apiKey, setApiKey] = useState('');
+  const [keySaved, setKeySaved] = useState<boolean | null>(null);
+  const [keyError, setKeyError] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [selectionDirty, setSelectionDirty] = useState(false);
   const [selectionChanged, setSelectionChanged] = useState(false);
@@ -177,6 +179,30 @@ function App() {
     })();
     return () => { disposed = true; alive.current = false; unlistenTurn?.(); unlistenSync?.(); };
   }, []);
+
+  useEffect(() => { setApiKey(''); }, [settings.base_url]);
+  useEffect(() => {
+    let canceled = false;
+    setKeySaved(null); setKeyError('');
+    const baseUrl = snapshot?.settings.base_url;
+    if (baseUrl) void bridge().core.invoke<boolean>('credential_status', { baseUrl })
+      .then(saved => { if (!canceled) setKeySaved(saved); })
+      .catch(cause => { if (!canceled) setKeyError(message(cause)); });
+    return () => { canceled = true; };
+  }, [snapshot?.settings.base_url]);
+
+  async function changeKey(remove: boolean) {
+    if (!snapshot || hasUnsavedSettings) return;
+    const baseUrl = snapshot.settings.base_url;
+    setBusy('key'); setError(''); setNotice('');
+    try {
+      if (remove) await bridge().core.invoke<void>('delete_credential', { baseUrl });
+      else await bridge().core.invoke<void>('save_credential', { baseUrl, key: apiKey });
+      setKeySaved(!remove); setKeyError(''); setApiKey('');
+      setNotice(remove ? '已删除此接口在本机保存的 Key，其他设备不受影响。' : 'Key 已保存在本机，重开应用后会自动使用。');
+    } catch (cause) { setError(message(cause)); }
+    finally { setBusy(null); }
+  }
 
   async function upgrade() {
     setBusy('upgrade'); setError(''); setNotice('');
@@ -303,6 +329,7 @@ function App() {
     try {
       const turn = await bridge().core.invoke<Turn>('send_message', {
         requestId, question: sentDraft, materialIds: selected, apiKey, parentId: activeTip,
+        expectedBaseUrl: snapshot?.settings.base_url,
         expectedSelectionIds: snapshot?.selection_heads.map(head => head.id) ?? [],
         expectedRevisionIds,
       });
@@ -347,15 +374,19 @@ function App() {
       <section className="panel settings" aria-labelledby="settings-heading">
         <div className="section-head"><div><span className="eyebrow">01 / 连接</span><h2 id="settings-heading">模型服务</h2></div></div>
         <label>兼容 OpenAI 的 HTTPS 地址（以 /v1 结尾）
-          <input type="url" value={settings.base_url} onChange={e => setSettings({ ...settings, base_url: e.target.value })} placeholder="https://example.com/v1" autoComplete="url" />
+          <input type="url" disabled={Boolean(busy) || Boolean(activeRequestId)} value={settings.base_url} onChange={e => setSettings({ ...settings, base_url: e.target.value })} placeholder="https://example.com/v1" autoComplete="url" />
         </label>
         <label>模型名称
-          <input value={settings.model} onChange={e => setSettings({ ...settings, model: e.target.value })} placeholder="填写服务提供的模型名称" />
+          <input disabled={Boolean(busy) || Boolean(activeRequestId)} value={settings.model} onChange={e => setSettings({ ...settings, model: e.target.value })} placeholder="填写服务提供的模型名称" />
         </label>
         <button type="button" className="secondary" onClick={() => void saveSettings()} disabled={Boolean(busy) || Boolean(activeRequestId)}>保存模型设置</button>
-        <label>API Key（只保留在当前应用内存，重启后需重新输入）
-          <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} autoComplete="off" placeholder="本次使用的密钥" />
+        <label>API Key
+          <input type="password" value={apiKey} disabled={Boolean(busy) || Boolean(activeRequestId) || hasUnsavedSettings} onChange={e => setApiKey(e.target.value)} autoComplete="off" placeholder={keySaved ? '已保存，输入可替换' : '输入此接口的 Key'} />
         </label>
+        <p className="hint" role="status">{hasUnsavedSettings ? '先保存模型设置，再管理此接口的 Key。' : keyError || (keySaved === true ? '此接口的 Key 已保存在本机，重开后自动使用。' : keySaved === false ? '此接口尚未保存 Key。' : '请先设置模型接口。')}</p>
+        {apiKey && <p className="hint">当前输入尚未保存；直接发送仅用于本次运行。点击“保存 Key”后，重开应用也能使用。</p>}
+        <div className="actions"><button type="button" className="secondary" disabled={!apiKey.trim() || hasUnsavedSettings || Boolean(busy) || Boolean(activeRequestId)} onClick={() => void changeKey(false)}>保存 Key</button><button type="button" className="text-button" disabled={!snapshot.settings.base_url || hasUnsavedSettings || keySaved === false || Boolean(busy) || Boolean(activeRequestId)} onClick={() => void changeKey(true)}>删除本机 Key</button></div>
+        <p className="hint">Key 按接口地址分别保存，由本机系统保护，不参与设备同步。同一接口切换模型无需重新填写。</p>
         <p className="hint">{hasUnsavedSettings ? '模型设置已修改，请保存后再发送。' : `发送使用已保存的服务：${snapshot.settings.base_url || '尚未设置'}。`}</p>
         <p className="hint">发送时会把问题、所选资料，以及当前对话分支中资料版本一致的连续成功对话发送到此模型服务。修改选用资料或其版本会开始新的上下文范围。</p>
       </section>

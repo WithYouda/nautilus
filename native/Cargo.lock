@@ -3037,15 +3037,20 @@ dependencies = [
 name = "nautilus-device"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "nautilus-core",
  "nautilus-sync",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",
+ "tempfile",
  "tokio",
+ "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
