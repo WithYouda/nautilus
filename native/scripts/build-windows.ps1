@@ -64,10 +64,28 @@ if not exist "%WindowsSdkDir%Lib\%WindowsSDKVersion%um\x64\kernel32.lib" (
 "$cargo" +stable-x86_64-pc-windows-msvc build --locked --release --target x86_64-pc-windows-msvc --package nautilus-device --features tauri/custom-protocol
 exit /b %errorlevel%
 "@ | Set-Content -LiteralPath $commandFile -Encoding ASCII
-    $build = Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /c ""' + $commandFile + '""') -WorkingDirectory $BuildRoot -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
-    if ($build.ExitCode -ne 0) {
+    # Wait for the build process itself; Start-Process -Wait can retain unrelated
+    # descendants, and its returned ExitCode can remain null on this host.
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $env:ComSpec
+    $start.Arguments = '/d /c ""' + $commandFile + '""'
+    $start.WorkingDirectory = $BuildRoot
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $build = New-Object System.Diagnostics.Process
+    $build.StartInfo = $start
+    [void]$build.Start()
+    $stdout = $build.StandardOutput.ReadToEndAsync()
+    $stderr = $build.StandardError.ReadToEndAsync()
+    $build.WaitForExit()
+    [System.IO.File]::WriteAllText($stdoutLog, $stdout.Result)
+    [System.IO.File]::WriteAllText($stderrLog, $stderr.Result)
+    $exitCode = $build.ExitCode
+    $build.Dispose()
+    if ($exitCode -ne 0) {
         Get-Content -LiteralPath $stderrLog -Tail 30
-        throw "Windows build failed: $($build.ExitCode)"
+        throw "Windows build failed: $exitCode"
     }
     $binary = Join-Path $BuildRoot 'target\x86_64-pc-windows-msvc\release\nautilus-device.exe'
     New-Item -ItemType Directory -Force $OutputDirectory | Out-Null

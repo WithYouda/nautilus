@@ -53,7 +53,7 @@ fn persists_identity_settings_materials_and_turns_across_reopen() {
     let reopened = Store::open(dir.path().join("native.db")).unwrap();
     let snapshot = reopened.snapshot().unwrap();
     assert_eq!(snapshot.device_id, device);
-    assert_eq!(snapshot.schema_version, 2);
+    assert_eq!(snapshot.schema_version, 3);
     assert_eq!(snapshot.settings.model, "changed");
     assert_eq!(snapshot.materials, vec![material]);
     assert_eq!(snapshot.turns[0].provider.model, "study");

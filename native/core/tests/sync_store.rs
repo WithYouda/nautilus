@@ -239,10 +239,19 @@ fn schema_one_stays_unchanged_until_explicit_upgrade() {
     assert!(Store::open(&path).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), before);
     Store::upgrade_v1(&path).unwrap();
+    assert!(Store::open(&path).is_err());
+    let v2 = Connection::open(&path).unwrap();
+    v2.execute(
+        "INSERT INTO native_selections VALUES ('legacy-selection','[]','[\"m\"]')",
+        [],
+    )
+    .unwrap();
+    drop(v2);
+    Store::upgrade_v2(&path).unwrap();
     let upgraded = Store::open(&path).unwrap();
     let snap = upgraded.snapshot().unwrap();
     assert_eq!(snap.device_id, "old-device");
-    assert_eq!(snap.schema_version, 2);
+    assert_eq!(snap.schema_version, 3);
     assert_eq!(snap.materials[0].version, 2);
     assert_eq!(snap.turns[0].materials[0].content, "old");
     assert_eq!(
@@ -255,6 +264,10 @@ fn schema_one_stays_unchanged_until_explicit_upgrade() {
     assert_eq!(snap.turns[0].answer, "A");
     assert_eq!(snap.turns[0].reasoning, "R1");
     assert_eq!(snap.turns[0].parent_id, None);
+    assert_eq!(snap.turns[0].session_id, None);
+    assert_eq!(snap.turns[0].help_request, None);
+    assert_eq!(snap.selection_heads[0].id, "legacy-selection");
+    assert_eq!(snap.selection_heads[0].task_id, None);
     for (i, status, answer, reasoning, error, material_version, material_content, model) in [
         (
             1,

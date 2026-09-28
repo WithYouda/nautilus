@@ -137,7 +137,7 @@ async function close() {
     const windowsMaterial = await until('Windows material saved', async () => (await snapshot()).materials.find(material => material.title === 'Windows note'));
     await until('Windows material auto-arrives at peer', async () => (await control('snapshot')).materials.some(material => material.id === windowsMaterial.id),30000);
     await page.locator('.material').filter({hasText:'Windows note'}).getByRole('checkbox').uncheck();
-    await until('empty selection saved', async () => (await snapshot()).selection_heads[0]?.material_ids.length === 0);
+    await until('empty selection saved', async () => (await snapshot()).selection_heads.filter(head => !head.task_id)[0]?.material_ids.length === 0);
     await page.getByRole('button',{name:'Shared root question'}).click();
     await page.getByLabel('兼容 OpenAI 的 HTTPS 地址（以 /v1 结尾）').fill(`http://127.0.0.1:${modelServer.address().port}/v1`);
     await page.getByLabel('模型名称').fill('synthetic');
@@ -175,6 +175,32 @@ async function close() {
     assert.equal(await page.locator('.turn').count(),0,'explicit new conversation should stay empty');
     await page.getByRole('button',{name:'Another remote continuation'}).click();
     assert.equal(await page.locator('.turn').count(),4);
+    // New learning objects must travel with their room/task dependencies.
+    const learningDraft={original_intent:'Study a concept',goal_title:'Peer goal',goal_description:'',plan_title:'Peer plan',plan_description:'',action_title:'Synced learning task',context_key:'practice',object_description:'Concept',behavior:'Explain it',outcome_context_key:'practice',boundaries:'',stop_conditions:'Explain one example',time_budget_minutes:10};
+    const peerTask=await control('create_learning_task',{draft:learningDraft});
+    const peerSession=await control('start_learning_session',{taskId:peerTask.id});
+    await until('learning task and session received',async()=>{const s=await snapshot();return s.learning_tasks.some(t=>t.id===peerTask.id)&&s.learning_sessions.some(t=>t.id===peerSession.id);},30000);
+    await page.getByRole('button',{name:'学习首页',exact:true}).click();
+    await page.locator('.learning-list-row').filter({hasText:'Synced learning task'}).getByRole('button',{name:'继续学习',exact:true}).click();
+    assert.equal(await page.locator('.turn').count(),0,'new task imported unrelated legacy answers');
+    await page.getByLabel('继续提问',{exact:true}).fill('Task draft remains here');
+    const peerLearningTurn=await control('create_learning_turn',{sessionId:peerSession.id,parentId:null,materialIds:[],question:'Incoming task question',answer:'Incoming task answer'});
+    await until('first synced task turn automatically visible',async()=>await page.locator('.turn').getByText('Incoming task answer',{exact:true}).isVisible(),30000);
+    assert.equal(await page.getByLabel('继续提问',{exact:true}).inputValue(),'Task draft remains here');
+    await page.getByLabel('学习记录内容',{exact:true}).fill('Windows note for synced task');
+    await page.getByRole('button',{name:'保存记录',exact:true}).click();
+    await until('task note reaches peer',async()=>(await control('snapshot')).learning_notes.some(n=>n.session_id===peerSession.id&&n.content==='Windows note for synced task'),30000);
+    await control('save_learning_note',{sessionId:peerSession.id,content:'Peer note for same task'});
+    await until('peer note received',async()=>(await snapshot()).learning_notes.some(n=>n.content==='Peer note for same task'),30000);
+    const positionBefore=(await snapshot()).position;
+    await control('create_learning_task',{draft:{...learningDraft,action_title:'Another remote task'}});
+    await until('second remote task received',async()=>(await snapshot()).learning_tasks.some(t=>t.draft.action_title==='Another remote task'),30000);
+    assert.equal((await snapshot()).position.session_id,positionBefore.session_id,'incoming task changed active position');
+    assert(await page.locator('.turn').getByText('Incoming task answer',{exact:true}).isVisible());
+    await page.getByRole('button',{name:'学习首页',exact:true}).click();
+    await page.getByRole('button',{name:'打开先前对话',exact:true}).click();
+    await page.getByRole('button',{name:'Another remote continuation'}).click();
+    assert.equal(await page.getByLabel('继续提问',{exact:true}).inputValue(),'Unsent draft after branch sync');
     console.log('pairing and branch steps passed; checking conflicts');
     // Both stores edit the same retained material head while transport is offline.
     await control('pause');
@@ -213,11 +239,11 @@ async function close() {
     // Selection is independently changed on both sides from the same head.
     await control('pause');
     await page.locator('.material').filter({hasText:'Windows note'}).getByRole('checkbox').check();
-    await until('Windows offline selection', async () => (await snapshot()).selection_heads[0]?.material_ids.includes(windowsMaterial.id));
+    await until('Windows offline selection', async () => (await snapshot()).selection_heads.filter(head => !head.task_id)[0]?.material_ids.includes(windowsMaterial.id));
     await control('save_selection',{materialIds:[peerMaterial.id]});
     await control('resume');
     const selectionConflict = await until('selection conflict imported over LAN', async () => {
-      const heads = (await snapshot()).selection_heads;
+      const heads = (await snapshot()).selection_heads.filter(head => !head.task_id);
       return heads.length === 2 ? heads : null;
     },30000);
     assert(selectionConflict.some(head => head.material_ids.length === 1 && head.material_ids[0] === windowsMaterial.id));
@@ -225,8 +251,8 @@ async function close() {
     assert.equal(await page.getByLabel('继续提问').inputValue(),'Unsent draft after branch sync');
     await page.locator('.choice-row').filter({hasText:'Windows note'}).getByRole('button',{name:'采用这份选择'}).click();
     await until('selection resolution converges', async () => {
-      const local = (await snapshot()).selection_heads;
-      const remote = (await control('snapshot')).selection_heads;
+      const local = (await snapshot()).selection_heads.filter(head => !head.task_id);
+      const remote = (await control('snapshot')).selection_heads.filter(head => !head.task_id);
       return local.length === 1 && remote.length === 1 &&
         local[0].material_ids.length === 1 && local[0].material_ids[0] === windowsMaterial.id &&
         remote[0].material_ids.length === 1 && remote[0].material_ids[0] === windowsMaterial.id;

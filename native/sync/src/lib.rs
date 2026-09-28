@@ -114,7 +114,7 @@ enum Reply {
     },
     Data {
         known: SyncInventory,
-        batch: SyncBatch,
+        batch: Box<SyncBatch>,
     },
     Ok,
     Error(String),
@@ -564,7 +564,7 @@ impl SyncService {
                 let store = self.store.lock().map_err(|_| LOCK)?;
                 Reply::Data {
                     known: store.inventory()?,
-                    batch: store.export_missing(&known)?,
+                    batch: Box::new(store.export_missing(&known)?),
                 }
             }
             Request::Push { pairing_id, batch } => {
@@ -609,7 +609,8 @@ impl SyncService {
             .map_err(|_| NETWORK)?;
         send.finish().map_err(|_| NETWORK)?;
         let bytes = recv.read_to_end(usize::MAX).await.map_err(|_| NETWORK)?;
-        let reply = serde_json::from_slice(&bytes).map_err(|_| "两端同步协议不兼容")?;
+        let reply = serde_json::from_slice(&bytes)
+            .map_err(|_| "两端同步协议不兼容，请将两台设备都更新到新版")?;
         // Do not close until response bytes are fully received.
         connection.close(0u32.into(), b"done");
         Ok(reply)

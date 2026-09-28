@@ -4,7 +4,7 @@ use nautilus_core::store::Store;
 use nautilus_sync::SyncService;
 use serde_json::{json, Value};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tokio::{
@@ -62,7 +62,7 @@ async fn command(
     request: &Value,
     store: &Arc<Mutex<Store>>,
     service: &mut Option<Arc<SyncService>>,
-    dir: &PathBuf,
+    dir: &Path,
 ) -> Result<Value, String> {
     match field(request, "command")? {
         "name" => {
@@ -164,6 +164,80 @@ async fn command(
                     field(request, "question")?.into(),
                     material_ids,
                     parent,
+                )?;
+                data.update_turn(&prepared.turn.id, field(request, "answer")?, "")?;
+                data.finish_turn(&prepared.turn.id, "complete", None)?;
+                prepared.turn.id
+            };
+            if let Some(active) = service.as_ref() {
+                active.notify_change();
+            }
+            Ok(json!(id))
+        }
+        "create_learning_task" => {
+            let draft =
+                serde_json::from_value(request.get("draft").ok_or("missing draft")?.clone())
+                    .map_err(|e| e.to_string())?;
+            let task = store
+                .lock()
+                .map_err(|_| "store unavailable")?
+                .create_learning_task(Uuid::new_v4().to_string(), draft)?;
+            if let Some(active) = service.as_ref() {
+                active.notify_change();
+            }
+            serde_json::to_value(task).map_err(|e| e.to_string())
+        }
+        "start_learning_session" => {
+            let session = store
+                .lock()
+                .map_err(|_| "store unavailable")?
+                .start_learning_session(
+                    Uuid::new_v4().to_string(),
+                    field(request, "taskId")?.into(),
+                )?;
+            if let Some(active) = service.as_ref() {
+                active.notify_change();
+            }
+            serde_json::to_value(session).map_err(|e| e.to_string())
+        }
+        "save_learning_note" => {
+            let note = store
+                .lock()
+                .map_err(|_| "store unavailable")?
+                .save_learning_note(
+                    Uuid::new_v4().to_string(),
+                    field(request, "sessionId")?.into(),
+                    field(request, "content")?.into(),
+                )?;
+            if let Some(active) = service.as_ref() {
+                active.notify_change();
+            }
+            serde_json::to_value(note).map_err(|e| e.to_string())
+        }
+        "create_learning_turn" => {
+            let session_id = field(request, "sessionId")?.to_string();
+            let parent = request
+                .get("parentId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let material_ids = strings(request, "materialIds")?;
+            let id = {
+                let mut data = store.lock().map_err(|_| "store unavailable")?;
+                let task_id = data
+                    .snapshot()?
+                    .learning_sessions
+                    .into_iter()
+                    .find(|s| s.id == session_id)
+                    .ok_or("missing session")?
+                    .task_id;
+                data.save_task_selection(Some(task_id), material_ids.clone())?;
+                let prepared = data.begin_learning_turn(
+                    Uuid::new_v4().to_string(),
+                    field(request, "question")?.into(),
+                    material_ids,
+                    parent,
+                    Some(session_id),
+                    None,
                 )?;
                 data.update_turn(&prepared.turn.id, field(request, "answer")?, "")?;
                 data.finish_turn(&prepared.turn.id, "complete", None)?;
