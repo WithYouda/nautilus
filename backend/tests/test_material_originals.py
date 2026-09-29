@@ -34,7 +34,7 @@ def _business_rows(connection):
             for table in tables}
 
 
-def test_upgrade_035_to_036_preserves_every_old_business_table(tmp_path):
+def test_upgrade_035_to_current_preserves_every_old_business_table(tmp_path):
     path = tmp_path / 'learning.sqlite3'
     database = Database(path, Settings.from_env().migrations_dir,
                         migration_floor=11, migration_ceiling=35)
@@ -59,7 +59,9 @@ def test_upgrade_035_to_036_preserves_every_old_business_table(tmp_path):
     with closing(sqlite3.connect(path)) as connection:
         after = _business_rows(connection)
         assert {table: after[table] for table in before} == before
-        assert set(after) - set(before) == {'learning_material_original'}
+        assert set(after) - set(before) == {'learning_material_original', 'learning_material_library', 'learning_material_link'}
+        assert after['learning_material_library'] == []
+        assert after['learning_material_link'] == []
         assert after['learning_material_original'] == []
         assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []

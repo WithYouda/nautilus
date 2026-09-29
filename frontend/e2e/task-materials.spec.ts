@@ -24,6 +24,7 @@ test('settings, automatic upload references, independent network, versions and p
   await settings.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '学习室', exact: true }).click();
   await expect(page.locator('.ai-composer').getByRole('button', { name: /联网搜索：Bing/ })).toBeEnabled();
+  await page.getByRole('button', { name: '新建对话', exact: true }).click();
   await page.locator('.ai-composer').getByRole('button', { name: '资料', exact: true }).click();
   const panel = page.locator('.task-materials-panel');
   await expect(panel.getByLabel(/上传资料/)).toBeEnabled();

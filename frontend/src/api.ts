@@ -414,10 +414,19 @@ export type AppliedSourceScope = SourceScope & {
   fingerprint: string;
   purged?: boolean;
 };
-export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; inherited?: boolean; provenance?: Record<string, unknown>; original?: { filename: string; media_type: string; bytes: number; sha256: string } | null };
+export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; library: boolean; inherited?: boolean; provenance?: Record<string, unknown>; original?: { filename: string; media_type: string; bytes: number; sha256: string } | null };
 export type MaterialKind = 'conversation' | 'discussion';
 export function getMaterials(kind: MaterialKind, id: string): Promise<{ versions: MaterialVersion[] }> {
   return request(`/api/materials/${kind}/${id}`);
+}
+export function getMaterialLibrary(): Promise<{ versions: MaterialVersion[] }> {
+  return request('/api/materials/library');
+}
+export function storeMaterialInLibrary(kind: MaterialKind, id: string, materialId: string): Promise<{ stored: boolean }> {
+  return request(`/api/materials/${kind}/${id}/${materialId}/library`, { method: 'POST' });
+}
+export function useMaterialFromLibrary(kind: MaterialKind, id: string, versionId: string): Promise<MaterialVersion> {
+  return request(`/api/materials/${kind}/${id}/library-use`, { method: 'POST', body: JSON.stringify({ version_id: versionId }) });
 }
 export function saveMaterial(kind: MaterialKind, id: string, payload: { title: string; content?: string; material_id?: string; web_run_id?: string; web_item_index?: number }): Promise<MaterialVersion> {
   return request(`/api/materials/${kind}/${id}`, { method: 'POST', body: JSON.stringify(payload) });

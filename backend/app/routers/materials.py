@@ -29,6 +29,33 @@ def fail(error):
     raise HTTPException(status_code=error.status, detail=error.code) from error
 
 
+class LibraryChoice(BaseModel):
+    version_id: str
+
+
+@router.get('/library')
+def library(request: Request, identity=Depends(current_identity)):
+    return request.app.state.materials.library(identity)
+
+
+@router.post('/{scope_kind}/{scope_id}/{material_id}/library')
+def store_in_library(scope_kind: ScopeKind, scope_id: str, material_id: str,
+                     request: Request, identity=Depends(current_identity)):
+    try:
+        return request.app.state.materials.store_in_library(identity, scope_kind, scope_id, material_id)
+    except DomainError as error:
+        fail(error)
+
+
+@router.post('/{scope_kind}/{scope_id}/library-use')
+def use_library(scope_kind: ScopeKind, scope_id: str, payload: LibraryChoice,
+                request: Request, identity=Depends(current_identity)):
+    try:
+        return request.app.state.materials.use_library(identity, scope_kind, scope_id, payload.version_id)
+    except DomainError as error:
+        fail(error)
+
+
 @router.get('/{scope_kind}/{scope_id}')
 def list_materials(scope_kind: ScopeKind, scope_id: str, request: Request, identity=Depends(current_identity)):
     try:

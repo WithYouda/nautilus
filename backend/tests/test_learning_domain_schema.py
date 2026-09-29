@@ -92,6 +92,7 @@ def test_independent_schema_and_reopen_are_stable(tmp_path):
                 "034_discussion_branch_map",
                 "035_conversation_current_state",
                 "036_material_originals",
+                "037_material_library",
             ]
             assert database.fetchone("PRAGMA integrity_check")[0] == "ok"
             assert database.fetchall("PRAGMA foreign_key_check") == []
@@ -174,6 +175,7 @@ def test_learning_database_upgrades_from_016_with_existing_rows(tmp_path):
             "034_discussion_branch_map",
             "035_conversation_current_state",
             "036_material_originals",
+            "037_material_library",
         ]
         assert database.fetchone(
             "SELECT display_name FROM local_identity WHERE id='upgrade-owner'"

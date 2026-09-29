@@ -162,7 +162,7 @@ async def test_discussion_current_state_revision_replay_and_purge(learning_datab
 
 
 @pytest.mark.asyncio
-async def test_formal_034_to_035_upgrade_preserves_discussion(tmp_path, learning_database):
+async def test_formal_034_to_current_upgrade_preserves_discussion(tmp_path, learning_database):
     verification, original = await attempt(learning_database)
     service = QuestionDiscussionService(verification)
     discussion = service.create(IDENTITY, original['id'], original['latest_submission_id'], 'q1', 'old-034')
@@ -173,12 +173,22 @@ async def test_formal_034_to_035_upgrade_preserves_discussion(tmp_path, learning
         learning_database.connection.backup(old)
         old.execute('DROP TRIGGER learning_discussion_purge_current_state')
         old.execute('DROP TABLE learning_conversation_current_state')
-        old.execute("DELETE FROM schema_migrations WHERE version='035_conversation_current_state'")
+        old.execute('DROP TRIGGER learning_material_purge_original')
+        old.execute('DROP TABLE learning_material_original')
+        old.execute('DROP TRIGGER learning_discussion_purge_materials')
+        old.execute('DROP TABLE learning_material_link')
+        old.execute('DROP TABLE learning_material_library')
+        old.executescript("""CREATE TRIGGER learning_discussion_purge_materials AFTER UPDATE OF purged_at ON learning_question_discussion
+            WHEN NEW.purged_at IS NOT NULL BEGIN
+              UPDATE learning_task_material SET title=NULL,content=NULL,url=NULL,provenance_json='{}',purged_at=NEW.purged_at
+              WHERE owner_id=NEW.owner_id AND scope_kind='discussion' AND scope_id=NEW.id AND purged_at IS NULL;
+            END;""")
+        old.execute("DELETE FROM schema_migrations WHERE version >= '035'")
         tables = [row[0] for row in old.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_migrations','sqlite_sequence')")]
         before = {table: old.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() for table in tables}
         assert old.execute('SELECT 1 FROM learning_question_discussion WHERE id=?', (discussion['id'],)).fetchone()
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '035_conversation_current_state'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '037_material_library'
     with sqlite3.connect(path) as upgraded:
         assert all(upgraded.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() == rows
                    for table, rows in before.items())

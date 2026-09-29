@@ -205,12 +205,20 @@ def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifac
         _update(connection, 'learning_discussion_turn', dict(user_content=None, assistant_content=None, reasoning_content=None,
             sources_json='[]', provider_snapshot_json='{}', status='purged', reason='content_purged', finished_at=now),
             'discussion_id=?', (discussion,))
+        # A saved library group has its own lifecycle. Older snapshots lack the
+        # library table and retain the original discussion-owned behavior.
+        library_filter = (''' AND NOT EXISTS (SELECT 1 FROM learning_material_library library
+            WHERE library.owner_id=learning_task_material.owner_id
+              AND library.material_id=learning_task_material.material_id)'''
+            if columns(connection, 'learning_material_library') else '')
         _update(connection, 'learning_task_material', dict(title=None, content=None, url=None,
-            provenance_json='{}', purged_at=now), 'owner_id=? AND scope_kind=? AND scope_id=?',
+            provenance_json='{}', purged_at=now),
+            'owner_id=? AND scope_kind=? AND scope_id=?' + library_filter,
             (owner, 'discussion', discussion))
         _update(connection, 'learning_material_original', dict(filename=None, media_type=None,
             content=None, sha256=None, purged_at=now),
-            'version_id IN (SELECT id FROM learning_task_material WHERE owner_id=? AND scope_kind=? AND scope_id=?)',
+            '''version_id IN (SELECT id FROM learning_task_material
+                WHERE owner_id=? AND scope_kind=? AND scope_id=? AND purged_at IS NOT NULL)''',
             (owner, 'discussion', discussion))
 
     claims = set()

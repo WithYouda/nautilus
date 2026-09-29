@@ -45,21 +45,23 @@ class MaterialService:
             ORDER BY created_at,version''', (owner, kind, scope_id))
         versions = [dict(row) for row in rows]
         owned_ids = {row['id'] for row in versions}
-        for version_id in self.inherited_versions(owner, kind, scope_id):
+        for version_id in self.inherited_versions(owner, kind, scope_id) | self.linked_versions(owner, kind, scope_id):
             if version_id in owned_ids:
                 continue
             row = self.db.fetchone('''SELECT id,material_id,version,title,content,url,content_kind,
                 provenance_json,created_at,purged_at FROM learning_task_material WHERE id=? AND owner_id=?''',
                 (version_id, owner))
             if row:
-                versions.append({**dict(row), 'inherited': True})
+                versions.append({**dict(row), 'inherited': not self.in_library(owner, row['material_id'])})
         return {'versions': [self.with_original(item) for item in versions]}
 
     def with_original(self, version):
         original = self.db.fetchone('''SELECT filename,media_type,length(content) AS bytes,sha256
             FROM learning_material_original WHERE version_id=? AND purged_at IS NULL AND content IS NOT NULL''',
             (version['id'],)) if not version.get('purged_at') else None
-        return {**version, 'original': dict(original) if original else None}
+        row = self.db.fetchone('SELECT owner_id FROM learning_task_material WHERE id=?', (version['id'],))
+        return {**version, 'original': dict(original) if original else None,
+                'library': bool(row and self.in_library(row['owner_id'], version['material_id']))}
 
     def original(self, identity, kind, scope_id, version_id):
         # Access is scoped to the current conversation, including explicit inherited versions.
@@ -71,6 +73,47 @@ class MaterialService:
         if row is None:
             raise DomainError('material_original_unavailable', 404)
         return dict(row)
+
+    def in_library(self, owner, material_id):
+        return self.db.fetchone('SELECT 1 FROM learning_material_library WHERE owner_id=? AND material_id=?',
+                               (owner, material_id)) is not None
+
+    def linked_versions(self, owner, kind, scope_id):
+        return {row['version_id'] for row in self.db.fetchall('''SELECT version_id FROM learning_material_link
+            WHERE owner_id=? AND scope_kind=? AND scope_id=?''', (owner, kind, scope_id))}
+
+    def library(self, identity):
+        with self.lock:
+            owner = self.learning.principal(identity).owner_id
+            rows = self.db.fetchall('''SELECT m.* FROM learning_task_material m
+                JOIN learning_material_library l ON l.owner_id=m.owner_id AND l.material_id=m.material_id
+                WHERE m.owner_id=? AND m.purged_at IS NULL ORDER BY l.created_at DESC,m.version DESC''', (owner,))
+            return {'versions': [self.with_original(dict(row)) for row in rows]}
+
+    def store_in_library(self, identity, kind, scope_id, material_id):
+        with self.lock, self.db._lock:
+            owner = self.owned_scope(identity, kind, scope_id)
+            if not any(row['material_id'] == material_id and not row['purged_at']
+                       for row in self.list(identity, kind, scope_id)['versions']):
+                raise DomainError('material_not_found', 404)
+            with self.db.transaction(immediate=True) as c:
+                c.execute('INSERT OR IGNORE INTO learning_material_library(owner_id,material_id,created_at) VALUES (?,?,?)',
+                          (owner, material_id, utc_timestamp()))
+            return {'stored': True}
+
+    def use_library(self, identity, kind, scope_id, version_id):
+        with self.lock, self.db._lock:
+            owner = self.owned_scope(identity, kind, scope_id)
+            row = self.db.fetchone('SELECT m.* FROM learning_task_material m '
+                'JOIN learning_material_library l ON l.owner_id=m.owner_id AND l.material_id=m.material_id '
+                'WHERE m.owner_id=? AND m.id=? AND m.purged_at IS NULL', (owner, version_id))
+            if row is None:
+                raise DomainError('material_not_found', 404)
+            with self.db.transaction(immediate=True) as c:
+                c.execute('INSERT OR IGNORE INTO learning_material_link '
+                          '(owner_id,scope_kind,scope_id,version_id,created_at) VALUES (?,?,?,?,?)',
+                          (owner, kind, scope_id, version_id, utc_timestamp()))
+            return self.with_original(dict(row))
 
     def inherited_versions(self, owner, kind, scope_id):
         if kind == 'conversation':
@@ -114,7 +157,7 @@ class MaterialService:
 
     def create(self, identity, kind, scope_id, *, title, content=None, material_id=None,
                web_run_id=None, web_item_index=None, original=None):
-        with self.lock:
+        with self.lock, self.db._lock:
             owner = self.owned_scope(identity, kind, scope_id)
             if not isinstance(title, str) or not title.strip() or len(title) > 300:
                 raise DomainError('invalid_material_title', 422)
@@ -136,6 +179,8 @@ class MaterialService:
                 raise DomainError('invalid_material_content', 422)
             editing = material_id is not None
             material_id = material_id or str(uuid4())
+            visible_groups = {row['material_id'] for row in self.list(identity, kind, scope_id)['versions']
+                              if not row['purged_at']} if editing else set()
             with self.db.transaction(immediate=True) as c:
                 if web_run_id is not None:
                     duplicate = c.execute('''SELECT material_id FROM learning_task_material
@@ -151,7 +196,8 @@ class MaterialService:
                 if editing and previous is None:
                     raise DomainError('material_not_found', 404)
                 if previous and (previous['scope_kind'], previous['scope_id']) != (kind, scope_id):
-                    raise DomainError('material_scope_mismatch', 409)
+                    if not self.in_library(owner, material_id) or material_id not in visible_groups:
+                        raise DomainError('material_scope_mismatch', 409)
                 if previous and c.execute('SELECT 1 FROM learning_task_material WHERE owner_id=? AND material_id=? AND purged_at IS NOT NULL LIMIT 1', (owner, material_id)).fetchone():
                     raise DomainError('material_purged', 409)
                 version = int(previous['version']) + 1 if previous else 1
@@ -188,7 +234,7 @@ class MaterialService:
             if (selection['mode'] == 'unspecified' and ids) or (selection['mode'] != 'unspecified' and not ids):
                 raise DomainError('invalid_material_selection', 422)
             materials = []
-            inherited = self.inherited_versions(owner, kind, scope_id)
+            inherited = self.inherited_versions(owner, kind, scope_id) | self.linked_versions(owner, kind, scope_id)
             for version_id in ids:
                 row = self.db.fetchone('''SELECT id,material_id,version,title,content,url,content_kind
                     FROM learning_task_material WHERE id=? AND owner_id=? AND scope_kind=? AND scope_id=?

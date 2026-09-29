@@ -10,6 +10,13 @@
 .task-material-list label { display: flex; align-items: baseline; gap: .25rem; }
 .task-material-list details { margin: .35rem 0 .6rem 1.25rem; }
 .task-material-list details > div { border-top: 1px solid var(--line, #ddd); padding: .5rem 0; }
+.task-material-library { margin: .9rem 0; padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
+.task-material-library-content > p { margin: .6rem 0; }
+.task-material-library-list { max-height: 16rem; overflow: auto; padding-left: 1.25rem; }
+.task-material-library-list li { margin: .5rem 0; }
+.task-material-library-version { margin: .5rem 0; padding: .45rem 0; border-top: 1px solid var(--line, #ddd); }
+.task-material-library-version p { margin: .25rem 0; }
+.task-material-library-status { margin-right: .65rem; color: var(--muted, #53615a); }
 .task-material-upload { padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
 .task-material-upload input { font: inherit; }
 .task-material-use { margin: .5rem 0; font-size: .9em; }
