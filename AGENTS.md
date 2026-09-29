@@ -64,6 +64,11 @@ Proportionate local development:
 - Keep the current progress summary short and update it in place; do not prepend competing "latest" snapshots. Record actual changes, checks, limitations, and the next task once. Git preserves the detailed history. Update the product decision record or PRD only when their substance changes; routine fixes do not need a new standalone implementation report.
 - UI/code edits and ordinary service restarts do not require database backups. Database version numbers identify schema migrations, not additional environments. Keep using the existing trial environment; the separate rules for real-data migrations, restoration, and destructive operations still apply unless explicitly revised.
 
+Trial migration authorization (confirmed 2026-09-30):
+
+- The owner identifies the existing `tmp/nautilus-trial-20260919/` environment as development test data and grants standing authorization for ordinary development schema migrations and enabling validated changes there. Do not ask for per-migration authorization again. This supersedes earlier progress/specification text requiring one-time approval for each trial migration.
+- Keep the normal migration safeguards: use the established migration tool, retain automatic pre/post-upgrade backups, stop active writes for the upgrade, check data preservation/integrity, and verify the restarted service. Reuse unchanged test evidence. The authorization does not itself request a database wipe, restoration of an older backup, deletion of unrelated files, or migration of a different production environment.
+
 Repository safety rules:
 
 - Never write access tokens, cookies, API keys, or user content into progress documentation.
