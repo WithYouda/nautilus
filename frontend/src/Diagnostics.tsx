@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import { Bug, ChevronDown, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { Bug, Minus, Maximize2, Minimize2, Grip, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
 import { clearDiagnostics, getDiagnosticEntries, getDiagnosticStatus, setDiagnosticEnabled, type DiagnosticEntry, type DiagnosticStatus } from './diagnostics';
+import DialogPortal from './DialogPortal';
 import './styles/diagnostics.css';
 
 export function DiagnosticSettings({ onOpen }: { onOpen: () => void }) {
@@ -21,7 +22,7 @@ export function DiagnosticSettings({ onOpen }: { onOpen: () => void }) {
   }
   return <details className="diagnostic-settings"><summary>高级设置</summary>
     <label className="diagnostic-toggle"><input type="checkbox" checked={status?.enabled ?? false} disabled={!status || busy} onChange={event => void toggle(event.target.checked)} />开启诊断日志</label>
-    <p>开启后，右下角显示“日志”入口，可边操作边查看。设置立即生效；关闭后停止新增，已记录内容保留，可再次开启后查看或清空。</p>
+    <p>开启后，右下角显示“日志”入口，可拖动窗口、调整大小或最大化，最小化后回到“日志”按钮。设置立即生效；关闭后停止新增，已记录内容保留，可再次开启后查看或清空。</p>
     <p>仅记录操作结果、错误类别与关联编号，不记录资料、对话正文或凭据。本机自动轮转保留最近约 4 MiB，窗口显示最近 500 条；服务重启后仍可查看。</p>
     {status?.storage_error && <p role="alert">日志文件暂时无法读写，请检查本机存储。</p>}
     {status?.enabled && <button type="button" className="button button--quiet" onClick={onOpen}>打开日志窗口</button>}
@@ -33,9 +34,43 @@ const levels = { info: '信息', warning: '警告', error: '错误' };
 const modules: Record<string, string> = { system: '系统', runtime: '运行时', materials: '资料', ai: 'AI', learning: '学习', search: '搜索', settings: '设置' };
 const events: Record<string, string> = { 'request.finished': '请求结束', 'material.purge': '资料清除', 'service.started': '服务启动', 'service.stopped': '服务停止', 'runtime.error': '运行异常', 'runtime.warning': '运行警告' };
 
+type WindowBounds = { x: number; y: number; width: number; height: number };
+function fitWindow(bounds: WindowBounds): WindowBounds {
+  const width = Math.min(Math.max(300, bounds.width), window.innerWidth);
+  const height = Math.min(Math.max(240, bounds.height), window.innerHeight);
+  return { width, height, x: Math.max(0, Math.min(bounds.x, window.innerWidth - width)), y: Math.max(0, Math.min(bounds.y, window.innerHeight - height)) };
+}
+
 export default function Diagnostics() {
   const [enabled, setEnabled] = useState(false);
   const [open, setOpen] = useState(false);
+  const [maximized, setMaximized] = useState(false);
+  const [bounds, setBounds] = useState<WindowBounds>(() => fitWindow({ x: Math.max(16, (window.innerWidth - 760) / 2), y: 80, width: 760, height: 420 }));
+  const panel = useRef<HTMLElement>(null);
+  const gesture = useRef<{ pointerId: number; x: number; y: number; bounds: WindowBounds; resize: boolean } | null>(null);
+  useEffect(() => {
+    const fit = () => { gesture.current = null; setBounds(value => fitWindow(value)); };
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
+  useEffect(() => { if (open) panel.current?.focus(); }, [open]);
+  function startGesture(event: ReactPointerEvent<HTMLElement>, resize: boolean) {
+    if (maximized || event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, bounds, resize };
+  }
+  function moveGesture(event: ReactPointerEvent<HTMLElement>) {
+    const current = gesture.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    const dx = event.clientX - current.x, dy = event.clientY - current.y;
+    const initial = current.bounds;
+    setBounds(fitWindow(current.resize
+      ? { ...initial, width: Math.min(window.innerWidth - initial.x, Math.max(300, initial.width + dx)), height: Math.min(window.innerHeight - initial.y, Math.max(240, initial.height + dy)) }
+      : { ...initial, x: initial.x + dx, y: initial.y + dy }));
+  }
+  function stopGesture() { gesture.current = null; }
+
   const [entries, setEntries] = useState<DiagnosticEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [level, setLevel] = useState('all');
@@ -82,15 +117,19 @@ export default function Diagnostics() {
   const visible = entries.filter(entry => (level === 'all' || entry.level === level) && (module === 'all' || entry.module === module));
   return <>
     <button ref={trigger} type="button" className="diagnostic-launcher button button--quiet" aria-expanded={open} onClick={() => setOpen(value => !value)}><Bug size={15} />日志</button>
-    {open && <section className="diagnostic-panel" aria-label="诊断日志" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); } }}>
-      <header><strong>诊断日志</strong><span>{paused ? '已暂停刷新，记录继续' : '实时刷新'} · {visible.length} 条</span>
+    {open && <DialogPortal><section ref={panel} tabIndex={-1} role="dialog" aria-modal="false" className={`diagnostic-panel${maximized ? ' is-maximized' : ''}`} style={maximized ? { left: 0, top: 0, width: '100vw', height: '100dvh' } : { left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height }} aria-label="诊断日志" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); requestAnimationFrame(() => trigger.current?.focus()); } }}>
+      <header className="diagnostic-titlebar" onPointerDown={event => startGesture(event, false)} onPointerMove={moveGesture} onPointerUp={stopGesture} onPointerCancel={stopGesture} onLostPointerCapture={stopGesture}>
+        <strong tabIndex={0} title="拖动标题栏移动窗口；方向键微调位置" onKeyDown={event => { if (!maximized && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); setBounds(value => fitWindow({ ...value, x: value.x + (event.key === 'ArrowRight' ? 10 : event.key === 'ArrowLeft' ? -10 : 0), y: value.y + (event.key === 'ArrowDown' ? 10 : event.key === 'ArrowUp' ? -10 : 0) })); } }}>诊断日志</strong>
+        <button type="button" className="icon-button" title={maximized ? '还原窗口' : '最大化日志'} aria-label={maximized ? '还原窗口' : '最大化日志'} onClick={() => setMaximized(value => !value)}>{maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+        <button type="button" className="icon-button" title="最小化日志" aria-label="最小化日志" onClick={() => { setOpen(false); requestAnimationFrame(() => trigger.current?.focus()); }}><Minus size={18} /></button>
+      </header>
+      <div className="diagnostic-toolbar"><span>{paused ? '已暂停刷新，记录继续' : '实时刷新'} · {visible.length} 条</span>
         <label>级别<select aria-label="级别" value={level} onChange={event => setLevel(event.target.value)}><option value="all">全部</option><option value="info">信息</option><option value="warning">警告</option><option value="error">错误</option></select></label>
         <label>模块<select aria-label="模块" value={module} onChange={event => setModule(event.target.value)}><option value="all">全部</option>{Array.from(new Set(entries.map(entry => entry.module))).sort().map(value => <option key={value} value={value}>{modules[value] ?? value}</option>)}</select></label>
         <button type="button" className="icon-button" title={paused ? '继续刷新' : '暂停刷新'} aria-label={paused ? '继续刷新' : '暂停刷新'} onClick={() => setPaused(value => !value)}>{paused ? <Play size={15} /> : <Pause size={15} />}</button>
         <button type="button" className="icon-button" title="刷新日志" aria-label="刷新日志" onClick={() => void refresh()}><RefreshCw size={15} /></button>
         <button type="button" className="icon-button" title="清空日志" aria-label="清空日志" disabled={busy} onClick={() => void clear()}><Trash2 size={15} /></button>
-        <button type="button" className="icon-button" title="收起日志" aria-label="收起日志" onClick={() => { setOpen(false); trigger.current?.focus(); }}><ChevronDown size={18} /></button>
-      </header>
+      </div>
       {error && <p role="alert">{error}</p>}
       <div ref={list} className="diagnostic-entries" onScroll={event => { const node = event.currentTarget; following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40; }}>
         {!visible.length && <p>暂无符合条件的日志。操作应用后可在这里查看。</p>}
@@ -101,6 +140,11 @@ export default function Diagnostics() {
           {entry.request_id && <small>关联编号：{entry.request_id}</small>}
         </div></article>)}
       </div>
-    </section>}
+      {!maximized && <div className="diagnostic-resize" role="slider" aria-label="调整日志窗口大小" aria-valuetext={`${Math.round(bounds.width)} × ${Math.round(bounds.height)}`} aria-valuenow={Math.round(bounds.width)} aria-valuemin={Math.min(300, window.innerWidth)} aria-valuemax={window.innerWidth} tabIndex={0} title="拖动调整大小；方向键微调" onPointerDown={event => startGesture(event, true)} onPointerMove={moveGesture} onPointerUp={stopGesture} onPointerCancel={stopGesture} onLostPointerCapture={stopGesture} onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        setBounds(value => fitWindow({ ...value, width: Math.min(window.innerWidth - value.x, Math.max(300, value.width + (event.key === 'ArrowRight' ? 10 : event.key === 'ArrowLeft' ? -10 : 0))), height: Math.min(window.innerHeight - value.y, Math.max(240, value.height + (event.key === 'ArrowDown' ? 10 : event.key === 'ArrowUp' ? -10 : 0))) }));
+      }}><Grip size={16} /></div>}
+    </section></DialogPortal>}
   </>;
 }
