@@ -1,6 +1,6 @@
 .diagnostic-settings summary { cursor: pointer; font-size: 15px; font-weight: 600; }
 .diagnostic-settings .diagnostic-toggle { display: flex; align-items: center; gap: 8px; margin: 16px 0 10px; }
-.diagnostic-launcher { position: fixed; bottom: calc(12px + env(safe-area-inset-bottom)); right: 16px; z-index: 90; display: flex; align-items: center; gap: 6px; box-shadow: var(--shadow); }
+.diagnostic-launcher { position: fixed; bottom: calc(12px + env(safe-area-inset-bottom)); right: 16px; z-index: 90; display: flex; align-items: center; gap: 6px; box-shadow: var(--shadow); touch-action: none; user-select: none; cursor: move; }
 .diagnostic-panel { position: fixed; z-index: 100; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 32px #0003; }
 .diagnostic-panel.is-maximized { border-radius: 0; }
 .diagnostic-titlebar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: move; touch-action: none; user-select: none; }
@@ -22,3 +22,5 @@
 
 
 @media (max-width: 600px) { .diagnostic-toolbar { gap: 6px; padding: 8px; } .diagnostic-entry { grid-template-columns: 74px 32px minmax(0,1fr); gap: 6px; } .diagnostic-entry > div { grid-column: 1 / -1; } }
+
+.diagnostic-launcher.button:hover:not(:disabled) { transform: none; }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type RefObject, type PointerEvent as ReactPointerEvent } from 'react';
 import { Bug, Minus, Maximize2, Minimize2, Grip, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
 import { clearDiagnostics, getDiagnosticEntries, getDiagnosticStatus, setDiagnosticEnabled, type DiagnosticEntry, type DiagnosticStatus } from './diagnostics';
 import DialogPortal from './DialogPortal';
@@ -39,6 +39,46 @@ function fitWindow(bounds: WindowBounds): WindowBounds {
   const width = Math.min(Math.max(300, bounds.width), window.innerWidth);
   const height = Math.min(Math.max(240, bounds.height), window.innerHeight);
   return { width, height, x: Math.max(0, Math.min(bounds.x, window.innerWidth - width)), y: Math.max(0, Math.min(bounds.y, window.innerHeight - height)) };
+}
+
+function LogLauncher({ open, onOpen, buttonRef }: { open: boolean; onOpen: () => void; buttonRef: RefObject<HTMLButtonElement | null> }) {
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ pointerId: number; startX: number; startY: number; x: number; y: number } | null>(null);
+  const moved = useRef(false);
+  function fit(value: { x: number; y: number }) {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(value.x, window.innerWidth - (rect?.width ?? 80))), y: Math.max(0, Math.min(value.y, window.innerHeight - (rect?.height ?? 40))) };
+  }
+  useEffect(() => {
+    const resize = () => { drag.current = null; setPosition(value => value ? fit(value) : null); };
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+  return <button ref={buttonRef} type="button" className="diagnostic-launcher button button--quiet" title="点击打开日志；拖动移动按钮，方向键微调" aria-expanded={open}
+    style={position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto' } : undefined}
+    onPointerDown={event => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      moved.current = false;
+      const rect = event.currentTarget.getBoundingClientRect();
+      drag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: rect.x, y: rect.y };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }}
+    onPointerMove={event => {
+      const current = drag.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      const dx = event.clientX - current.startX, dy = event.clientY - current.startY;
+      if (!moved.current && Math.hypot(dx, dy) < 5) return;
+      moved.current = true;
+      setPosition(fit({ x: current.x + dx, y: current.y + dy }));
+    }}
+    onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}
+    onClick={event => { if (event.detail > 0 && moved.current) { event.preventDefault(); return; } onOpen(); }}
+    onKeyDown={event => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      const rect = event.currentTarget.getBoundingClientRect();
+      setPosition(fit({ x: rect.x + (event.key === 'ArrowRight' ? 10 : event.key === 'ArrowLeft' ? -10 : 0), y: rect.y + (event.key === 'ArrowDown' ? 10 : event.key === 'ArrowUp' ? -10 : 0) }));
+    }}><Bug size={15} />日志</button>;
 }
 
 export default function Diagnostics() {
@@ -116,7 +156,7 @@ export default function Diagnostics() {
   }
   const visible = entries.filter(entry => (level === 'all' || entry.level === level) && (module === 'all' || entry.module === module));
   return <>
-    <button ref={trigger} type="button" className="diagnostic-launcher button button--quiet" aria-expanded={open} onClick={() => setOpen(value => !value)}><Bug size={15} />日志</button>
+    <LogLauncher buttonRef={trigger} open={open} onOpen={() => setOpen(true)} />
     {open && <DialogPortal><section ref={panel} tabIndex={-1} role="dialog" aria-modal="false" className={`diagnostic-panel${maximized ? ' is-maximized' : ''}`} style={maximized ? { left: 0, top: 0, width: '100vw', height: '100dvh' } : { left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height }} aria-label="诊断日志" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); requestAnimationFrame(() => trigger.current?.focus()); } }}>
       <header className="diagnostic-titlebar" onPointerDown={event => startGesture(event, false)} onPointerMove={moveGesture} onPointerUp={stopGesture} onPointerCancel={stopGesture} onLostPointerCapture={stopGesture}>
         <strong tabIndex={0} title="拖动标题栏移动窗口；方向键微调位置" onKeyDown={event => { if (!maximized && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); setBounds(value => fitWindow({ ...value, x: value.x + (event.key === 'ArrowRight' ? 10 : event.key === 'ArrowLeft' ? -10 : 0), y: value.y + (event.key === 'ArrowDown' ? 10 : event.key === 'ArrowUp' ? -10 : 0) })); } }}>诊断日志</strong>
