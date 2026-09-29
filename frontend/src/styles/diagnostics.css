@@ -1,0 +1,20 @@
+.diagnostic-settings summary { cursor: pointer; font-size: 15px; font-weight: 600; }
+.diagnostic-settings .diagnostic-toggle { display: flex; align-items: center; gap: 8px; margin: 16px 0 10px; }
+.diagnostic-launcher { position: fixed; bottom: calc(12px + env(safe-area-inset-bottom)); right: 16px; z-index: 90; display: flex; align-items: center; gap: 6px; box-shadow: var(--shadow); }
+.diagnostic-panel { position: fixed; z-index: 100; bottom: 0; left: 0; right: 0; height: min(36dvh, 340px); min-height: 170px; display: flex; flex-direction: column; background: var(--paper); color: var(--ink); border-top: 1px solid var(--line); box-shadow: 0 -6px 24px #0002; padding-bottom: env(safe-area-inset-bottom); }
+.diagnostic-panel header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+.diagnostic-panel header > span { font-size: 11px; color: var(--muted); margin-right: auto; }
+.diagnostic-panel label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.diagnostic-panel select { max-width: 110px; font: inherit; }
+.diagnostic-panel > p { padding: 0 16px; font-size: 12px; }
+.diagnostic-entries { min-height: 0; flex: 1; overflow: auto; padding: 6px 16px; font-family: ui-monospace, monospace; font-size: 12px; }
+.diagnostic-entry { display: grid; grid-template-columns: 85px 35px 55px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.diagnostic-entry > div { display: flex; flex-wrap: wrap; gap: 5px 12px; min-width: 0; overflow-wrap: anywhere; }
+.diagnostic-entry small { width: 100%; color: var(--muted); user-select: all; }
+.diagnostic-entry--error > strong { color: #a12c31; }
+.diagnostic-entry--warning > strong { color: #865b19; }
+.v6-workspace:has(.diagnostic-panel) { --diagnostic-height: max(170px, min(36dvh, 340px)); height: calc(100dvh - var(--diagnostic-height)); min-height: 0; }
+.diagnostic-launcher[aria-expanded="true"] { visibility: hidden; }
+@media (max-width: 600px) { .diagnostic-panel { height: 42dvh; } .diagnostic-panel header { gap: 6px; padding: 8px; } .diagnostic-entry { grid-template-columns: 74px 32px minmax(0,1fr); gap: 6px; } .diagnostic-entry > div { grid-column: 1 / -1; } }
+
+@media (max-width: 600px) { .v6-workspace:has(.diagnostic-panel) { --diagnostic-height: max(170px, 42dvh); height: calc(100dvh - var(--diagnostic-height)); min-height: 0; } }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { SearchTrace } from './SearchResults';
 import { getMaterialPurge, getMaterials, purgeMaterial, saveMaterial, type AppliedSourceScope, type MaterialKind, type MaterialVersion, type PurgeReport, type SourceScope } from './api';
 import { getPreferences, type ConflictPolicy } from './preferences';
+import DialogPortal from './DialogPortal';
 import './styles/task-materials.css';
 
 export const emptySourceScope = (): SourceScope => ({ mode: 'unspecified', version_ids: [] });
@@ -33,8 +34,6 @@ function safeSourceUrl(value: string | null) {
   try { const url = new URL(value ?? ''); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
   catch { return null; }
 }
-const purgeStatusLabel = (status: PurgeReport['status']) => ({ not_requested: '尚未请求', pending: '处理中', partial: '部分完成', complete: '已完成' })[status];
-const fileStatusLabel = (status: PurgeReport['files'][number]['status']) => ({ cleared: '已清除', failed: '失败' })[status];
 const policyLabel = (policy: ConflictPolicy) => ({ ask: '询问我', balanced: '由 AI 综合判断', materials: '以所选资料为准' })[policy];
 function latestActive(versions: MaterialVersion[]) {
   return [...new Map(versions.filter(item => !item.purged_at).sort((a, b) => a.version - b.version).map(item => [item.material_id, item])).values()];
@@ -64,10 +63,16 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
   const [fileReading, setFileReading] = useState(false);
   const [defaultPolicy, setDefaultPolicy] = useState<ConflictPolicy | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const purgeDialog = useRef<HTMLElement>(null);
+  const purgeCancel = useRef<HTMLButtonElement>(null);
+  const purgeReturnFocus = useRef<HTMLElement | null>(null);
+  const purgeBusy = useRef(false);
   const [purgeId, setPurgeId] = useState<string | null>(null);
-  const [purgeReport, setPurgeReport] = useState<{ materialId: string; report: PurgeReport } | null>(null);
+  const [purgeNotice, setPurgeNotice] = useState('');
+  const [purgeHints, setPurgeHints] = useState<Record<string, PurgeReport['status']>>({});
   const previousId = useRef<string | null>(null);
   const epoch = useRef(0);
+  purgeBusy.current = busy;
   useEffect(() => {
     let active = true;
     const update = () => { void getPreferences().then(value => { if (active) setDefaultPolicy(value.conflict_policy); }).catch(() => { if (active) setDefaultPolicy(null); }); };
@@ -79,10 +84,39 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     const current = ++epoch.current;
     if (previousId.current && previousId.current !== id) setOpen(false);
     previousId.current = id;
-    setFileReading(false); setVersions([]); onVersions?.([]); setEditing(null); setTitle(''); setContent(''); setError(''); setBusy(false); setPurgeId(null); setPurgeReport(null);
+    setFileReading(false); setVersions([]); onVersions?.([]); setEditing(null); setTitle(''); setContent(''); setError(''); setBusy(false); setPurgeId(null); setPurgeNotice(''); setPurgeHints({});
     if (id) void getMaterials(kind, id).then(data => { if (epoch.current === current) { setVersions(data.versions); onVersions?.(data.versions); } }).catch(() => { if (epoch.current === current) setError('资料列表加载失败，可重新打开重试。'); });
     return () => { epoch.current++; };
   }, [kind, id, identity]);
+  useEffect(() => {
+    if (!id) return;
+    const current = epoch.current;
+    const cleared = [...new Set(versions.filter(item => item.purged_at).map(item => item.material_id))]
+      .filter(materialId => versions.filter(item => item.material_id === materialId).every(item => item.purged_at));
+    if (!cleared.length) return;
+    void Promise.all(cleared.map(async materialId => {
+      try {
+        const report = await getMaterialPurge(kind, id, materialId);
+        if (epoch.current === current) setPurgeHints(previous => ({ ...previous, [materialId]: report.status }));
+      } catch { /* The cleared row stays hidden; retry state cannot be inferred from a failed lookup. */ }
+    }));
+  }, [kind, id, versions]);
+  useEffect(() => {
+    if (!purgeId) return;
+    purgeReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    purgeCancel.current?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!purgeBusy.current) setPurgeId(null); }
+      if (event.key !== 'Tab' || !purgeDialog.current) return;
+      const buttons = [...purgeDialog.current.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+      if (!buttons.length) { event.preventDefault(); return; }
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => { document.removeEventListener('keydown', onKeyDown, true); purgeReturnFocus.current?.focus(); };
+  }, [purgeId]);
   async function refresh(target: string, expectedEpoch = epoch.current) {
     if (epoch.current !== expectedEpoch || (id && id !== target)) return [];
     const data = await getMaterials(kind, target);
@@ -117,12 +151,6 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     } catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '文件读取失败。'); }
     finally { if (epoch.current === current) { setFileReading(false); setBusy(false); } if (fileInput.current) fileInput.current.value = ''; }
   }
-  async function showPurgeReport(materialId: string) {
-    if (!id) return;
-    const current = epoch.current;
-    try { const report = await getMaterialPurge(kind, id, materialId); if (epoch.current === current) setPurgeReport({ materialId, report }); }
-    catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '清除状态加载失败'); }
-  }
   async function purge() {
     if (!id || !purgeId) return;
     const current = epoch.current;
@@ -131,23 +159,31 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     try {
       const result = await purgeMaterial(kind, id, materialId);
       if (epoch.current !== current) return;
-      setPurgeReport({ materialId, report: result.purge });
-      await refresh(id, current);
-      if (epoch.current !== current) return;
-      // Keep the invalid reference until the user explicitly chooses a new scope.
-      await onPurged();
-      if (epoch.current === current && result.purge.status === 'complete') setPurgeId(null);
-    } catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '清除未完成，可重试。'); }
+      setPurgeHints(previous => ({ ...previous, [materialId]: result.purge.status }));
+      setPurgeNotice(result.purge.status === 'complete' ? '资料及关联内容已清除。' : result.purge.status === 'pending' ? '清除仍在处理中，请稍后重试。' : '部分内容未能清除，请重试。');
+      setPurgeId(null);
+      try {
+        await refresh(id, current);
+        if (epoch.current !== current) return;
+        // Keep the invalid reference until the user explicitly chooses a new scope.
+        await onPurged();
+      } catch { if (epoch.current === current) setError('清除结果已返回，但资料或回答列表更新失败，请重新打开对话。'); }
+    } catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? `清除未完成，可重试。${reason.message}` : '清除未完成，可重试。'); }
     finally { if (epoch.current === current) setBusy(false); }
   }
   const active = versions.filter(item => !item.purged_at);
-  const groups = [...new Map([...versions].sort((a, b) => a.version - b.version).map(item => [item.material_id, item])).values()];
+  const groups = [...new Map(versions.filter(item => !item.purged_at).sort((a, b) => a.version - b.version).map(item => [item.material_id, item])).values()];
+  const retryGroups = [...new Map(versions.map(item => [item.material_id, item])).values()]
+    .filter(item => ['partial', 'pending'].includes(purgeHints[item.material_id]));
   const selected = scope.version_ids.filter(versionId => active.some(item => item.id === versionId));
   const selectedChars = active.filter(item => selected.includes(item.id)).reduce((total, item) => total + (item.content?.length ?? 0), 0);
   return <div className="task-materials">
     <button className="button button--quiet" type="button" aria-expanded={open} onClick={() => { const current = epoch.current; setOpen(value => !value); if (id) void refresh(id, current).catch(() => { if (epoch.current === current) setError('资料列表加载失败'); }); else if (onEnsure) void onEnsure().catch(reason => { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '无法创建对话'); }); }}>资料{scope.mode !== 'unspecified' ? ` · ${selected.length}` : ''}</button>
     {open && <section className="task-materials-panel" aria-label="本对话资料" onKeyDown={event => { if (event.key === 'Enter' && event.target instanceof HTMLInputElement) event.preventDefault(); }}>
-      <h3>本对话资料</h3><p>保存或上传成功后即可在本对话参考。联网由工具栏单独控制。取消参考不会删除历史回答；明确选择严格范围时，会隔离范围外的旧对话，答案只依据所选资料。</p>
+      <h3>本对话资料</h3>
+      {purgeNotice && <p className="task-material-purge-notice" role="status">{purgeNotice}</p>}
+      {retryGroups.map(group => <p className="task-material-purge-retry" role="alert" key={group.material_id}>“{group.title || '资料'}”{purgeHints[group.material_id] === 'pending' ? '的清除仍在处理中。' : '有部分内容未能清除。'}<button type="button" className="text-button" disabled={busy} onClick={() => { setPurgeId(group.material_id); setPurgeNotice(''); }}>重试清除</button></p>)}
+      <p>保存或上传成功后即可在本对话参考。联网由工具栏单独控制。取消参考不会删除历史回答；明确选择严格范围时，会隔离范围外的旧对话，答案只依据所选资料。</p>
       {editing && <p>正在编辑“{editing.title}”。上传文件会保存为这份资料的新版本；旧版本和原件继续保留。</p>}
       <label className="task-material-upload">上传资料（UTF-8 文本、DOCX 或文字版 PDF）<input ref={fileInput} type="file" disabled={disabled || busy || !id} accept=".txt,.md,.markdown,.json,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,.sql,.sh,.rs,.go,.java,.c,.cpp,.h,.docx,.pdf" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></label>
       {fileReading && <p role="status">正在读取资料…</p>}
@@ -159,12 +195,10 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
       {scope.version_ids.some(versionId => !active.some(item => item.id === versionId)) && <p role="alert">原来选择的部分资料已不可用。<button type="button" className="button button--quiet" disabled={disabled || busy} onClick={() => change({ ...scope, mode: 'unspecified', version_ids: [] })}>取消全部资料参考，重新选择</button></p>}
       {!id && <p>正在打开当前对话，随后即可上传资料。</p>}
       {groups.length > 0 && <ul className="task-material-list">{groups.map(group => <li key={group.material_id}>
-        <label><input type="checkbox" disabled={disabled || busy || !!group.purged_at} checked={versions.some(item => item.material_id === group.material_id && selected.includes(item.id))} onChange={() => { const own = versions.filter(item => item.material_id === group.material_id).map(item => item.id); const isSelected = own.some(value => selected.includes(value)); const remaining = selected.filter(value => !own.includes(value)); change({ ...scope, mode: isSelected && remaining.length === 0 ? 'unspecified' : scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: isSelected ? remaining : [...remaining, group.id] }); }} /><strong>{group.title || '已清除的资料'}</strong> · {materialKindLabel(group.content_kind)}{group.inherited && <span> · 从原对话继承（只读）</span>}{group.purged_at && <span> · 已清除</span>}</label>
+        <label><input type="checkbox" disabled={disabled || busy} checked={versions.some(item => item.material_id === group.material_id && selected.includes(item.id))} onChange={() => { const own = versions.filter(item => item.material_id === group.material_id).map(item => item.id); const isSelected = own.some(value => selected.includes(value)); const remaining = selected.filter(value => !own.includes(value)); change({ ...scope, mode: isSelected && remaining.length === 0 ? 'unspecified' : scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: isSelected ? remaining : [...remaining, group.id] }); }} /><strong>{group.title}</strong> · {materialKindLabel(group.content_kind)}{group.inherited && <span> · 从原对话继承（只读）</span>}</label>
         {safeSourceUrl(group.url) && <a href={safeSourceUrl(group.url)!} target="_blank" rel="noopener noreferrer">来源网页</a>}
-        {!group.purged_at && <details><summary>查看当前版本和历史</summary>{versions.filter(item => item.material_id === group.material_id && !item.purged_at).map(item => <div key={item.id}><p>第 {item.version} 版 · {item.title}{item.inherited ? ' · 继承（只读）' : ''}{selected.includes(item.id) ? ' · 当前使用' : ''}</p><pre>{item.content}</pre>{id && <MaterialOriginal version={item} kind={kind} scopeId={id} />}{!item.inherited && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setEditing(item); setTitle(item.title ?? ''); setContent(item.content ?? ''); }}>编辑为新版本</button>}</div>)}</details>}
-        {!group.purged_at && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setPurgeId(group.material_id); void showPurgeReport(group.material_id); }}>清除</button>}
-        {group.purged_at && <button type="button" className="text-button" disabled={busy} onClick={() => void showPurgeReport(group.material_id)}>查看清除状态</button>}
-        {group.purged_at && purgeReport?.materialId === group.material_id && ['partial', 'pending'].includes(purgeReport.report.status) && <button type="button" className="text-button" disabled={busy} onClick={() => setPurgeId(group.material_id)}>重试未完成的清除</button>}
+        <details><summary>查看当前版本和历史</summary>{versions.filter(item => item.material_id === group.material_id && !item.purged_at).map(item => <div key={item.id}><p>第 {item.version} 版 · {item.title}{item.inherited ? ' · 继承（只读）' : ''}{selected.includes(item.id) ? ' · 当前使用' : ''}</p><pre>{item.content}</pre>{id && <MaterialOriginal version={item} kind={kind} scopeId={id} />}{!item.inherited && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setEditing(item); setTitle(item.title ?? ''); setContent(item.content ?? ''); }}>编辑为新版本</button>}</div>)}</details>
+        <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setPurgeId(group.material_id); setPurgeNotice(''); }}>清除</button>
       </li>)}</ul>}
       <div className="task-material-editor">
         <h4>{editing ? `编辑 ${editing.title}，保存为新版本` : '粘贴文本资料'}</h4>
@@ -174,9 +208,8 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
         {editing && <button type="button" className="text-button" onClick={() => { setEditing(null); setTitle(''); setContent(''); }}>取消编辑</button>}
       </div>
       {candidates.length > 0 && <details><summary>从本对话已取得内容的网页结果保存</summary><ul>{candidates.map(item => <li key={`${item.runId}:${item.itemIndex}`}><strong>{item.title}</strong><p>{item.text.slice(0, 200)}{item.text.length > 200 ? '…' : ''}</p><button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => void save({ title: item.title, web_run_id: item.runId, web_item_index: item.itemIndex })}>保存此网页内容</button></li>)}</ul><p>搜索取得内容不代表已核实网页真伪。</p></details>}
-      {purgeId && <div className="task-material-purge" role="alert"><p>确认彻底清除？这份资料的所有版本及保存的原件、取得该网页内容的原检索回答，以及使用它的后续回答都会一起清除。原对话和其他分支中使用这些内容的回答也会受影响。同一次检索保存的其他资料也可能联动清除。此操作不可撤销。</p><button type="button" className="button button--danger" disabled={busy} onClick={() => void purge()}>确认清除</button><button type="button" className="button button--quiet" onClick={() => setPurgeId(null)}>取消</button></div>}
-      {purgeReport && <p role="status">清除状态：{purgeStatusLabel(purgeReport.report.status)}。{purgeReport.report.files.map(file => `${file.name} ${fileStatusLabel(file.status)}`).join('；')}{purgeReport.report.external_limits.length ? `；外部限制：${purgeReport.report.external_limits.join('；')}` : ''}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </section>}
+    {purgeId && <DialogPortal><div className="dialog-backdrop task-material-purge-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setPurgeId(null); }}><section ref={purgeDialog} className="task-material-purge-dialog" role="dialog" aria-modal="true" aria-labelledby="task-material-purge-title" onKeyDown={event => event.stopPropagation()}><h2 id="task-material-purge-title">清除这份资料？</h2><p>这会永久删除这份资料的所有版本、保存的原件，以及相关回答；原对话、分支和同一次检索保存的其他资料也可能受影响。无法撤销。已下载到设备的副本不会受影响。</p>{busy && <p role="status">正在清除…</p>}{error && <p className="form-error" role="alert">{error}</p>}<div className="task-material-purge-actions"><button ref={purgeCancel} type="button" className="button button--quiet" disabled={busy} onClick={() => setPurgeId(null)}>取消</button><button type="button" className="button button--danger" disabled={busy} onClick={() => void purge()}>{busy ? '清除中' : '确认清除'}</button></div></section></div></DialogPortal>}
   </div>;
 }

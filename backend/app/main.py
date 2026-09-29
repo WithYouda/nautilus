@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import logging
 import os
+from time import monotonic
+from uuid import uuid4
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from httpx import AsyncBaseTransport
 
+from .diagnostics import DiagnosticService, RuntimeDiagnosticHandler
+from .routers import diagnostics
 from . import __version__
 from .agent_runtime import AgentRuntime
 from .ai_runtime import AiRunManager
@@ -150,6 +154,11 @@ def create_app(
         app.state.outbound = outbound_approvals
         app.state.preferences = preferences_service
         app.state.materials = material_service
+        diagnostic_service = DiagnosticService(app_settings.data_dir / 'runtime' / 'diagnostics')
+        app.state.diagnostics = diagnostic_service
+        runtime_handler = RuntimeDiagnosticHandler(diagnostic_service, identity['id'])
+        logging.getLogger('nautilus').addHandler(runtime_handler)
+        diagnostic_service.record(identity['id'], module='system', event='service.started')
         app.state.conversations = conversation_service
         app.state.ai_runs = ai_run_manager
         app.state.model_discovery = model_discovery
@@ -159,6 +168,9 @@ def create_app(
         try:
             yield
         finally:
+            diagnostic_service.record(identity['id'], module='system', event='service.stopped')
+            logging.getLogger('nautilus').removeHandler(runtime_handler)
+            diagnostic_service.close()
             outbound_approvals.close()
             await discussion_service.shutdown()
             await ai_run_manager.shutdown()
@@ -181,6 +193,32 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    @app.middleware('http')
+    async def diagnostic_requests(request, call_next):
+        request.state.diagnostic_id = str(uuid4())
+        started = monotonic()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            response.headers['X-Nautilus-Request-ID'] = request.state.diagnostic_id
+            if request.url.path.startswith('/api/diagnostics'):
+                response.headers['Cache-Control'] = 'no-store'
+            return response
+        finally:
+            owner = getattr(request.state, 'diagnostic_owner', None)
+            service = getattr(request.app.state, 'diagnostics', None)
+            route = getattr(request.scope.get('route'), 'path', None)
+            if owner and service and route and not route.startswith('/api/diagnostics'):
+                group = route.split('/')[2]
+                module = {'ai': 'ai', 'learning': 'learning', 'materials': 'materials',
+                          'search': 'search', 'preferences': 'settings'}.get(group, 'system')
+                service.record(owner, module=module, event='request.finished',
+                    level='error' if status >= 500 else 'warning' if status >= 400 else 'info',
+                    request_id=request.state.diagnostic_id, method=request.method, route=route,
+                    status=status, code=f'HTTP_{status}', duration_ms=round((monotonic() - started) * 1000))
+
+    app.include_router(diagnostics.router)
     app.include_router(system.router)
     app.include_router(auth.router)
     app.include_router(plans.router)

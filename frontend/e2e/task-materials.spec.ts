@@ -82,9 +82,36 @@ test('settings, automatic upload references, independent network, versions and p
   await expect(panel.getByLabel('资料冲突时')).toHaveValue('materials');
   await panel.getByLabel('资料冲突时').selectOption('');
   await expect(panel.getByLabel('资料冲突时')).toContainText('沿用默认（由 AI 综合判断）');
+  let purgeRequests = 0;
+  page.on('request', request => { if (request.method() === 'POST' && /\/purge$/.test(request.url())) purgeRequests++; });
+  await panel.evaluate(element => { element.scrollTop = element.scrollHeight; });
   await panel.getByRole('button', { name: '清除', exact: true }).click();
-  await panel.getByRole('button', { name: '确认清除' }).click();
-  await expect(panel.getByRole('status')).toContainText('清除状态');
+  const purgeDialog = page.getByRole('dialog', { name: '清除这份资料？' });
+  await expect(purgeDialog).toBeVisible();
+  expect(Math.abs((await purgeDialog.boundingBox())!.y + (await purgeDialog.boundingBox())!.height / 2 - (await page.evaluate(() => innerHeight)) / 2)).toBeLessThan(30);
+  await purgeDialog.getByRole('button', { name: '取消' }).click();
+  await expect(purgeDialog).toHaveCount(0);
+  expect(purgeRequests).toBe(0);
+  await expect(panel.getByRole('checkbox', { name: '合成教材.txt · 文本资料' })).toBeVisible();
+  await panel.getByRole('button', { name: '清除', exact: true }).click();
+  await purgeDialog.getByRole('button', { name: '取消' }).focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(purgeDialog.getByRole('button', { name: '确认清除' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(purgeDialog).toHaveCount(0);
+  expect(purgeRequests).toBe(0);
+  await page.setViewportSize({ width: 390, height: 720 });
+  await panel.getByRole('button', { name: '清除', exact: true }).click();
+  await expect(purgeDialog).toBeVisible();
+  const mobileBox = (await purgeDialog.boundingBox())!;
+  expect(mobileBox.x).toBeGreaterThanOrEqual(0);
+  expect(mobileBox.x + mobileBox.width).toBeLessThanOrEqual(390);
+  await expect(purgeDialog.getByRole('button', { name: '确认清除' })).toBeInViewport();
+  await purgeDialog.getByRole('button', { name: '确认清除' }).click();
+  await expect(panel.getByRole('status')).toContainText('资料及关联内容已清除');
+  await expect(panel.getByRole('checkbox', { name: '合成教材.txt · 文本资料' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: '查看清除状态' })).toHaveCount(0);
+  await expect(panel).not.toContainText('清除状态：');
   // A1 keeps invalid references until the user explicitly repairs the scope.
   await expect(panel.getByLabel('只依据所选资料（严格范围）')).toBeChecked();
   await expect(panel.getByRole('link', { name: '下载原件：合成教材.txt' })).toHaveCount(0);
@@ -96,13 +123,40 @@ test('settings, automatic upload references, independent network, versions and p
   await page.reload();
   await expect(page.locator('.ai-composer').getByRole('button', { name: /联网搜索/ })).toBeEnabled();
   await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
-  await panel.getByRole('button', { name: '查看清除状态' }).click();
-  await expect(panel.getByRole('status')).toContainText('清除状态');
+  await expect(panel.getByRole('checkbox', { name: '合成教材.txt · 文本资料' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: '查看清除状态' })).toHaveCount(0);
+  await expect(panel).not.toContainText('清除状态：');
+});
+
+test('partial purge stays actionable and retry completes', async ({ page }) => {
+  await authorize(page);
+  await page.getByRole('button', { name: '学习室', exact: true }).click();
+  await expect(page.locator('.ai-composer').getByRole('button', { name: /联网搜索/ })).toBeEnabled();
+  await page.getByRole('button', { name: '新建对话', exact: true }).click();
+  await page.locator('.ai-composer').getByRole('button', { name: '资料', exact: true }).click();
+  const panel = page.locator('.task-materials-panel');
+  await expect(panel.getByLabel(/上传资料/)).toBeEnabled();
+  await panel.getByLabel(/上传资料/).setInputFiles({ name: '待清除.txt', mimeType: 'text/plain', buffer: Buffer.from('用于测试部分清除') });
+  await expect(panel.getByRole('checkbox', { name: '待清除.txt · 文本资料' })).toBeVisible();
+  await page.route('**/api/materials/**/purge', async route => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ purge: { status: 'partial', files: [{ name: 'private-file-name.txt', status: 'failed' }], external_limits: [] } }) });
+    await page.unroute('**/api/materials/**/purge');
+  });
+  await panel.getByRole('button', { name: '清除', exact: true }).click();
+  await page.getByRole('dialog', { name: '清除这份资料？' }).getByRole('button', { name: '确认清除' }).click();
+  await expect(panel.getByText('部分内容未能清除，请重试。')).toBeVisible();
+  await expect(panel.getByRole('button', { name: '重试清除' })).toBeVisible();
+  await expect(panel).not.toContainText('private-file-name.txt');
+  await panel.getByRole('button', { name: '重试清除' }).click();
+  await page.getByRole('dialog', { name: '清除这份资料？' }).getByRole('button', { name: '确认清除' }).click();
+  await expect(panel.getByRole('status')).toContainText('资料及关联内容已清除');
+  await expect(panel.getByRole('checkbox', { name: '待清除.txt · 文本资料' })).toHaveCount(0);
 });
 
 test('long uploaded materials and selections beyond eight survive refresh', async ({ page }) => {
   await authorize(page);
   await page.getByRole('button', { name: '学习室', exact: true }).click();
+  await expect(page.locator('.ai-composer').getByRole('button', { name: /联网搜索/ })).toBeEnabled();
   await page.getByRole('button', { name: '新建对话', exact: true }).click();
   await page.locator('.ai-composer').getByRole('button', { name: '资料', exact: true }).click();
   const panel = page.locator('.task-materials-panel');

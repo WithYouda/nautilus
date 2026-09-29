@@ -98,6 +98,12 @@ async def purge_material(scope_kind: ScopeKind, scope_id: str, material_id: str,
             if not any(item['material_id'] == material_id for item in versions):
                 raise DomainError('not_found', 404)
             result = service.purge(identity, material_id)
+            report = result['purge']
+            request.app.state.diagnostics.record(identity['id'], module='materials', event='material.purge',
+                level='info' if report['status'] == 'complete' else 'warning',
+                request_id=request.state.diagnostic_id, result=report['status'],
+                cleared_count=sum(item['status'] == 'cleared' for item in report['files']),
+                failed_count=sum(item['status'] == 'failed' for item in report['files']))
             request.app.state.ai_runs.forget_material_runs(result['affected_run_ids'])
             request.app.state.discussions.forget_purged_turns()
             return result

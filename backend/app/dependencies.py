@@ -95,4 +95,5 @@ def current_identity(request: Request) -> dict[str, Any]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="需要先完成本地授权",
         )
+    request.state.diagnostic_owner = identity['id']
     return identity

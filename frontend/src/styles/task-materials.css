@@ -1,5 +1,5 @@
 .task-materials { position: relative; display: inline-block; }
-.task-materials-panel { position: absolute; bottom: 100%; right: 0; z-index: 20; width: min(32rem, 90vw); max-height: min(70vh, 38rem); overflow: auto; padding: 1rem; background: var(--paper, #fff); color: inherit; border: 1px solid var(--line, #ccc); border-radius: .75rem; box-shadow: 0 10px 30px #0002; }
+.task-materials-panel { position: fixed; bottom: calc(88px + var(--diagnostic-height, 0px)); right: 16px; z-index: 40; box-sizing: border-box; width: min(32rem, calc(100vw - 24px)); max-height: min(70dvh, calc(100dvh - 160px - var(--diagnostic-height, 0px))); overflow: auto; padding: 1rem; background: var(--paper, #fff); color: inherit; border: 1px solid var(--line, #ccc); border-radius: .75rem; box-shadow: 0 10px 30px #0002; }
 .task-materials-panel label { display: block; margin: .65rem 0; }
 .task-materials-panel input:not([type=checkbox]), .task-materials-panel textarea, .task-materials-panel select { display: block; width: 100%; margin-top: .25rem; }
 .ai-composer .task-materials-panel textarea { height: 7rem; min-height: 7rem; max-height: 16rem; resize: vertical; }
@@ -13,6 +13,13 @@
 .task-material-upload { padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
 .task-material-upload input { font: inherit; }
 .task-material-use { margin: .5rem 0; font-size: .9em; }
+.task-material-purge-backdrop { align-items: center; padding: 16px; }
+.task-material-purge-dialog { box-sizing: border-box; width: min(30rem, 100%); max-height: calc(100dvh - 32px); overflow: auto; padding: 1.25rem; border: 1px solid var(--line, #ccc); border-radius: .75rem; background: var(--paper, #fff); color: var(--ink, inherit); box-shadow: 0 20px 50px #0004; }
+.task-material-purge-dialog h2 { margin: 0 0 .75rem; font-size: 1.25rem; }
+.task-material-purge-dialog p { margin: 0 0 1rem; line-height: 1.6; }
+.task-material-purge-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
+.task-material-purge-notice, .task-material-purge-retry { padding: .5rem .65rem; border-radius: .4rem; background: var(--paper-soft, #f4f7f5); }
+.task-material-purge-retry button { margin-left: .4rem; }
 @media (max-width: 600px) {
-  .task-materials-panel { position: fixed; left: 12px; right: 12px; bottom: 88px; width: auto; max-height: calc(100dvh - 160px); box-sizing: border-box; z-index: 1000; }
+  .task-materials-panel { position: fixed; left: 12px; right: 12px; bottom: calc(88px + var(--diagnostic-height, 0px)); width: auto; max-height: calc(100dvh - 160px - var(--diagnostic-height, 0px)); box-sizing: border-box; }
 }

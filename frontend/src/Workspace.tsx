@@ -1,3 +1,4 @@
+import Diagnostics from './Diagnostics';
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { BookOpen, Bot, ChevronLeft, ChevronRight, Compass, History, LogOut, Menu, MessageSquareText, Settings2, X } from "lucide-react";
 import { getAiProvider, type Health, type AiProvider, type AiContextScope, type Identity, type LearningRoomBrief } from "./api";
@@ -205,6 +206,7 @@ export default function Workspace({ health, identity, onLogout }: {
       <AiCompanionPanel provider={aiProvider} onOpenLearning={() => openRoom("")} onOpenProvider={() => setProviderDialogOpen(true)} />
     </>}
     {mode === "manage" && companionDrawerOpen && <DialogPortal><div className="v6-companion-drawer-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setCompanionDrawerOpen(false); }}><section className="v6-companion-drawer" role="dialog" aria-modal="true" aria-label="AI 学习伙伴抽屉"><button className="icon-button v6-companion-drawer-close" type="button" onClick={() => setCompanionDrawerOpen(false)} aria-label="关闭 AI 学习伙伴"><X size={17} /></button><AiCompanionPanel provider={aiProvider} onOpenLearning={() => { setCompanionDrawerOpen(false); openRoom(""); }} onOpenProvider={() => { setCompanionDrawerOpen(false); setProviderDialogOpen(true); }} /></section></div></DialogPortal>}
+    <Diagnostics key={identity?.id ?? "local"} />
   </main>;
 }
 function restoredWorkspaceView(): WorkspaceView {
