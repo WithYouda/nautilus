@@ -419,8 +419,14 @@ export type MaterialKind = 'conversation' | 'discussion';
 export function getMaterials(kind: MaterialKind, id: string): Promise<{ versions: MaterialVersion[] }> {
   return request(`/api/materials/${kind}/${id}`);
 }
-export function getMaterialLibrary(): Promise<{ versions: MaterialVersion[] }> {
+export function getMaterialLibrary(): Promise<{ versions: MaterialVersion[]; purge_retry_ids?: string[] }> {
   return request('/api/materials/library');
+}
+export function removeMaterialFromLibrary(materialId: string): Promise<{ removed: boolean }> {
+  return request(`/api/materials/library/${encodeURIComponent(materialId)}/remove`, { method: 'POST' });
+}
+export function purgeLibraryMaterial(materialId: string): Promise<{ purge: PurgeReport; affected_run_ids?: string[] }> {
+  return request(`/api/materials/library/${encodeURIComponent(materialId)}/purge`, { method: 'POST' });
 }
 export function storeMaterialInLibrary(kind: MaterialKind, id: string, materialId: string): Promise<{ stored: boolean }> {
   return request(`/api/materials/${kind}/${id}/${materialId}/library`, { method: 'POST' });

@@ -61,7 +61,7 @@ class MaterialService:
             (version['id'],)) if not version.get('purged_at') else None
         row = self.db.fetchone('SELECT owner_id FROM learning_task_material WHERE id=?', (version['id'],))
         return {**version, 'original': dict(original) if original else None,
-                'library': bool(row and self.in_library(row['owner_id'], version['material_id']))}
+                'library': bool(row and self.library_visible(row['owner_id'], version['material_id']))}
 
     def original(self, identity, kind, scope_id, version_id):
         # Access is scoped to the current conversation, including explicit inherited versions.
@@ -78,6 +78,20 @@ class MaterialService:
         return self.db.fetchone('SELECT 1 FROM learning_material_library WHERE owner_id=? AND material_id=?',
                                (owner, material_id)) is not None
 
+    def library_visible(self, owner, material_id):
+        return self.db.fetchone('SELECT 1 FROM learning_material_library WHERE owner_id=? AND material_id=? AND removed_at IS NULL',
+                               (owner, material_id)) is not None
+
+    def remove_from_library(self, identity, material_id):
+        with self.lock, self.db._lock:
+            owner = self.learning.principal(identity).owner_id
+            if not self.in_library(owner, material_id):
+                raise DomainError('material_not_found', 404)
+            with self.db.transaction(immediate=True) as c:
+                c.execute('UPDATE learning_material_library SET removed_at=COALESCE(removed_at,?) WHERE owner_id=? AND material_id=?',
+                          (utc_timestamp(), owner, material_id))
+            return {'removed': True}
+
     def linked_versions(self, owner, kind, scope_id):
         return {row['version_id'] for row in self.db.fetchall('''SELECT version_id FROM learning_material_link
             WHERE owner_id=? AND scope_kind=? AND scope_id=?''', (owner, kind, scope_id))}
@@ -87,8 +101,22 @@ class MaterialService:
             owner = self.learning.principal(identity).owner_id
             rows = self.db.fetchall('''SELECT m.* FROM learning_task_material m
                 JOIN learning_material_library l ON l.owner_id=m.owner_id AND l.material_id=m.material_id
-                WHERE m.owner_id=? AND m.purged_at IS NULL ORDER BY l.created_at DESC,m.version DESC''', (owner,))
-            return {'versions': [self.with_original(dict(row)) for row in rows]}
+                WHERE m.owner_id=? AND l.removed_at IS NULL AND m.purged_at IS NULL ORDER BY l.created_at DESC,m.version DESC''', (owner,))
+            result = {'versions': [self.with_original(dict(row)) for row in rows]}
+            # Persisted erasure receipts make partial cleanup retryable after reload,
+            # even after private material rows have already been scrubbed.
+            from .purge_storage import receipt_path
+            retry = []
+            for item in self.db.fetchall('SELECT material_id FROM learning_material_library WHERE owner_id=?', (owner,)):
+                path = receipt_path(self.db.database_path, owner, 'material', item['material_id'])
+                try:
+                    if path.exists() and json.loads(path.read_text()).get('status') != 'complete':
+                        retry.append(item['material_id'])
+                except (OSError, ValueError, AttributeError):
+                    retry.append(item['material_id'])
+            if retry:
+                result['purge_retry_ids'] = retry
+            return result
 
     def store_in_library(self, identity, kind, scope_id, material_id):
         with self.lock, self.db._lock:
@@ -97,7 +125,8 @@ class MaterialService:
                        for row in self.list(identity, kind, scope_id)['versions']):
                 raise DomainError('material_not_found', 404)
             with self.db.transaction(immediate=True) as c:
-                c.execute('INSERT OR IGNORE INTO learning_material_library(owner_id,material_id,created_at) VALUES (?,?,?)',
+                c.execute('INSERT INTO learning_material_library(owner_id,material_id,created_at) VALUES (?,?,?) '
+                          'ON CONFLICT(owner_id,material_id) DO UPDATE SET removed_at=NULL',
                           (owner, material_id, utc_timestamp()))
             return {'stored': True}
 
@@ -106,7 +135,7 @@ class MaterialService:
             owner = self.owned_scope(identity, kind, scope_id)
             row = self.db.fetchone('SELECT m.* FROM learning_task_material m '
                 'JOIN learning_material_library l ON l.owner_id=m.owner_id AND l.material_id=m.material_id '
-                'WHERE m.owner_id=? AND m.id=? AND m.purged_at IS NULL', (owner, version_id))
+                'WHERE m.owner_id=? AND m.id=? AND l.removed_at IS NULL AND m.purged_at IS NULL', (owner, version_id))
             if row is None:
                 raise DomainError('material_not_found', 404)
             with self.db.transaction(immediate=True) as c:

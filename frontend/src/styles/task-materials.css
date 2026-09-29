@@ -16,6 +16,10 @@
 .task-material-library-list li { margin: .5rem 0; }
 .task-material-library-version { margin: .5rem 0; padding: .45rem 0; border-top: 1px solid var(--line, #ddd); }
 .task-material-library-version p { margin: .25rem 0; }
+.task-material-library-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin: .5rem 0 .8rem; }
+.task-material-library-actions details { margin: 0; }
+.task-material-library-actions details[open] { flex-basis: 100%; }
+.task-material-library-actions details .button { margin-top: .5rem; }
 .task-material-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: .6rem 0; }
 .task-material-actions > .button { min-height: 36px; padding: 7px 12px; }
 .task-material-library-status { color: var(--muted, #53615a); }

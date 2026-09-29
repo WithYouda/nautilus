@@ -188,7 +188,7 @@ async def test_formal_034_to_current_upgrade_preserves_discussion(tmp_path, lear
         before = {table: old.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() for table in tables}
         assert old.execute('SELECT 1 FROM learning_question_discussion WHERE id=?', (discussion['id'],)).fetchone()
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '037_material_library'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '038_material_library_removal'
     with sqlite3.connect(path) as upgraded:
         assert all(upgraded.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() == rows
                    for table, rows in before.items())

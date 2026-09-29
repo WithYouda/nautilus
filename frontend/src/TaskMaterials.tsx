@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SearchTrace } from './SearchResults';
-import { getMaterialLibrary, getMaterialPurge, getMaterials, purgeMaterial, saveMaterial, storeMaterialInLibrary, useMaterialFromLibrary, type AppliedSourceScope, type MaterialKind, type MaterialVersion, type PurgeReport, type SourceScope } from './api';
+import { getMaterialLibrary, getMaterialPurge, getMaterials, purgeLibraryMaterial, purgeMaterial, removeMaterialFromLibrary, saveMaterial, storeMaterialInLibrary, useMaterialFromLibrary, type AppliedSourceScope, type MaterialKind, type MaterialVersion, type PurgeReport, type SourceScope } from './api';
 import { getPreferences, type ConflictPolicy } from './preferences';
 import DialogPortal from './DialogPortal';
 import './styles/task-materials.css';
@@ -57,6 +57,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
   const [versions, setVersions] = useState<MaterialVersion[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryVersions, setLibraryVersions] = useState<MaterialVersion[]>([]);
+  const [libraryRetryIds, setLibraryRetryIds] = useState<string[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState('');
   const [title, setTitle] = useState('');
@@ -71,7 +72,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
   const purgeCancel = useRef<HTMLButtonElement>(null);
   const purgeReturnFocus = useRef<HTMLElement | null>(null);
   const purgeBusy = useRef(false);
-  const [purgeId, setPurgeId] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{ action: 'remove' | 'purge'; source: 'library' | 'scope'; materialId: string } | null>(null);
   const [purgeNotice, setPurgeNotice] = useState('');
   const [purgeHints, setPurgeHints] = useState<Record<string, PurgeReport['status']>>({});
   const previousId = useRef<string | null>(null);
@@ -90,7 +91,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     libraryRequest.current++;
     if (previousId.current && previousId.current !== id) setOpen(false);
     previousId.current = id;
-    setFileReading(false); setVersions([]); onVersions?.([]); setEditing(null); setTitle(''); setContent(''); setError(''); setBusy(false); setPurgeId(null); setPurgeNotice(''); setPurgeHints({}); setLibraryOpen(false); setLibraryVersions([]); setLibraryError(''); setLibraryLoading(false);
+    setFileReading(false); setVersions([]); onVersions?.([]); setEditing(null); setTitle(''); setContent(''); setError(''); setBusy(false); setConfirmation(null); setPurgeNotice(''); setPurgeHints({}); setLibraryOpen(false); setLibraryVersions([]); setLibraryRetryIds([]); setLibraryError(''); setLibraryLoading(false);
     if (id) void getMaterials(kind, id).then(data => { if (epoch.current === current) { setVersions(data.versions); onVersions?.(data.versions); } }).catch(() => { if (epoch.current === current) setError('资料列表加载失败，可重新打开重试。'); });
     return () => { epoch.current++; };
   }, [kind, id, identity]);
@@ -108,11 +109,11 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     }));
   }, [kind, id, versions]);
   useEffect(() => {
-    if (!purgeId) return;
+    if (!confirmation) return;
     purgeReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     purgeCancel.current?.focus();
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!purgeBusy.current) setPurgeId(null); }
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!purgeBusy.current) setConfirmation(null); }
       if (event.key !== 'Tab' || !purgeDialog.current) return;
       const buttons = [...purgeDialog.current.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
       if (!buttons.length) { event.preventDefault(); return; }
@@ -122,7 +123,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     }
     document.addEventListener('keydown', onKeyDown, true);
     return () => { document.removeEventListener('keydown', onKeyDown, true); purgeReturnFocus.current?.focus(); };
-  }, [purgeId]);
+  }, [confirmation]);
   async function refresh(target: string, expectedEpoch = epoch.current) {
     if (epoch.current !== expectedEpoch || (id && id !== target)) return [];
     const data = await getMaterials(kind, target);
@@ -141,7 +142,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     setLibraryLoading(true); setLibraryError('');
     try {
       const data = await getMaterialLibrary();
-      if (epoch.current === expectedEpoch && libraryRequest.current === request) setLibraryVersions(data.versions);
+      if (epoch.current === expectedEpoch && libraryRequest.current === request) { setLibraryVersions(data.versions); setLibraryRetryIds(data.purge_retry_ids ?? []); }
     } catch (reason) {
       if (epoch.current === expectedEpoch && libraryRequest.current === request) setLibraryError(reason instanceof Error ? `资料库加载失败，可重试。${reason.message}` : '资料库加载失败，可重试。');
     } finally { if (epoch.current === expectedEpoch && libraryRequest.current === request) setLibraryLoading(false); }
@@ -193,26 +194,48 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     } catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '文件读取失败。'); }
     finally { if (epoch.current === current) { setFileReading(false); setBusy(false); } if (fileInput.current) fileInput.current.value = ''; }
   }
-  async function purge() {
-    if (!id || !purgeId) return;
+  async function removeFromLibrary(materialId: string) {
     const current = epoch.current;
-    const materialId = purgeId;
+    setBusy(true); setError('');
+    let removed = false;
+    try {
+      await removeMaterialFromLibrary(materialId);
+      if (epoch.current !== current) return;
+      removed = true;
+      setConfirmation(null);
+      libraryRequest.current++;
+      setLibraryVersions(previous => previous.filter(item => item.material_id !== materialId));
+      const updatedVersions = versions.map(item => item.material_id === materialId ? { ...item, library: false } : item);
+      setVersions(updatedVersions); onVersions?.(updatedVersions);
+    } catch { if (epoch.current === current) setError('未能从资料库移除，请重试。'); }
+    if (epoch.current === current && removed) {
+      try {
+        await loadLibrary(current);
+        if (id) await refresh(id, current);
+      } catch { if (epoch.current === current) setError('已从资料库移除，但资料列表刷新失败，请重新打开。'); }
+    }
+    if (epoch.current === current) setBusy(false);
+  }
+  async function purge() {
+    if (!confirmation || confirmation.action !== 'purge' || (confirmation.source === 'scope' && !id)) return;
+    const current = epoch.current;
+    const { materialId, source } = confirmation;
     setBusy(true); setError('');
     try {
-      const result = await purgeMaterial(kind, id, materialId);
+      const result = source === 'library' ? await purgeLibraryMaterial(materialId) : await purgeMaterial(kind, id!, materialId);
       if (epoch.current !== current) return;
       setPurgeHints(previous => ({ ...previous, [materialId]: result.purge.status }));
       setPurgeNotice(result.purge.status === 'complete' ? '资料及关联内容已清除。' : result.purge.status === 'pending' ? '清除仍在处理中，请稍后重试。' : '部分内容未能清除，请重试。');
-      setPurgeId(null);
-      libraryRequest.current++; setLibraryVersions([]);
+      setConfirmation(null);
+      libraryRequest.current++; setLibraryVersions([]); setLibraryRetryIds([]);
       try {
-        await refresh(id, current);
+        if (id) await refresh(id, current);
         if (libraryOpen) await loadLibrary(current);
         if (epoch.current !== current) return;
         // Keep the invalid reference until the user explicitly chooses a new scope.
-        await onPurged();
+        if (id) await onPurged();
       } catch { if (epoch.current === current) setError('清除结果已返回，但资料或回答列表更新失败，请重新打开对话。'); }
-    } catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? `清除未完成，可重试。${reason.message}` : '清除未完成，可重试。'); }
+    } catch { if (epoch.current === current) setError('清除未完成，可重试。'); }
     finally { if (epoch.current === current) setBusy(false); }
   }
   const active = versions.filter(item => !item.purged_at);
@@ -227,7 +250,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     {open && <section className="task-materials-panel" aria-label="本对话资料" onKeyDown={event => { if (event.key === 'Enter' && event.target instanceof HTMLInputElement) event.preventDefault(); }}>
       <h3>本对话资料</h3>
       {purgeNotice && <p className="task-material-purge-notice" role="status">{purgeNotice}</p>}
-      {retryGroups.map(group => <p className="task-material-purge-retry" role="alert" key={group.material_id}>“{group.title || '资料'}”{purgeHints[group.material_id] === 'pending' ? '的清除仍在处理中。' : '有部分内容未能清除。'}<button type="button" className="text-button" disabled={busy} onClick={() => { setPurgeId(group.material_id); setPurgeNotice(''); }}>重试清除</button></p>)}
+      {retryGroups.map(group => <p className="task-material-purge-retry" role="alert" key={group.material_id}>“{group.title || '资料'}”{purgeHints[group.material_id] === 'pending' ? '的清除仍在处理中。' : '有部分内容未能清除。'}<button type="button" className="text-button" disabled={busy} onClick={() => { setConfirmation({ action: 'purge', source: 'scope', materialId: group.material_id }); setPurgeNotice(''); }}>重试清除</button></p>)}
       <p>保存或上传成功后即可在本对话参考。联网由工具栏单独控制。取消参考不会删除历史回答；明确选择严格范围时，会隔离范围外的旧对话，答案只依据所选资料。</p>
       {editing && <p>正在编辑“{editing.title}”。上传文件会保存为这份资料的新版本；旧版本和原件继续保留。</p>}
       <label className="task-material-upload">上传资料（UTF-8 文本、DOCX 或文字版 PDF）<input ref={fileInput} type="file" disabled={disabled || busy || !id} accept=".txt,.md,.markdown,.json,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,.sql,.sh,.rs,.go,.java,.c,.cpp,.h,.docx,.pdf" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></label>
@@ -245,7 +268,8 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
           <p>选择明确版本加入当前参考；资料更新不会自动更换本对话已选版本。</p>
           {libraryLoading && <p role="status">正在加载资料库…</p>}
           {libraryError && <p role="alert">{libraryError} <button type="button" className="text-button" disabled={libraryLoading} onClick={() => void loadLibrary()}>重试加载</button></p>}
-          {!libraryLoading && !libraryError && libraryGroups.length === 0 && <p>资料库暂无资料。请在对话资料中点击“存入资料库”。</p>}
+          {!libraryLoading && libraryRetryIds.map(materialId => <p className="task-material-purge-retry" role="alert" key={materialId}>一份资料的清除尚未完成。<button type="button" className="text-button" disabled={busy} onClick={() => { setConfirmation({ action: 'purge', source: 'library', materialId }); setPurgeNotice(''); }}>重试清除</button></p>)}
+          {!libraryLoading && !libraryError && libraryGroups.length === 0 && libraryRetryIds.length === 0 && <p>资料库暂无资料。请在对话资料中点击“存入资料库”。</p>}
           {libraryGroups.length > 0 && <ul className="task-material-library-list">{libraryGroups.map(group => <li key={group.material_id}>
             <details><summary><strong>{group.title || '未命名资料'}</strong> · {materialKindLabel(group.content_kind)} · {libraryVersions.filter(item => item.material_id === group.material_id && !item.purged_at).length} 个版本</summary>
               {libraryVersions.filter(item => item.material_id === group.material_id && !item.purged_at).sort((a, b) => b.version - a.version).map(item => <div className="task-material-library-version" key={item.id}>
@@ -254,6 +278,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
                 <button type="button" className="text-button" disabled={disabled || busy || !id} onClick={() => void useFromLibrary(item.id)}>选用第 {item.version} 版</button>
               </div>)}
             </details>
+            <div className="task-material-library-actions"><button type="button" className="button button--quiet" disabled={busy || disabled} onClick={() => { setError(''); setConfirmation({ action: 'remove', source: 'library', materialId: group.material_id }); }}>从资料库移除</button><details><summary>更多操作</summary><button type="button" className="button button--danger" disabled={busy || disabled} onClick={() => { setError(''); setConfirmation({ action: 'purge', source: 'library', materialId: group.material_id }); setPurgeNotice(''); }}>彻底清除资料</button></details></div>
           </li>)}</ul>}
         </div>}
       </section>
@@ -263,7 +288,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
         <details><summary>查看当前版本和历史</summary>{versions.filter(item => item.material_id === group.material_id && !item.purged_at).map(item => <div key={item.id}><p>第 {item.version} 版 · {item.title}{item.inherited ? ' · 继承（只读）' : ''}{selected.includes(item.id) ? ' · 当前使用' : ''}</p><pre>{item.content}</pre>{id && <MaterialOriginal version={item} kind={kind} scopeId={id} />}{!item.inherited && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setEditing(item); setTitle(item.title ?? ''); setContent(item.content ?? ''); }}>编辑为新版本</button>}</div>)}</details>
         <div className="task-material-actions">
         {group.library ? <span className="task-material-library-status">已存入资料库</span> : <button type="button" className="button button--quiet" disabled={busy || disabled || !id} onClick={() => void storeInLibrary(group.material_id)}>存入资料库</button>}
-        <button type="button" className="button button--danger" disabled={busy || disabled || !id} onClick={() => { setPurgeId(group.material_id); setPurgeNotice(''); }}>清除</button>
+        <button type="button" className="button button--danger" disabled={busy || disabled || !id} onClick={() => { setConfirmation({ action: 'purge', source: 'scope', materialId: group.material_id }); setPurgeNotice(''); }}>清除</button>
         </div>
       </li>)}</ul>}
       <div className="task-material-editor">
@@ -276,6 +301,6 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
       {candidates.length > 0 && <details><summary>从本对话已取得内容的网页结果保存</summary><ul>{candidates.map(item => <li key={`${item.runId}:${item.itemIndex}`}><strong>{item.title}</strong><p>{item.text.slice(0, 200)}{item.text.length > 200 ? '…' : ''}</p><button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => void save({ title: item.title, web_run_id: item.runId, web_item_index: item.itemIndex })}>保存此网页内容</button></li>)}</ul><p>搜索取得内容不代表已核实网页真伪。</p></details>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </section>}
-    {purgeId && <DialogPortal><div className="dialog-backdrop task-material-purge-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setPurgeId(null); }}><section ref={purgeDialog} className="task-material-purge-dialog" role="dialog" aria-modal="true" aria-labelledby="task-material-purge-title" onKeyDown={event => event.stopPropagation()}><h2 id="task-material-purge-title">清除这份资料？</h2><p>这会永久清除这份资料的所有版本和原件，包括资料库中的共享资料；所有选用它的对话、讨论及相关回答内容都可能受影响，同一次检索保存的其他资料也可能一并清除。无法撤销。已下载到设备的副本不会受影响。</p>{busy && <p role="status">正在清除…</p>}{error && <p className="form-error" role="alert">{error}</p>}<div className="task-material-purge-actions"><button ref={purgeCancel} type="button" className="button button--quiet" disabled={busy} onClick={() => setPurgeId(null)}>取消</button><button type="button" className="button button--danger" disabled={busy} onClick={() => void purge()}>{busy ? '清除中' : '确认清除'}</button></div></section></div></DialogPortal>}
+    {confirmation && <DialogPortal><div className="dialog-backdrop task-material-purge-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setConfirmation(null); }}><section ref={purgeDialog} className="task-material-purge-dialog" role="dialog" aria-modal="true" aria-labelledby="task-material-purge-title" onKeyDown={event => event.stopPropagation()}><h2 id="task-material-purge-title">{confirmation.action === 'remove' ? '从资料库移除这份资料？' : '清除这份资料？'}</h2><p>{confirmation.action === 'remove' ? '已有对话中的资料引用和回答将保留。这不会彻底清除资料文件。' : '这会永久清除这份资料的所有版本和原件，包括资料库中的共享资料；所有选用它的对话、讨论及相关回答内容都可能受影响，同一次检索保存的其他资料也可能一并清除。无法撤销。已下载到设备的副本不会受影响。'}</p>{busy && <p role="status">{confirmation.action === 'remove' ? '正在移除…' : '正在清除…'}</p>}{error && <p className="form-error" role="alert">{error}</p>}<div className="task-material-purge-actions"><button ref={purgeCancel} type="button" className="button button--quiet" disabled={busy} onClick={() => setConfirmation(null)}>取消</button><button type="button" className="button button--danger" disabled={busy} onClick={() => confirmation.action === 'remove' ? void removeFromLibrary(confirmation.materialId) : void purge()}>{busy ? '处理中' : confirmation.action === 'remove' ? '确认移除' : '确认清除'}</button></div></section></div></DialogPortal>}
   </div>;
 }

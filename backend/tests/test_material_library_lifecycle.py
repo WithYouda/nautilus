@@ -29,7 +29,8 @@ def _version(path, version_id):
 
 
 @pytest.mark.asyncio
-async def test_verification_purge_preserves_library_material_in_live_and_backup(learning_database, tmp_path):
+@pytest.mark.parametrize("removed", [False, True])
+async def test_verification_purge_preserves_library_material_in_live_and_backup(learning_database, tmp_path, removed):
     verification, source = await attempt(learning_database)
     discussions = QuestionDiscussionService(verification)
     materials = MaterialService(discussions.learning, discussions.chats)
@@ -48,6 +49,9 @@ async def test_verification_purge_preserves_library_material_in_live_and_backup(
         IDENTITY, other['id'], other['latest_submission_id'], 'q1', 'other-source')
     assert materials.store_in_library(IDENTITY, 'discussion', discussion['id'], saved['material_id']) == {'stored': True}
     assert materials.use_library(IDENTITY, 'discussion', other_discussion['id'], saved['id'])['id'] == saved['id']
+    if removed:
+        materials.remove_from_library(IDENTITY, saved['material_id'])
+        assert materials.library(IDENTITY)['versions'] == []
     selection = {'mode': 'only', 'version_ids': [saved['id']]}
     frozen = materials.freeze(IDENTITY, 'discussion', other_discussion['id'], selection)
     assert frozen['materials'][0]['content'] == 'SHARED_TEXT_9841'

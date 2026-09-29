@@ -38,6 +38,40 @@ def library(request: Request, identity=Depends(current_identity)):
     return request.app.state.materials.library(identity)
 
 
+def finish_purge(request, identity, material_id):
+    result = request.app.state.materials.purge(identity, material_id)
+    report = result['purge']
+    request.app.state.diagnostics.record(identity['id'], module='materials', event='material.purge',
+        level='info' if report['status'] == 'complete' else 'warning',
+        request_id=request.state.diagnostic_id, result=report['status'],
+        cleared_count=sum(item['status'] == 'cleared' for item in report['files']),
+        failed_count=sum(item['status'] == 'failed' for item in report['files']))
+    request.app.state.ai_runs.forget_material_runs(result['affected_run_ids'])
+    request.app.state.discussions.forget_purged_turns()
+    return result
+
+
+@router.post('/library/{material_id}/remove')
+def remove_from_library(material_id: str, request: Request, identity=Depends(current_identity)):
+    try:
+        return request.app.state.materials.remove_from_library(identity, material_id)
+    except DomainError as error:
+        fail(error)
+
+
+@router.post('/library/{material_id}/purge')
+async def purge_library_material(material_id: str, request: Request, identity=Depends(current_identity)):
+    try:
+        service = request.app.state.materials
+        with service.lock:
+            owner = service.learning.principal(identity).owner_id
+            if not service.in_library(owner, material_id):
+                raise DomainError('material_not_found', 404)
+            return finish_purge(request, identity, material_id)
+    except DomainError as error:
+        fail(error)
+
+
 @router.post('/{scope_kind}/{scope_id}/{material_id}/library')
 def store_in_library(scope_kind: ScopeKind, scope_id: str, material_id: str,
                      request: Request, identity=Depends(current_identity)):
@@ -124,16 +158,7 @@ async def purge_material(scope_kind: ScopeKind, scope_id: str, material_id: str,
             versions = service.list(identity, scope_kind, scope_id)['versions']
             if not any(item['material_id'] == material_id for item in versions):
                 raise DomainError('not_found', 404)
-            result = service.purge(identity, material_id)
-            report = result['purge']
-            request.app.state.diagnostics.record(identity['id'], module='materials', event='material.purge',
-                level='info' if report['status'] == 'complete' else 'warning',
-                request_id=request.state.diagnostic_id, result=report['status'],
-                cleared_count=sum(item['status'] == 'cleared' for item in report['files']),
-                failed_count=sum(item['status'] == 'failed' for item in report['files']))
-            request.app.state.ai_runs.forget_material_runs(result['affected_run_ids'])
-            request.app.state.discussions.forget_purged_turns()
-            return result
+            return finish_purge(request, identity, material_id)
     except DomainError as error:
         fail(error)
 
