@@ -209,6 +209,7 @@ def _backup_loses_purge_barriers(
         ("learning_delayed_attempt", ("owner_id", "id")),
         ("learning_delayed_view", ("owner_id", "id")),
         ("learning_task_material", ("owner_id", "id")),
+        ("learning_material_original", ("version_id",)),
     )
     for table, keys in barriers:
         current_columns = {row[1] for row in current.execute(f"PRAGMA table_info({table})")}
@@ -250,6 +251,15 @@ def _backup_contains_purged_content(
             tuple(purged_artifact_ids),
         )
     ]
+
+
+def _contains_material_original(connection, owner, material_id):
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='learning_material_original'").fetchone():
+        return False
+    return connection.execute('''SELECT 1 FROM learning_material_original o
+        JOIN learning_task_material m ON m.id=o.version_id WHERE m.owner_id=? AND m.material_id=?
+        AND (o.purged_at IS NULL OR o.filename IS NOT NULL OR o.media_type IS NOT NULL
+             OR o.content IS NOT NULL OR o.sha256 IS NOT NULL)''', (owner, material_id)).fetchone() is not None
 
 
 def _backup_restores_verification_content(current, backup):
@@ -319,6 +329,8 @@ def _backup_restores_verification_content(current, backup):
                 if backup.execute('''SELECT 1 FROM learning_task_material WHERE owner_id=? AND material_id=?
                     AND (purged_at IS NULL OR title IS NOT NULL OR content IS NOT NULL OR url IS NOT NULL
                     OR provenance_json <> '{}')''', (owner_id,material_id)).fetchone():
+                    return True
+                if _contains_material_original(backup, owner_id, material_id):
                     return True
     if current.execute("SELECT 1 FROM sqlite_master WHERE name='learning_completion'").fetchone():
         for owner_id, completion_id in current.execute(
@@ -487,6 +499,8 @@ def _check_purge_receipts(target_path, candidate_path):
                         WHERE owner_id=? AND material_id=? AND (title IS NOT NULL OR content IS NOT NULL
                         OR url IS NOT NULL OR provenance_json <> '{}')''', (owner,item_id)).fetchone():
                         raise ProductionLearningDatabaseError('backup would restore purged private content')
+                    if _contains_material_original(connection, owner, item_id):
+                        raise ProductionLearningDatabaseError('backup would restore purged private content')
             if kind == 'delayed':
                 for child in ('learning_delayed_attempt', 'learning_delayed_view'):
                     if 'purged_at' not in columns(connection, child) or connection.execute(
@@ -517,6 +531,7 @@ def _check_purge_receipts(target_path, candidate_path):
                                              'submit_fingerprint', 'result_json'],
                 'learning_delayed_view': ['provided_at', 'displayed_at', 'after_arranging'],
                 'learning_task_material': ['title','content','url','provenance_json'],
+                'learning_material_original': ['filename','media_type','content','sha256'],
                 'learning_conversation_current_state': ['search_override_json'],
             }
             def snapshot():

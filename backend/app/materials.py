@@ -53,7 +53,24 @@ class MaterialService:
                 (version_id, owner))
             if row:
                 versions.append({**dict(row), 'inherited': True})
-        return {'versions': versions}
+        return {'versions': [self.with_original(item) for item in versions]}
+
+    def with_original(self, version):
+        original = self.db.fetchone('''SELECT filename,media_type,length(content) AS bytes,sha256
+            FROM learning_material_original WHERE version_id=? AND purged_at IS NULL AND content IS NOT NULL''',
+            (version['id'],)) if not version.get('purged_at') else None
+        return {**version, 'original': dict(original) if original else None}
+
+    def original(self, identity, kind, scope_id, version_id):
+        # Access is scoped to the current conversation, including explicit inherited versions.
+        versions = self.list(identity, kind, scope_id)['versions']
+        if not any(item['id'] == version_id and not item['purged_at'] for item in versions):
+            raise DomainError('not_found', 404)
+        row = self.db.fetchone('''SELECT filename,media_type,content,sha256 FROM learning_material_original
+            WHERE version_id=? AND purged_at IS NULL AND content IS NOT NULL''', (version_id,))
+        if row is None:
+            raise DomainError('material_original_unavailable', 404)
+        return dict(row)
 
     def inherited_versions(self, owner, kind, scope_id):
         if kind == 'conversation':
@@ -96,7 +113,7 @@ class MaterialService:
         return item
 
     def create(self, identity, kind, scope_id, *, title, content=None, material_id=None,
-               web_run_id=None, web_item_index=None):
+               web_run_id=None, web_item_index=None, original=None):
         with self.lock:
             owner = self.owned_scope(identity, kind, scope_id)
             if not isinstance(title, str) or not title.strip() or len(title) > 300:
@@ -147,7 +164,12 @@ class MaterialService:
                     provenance_json,created_at,purged_at) VALUES
                     (:id,:material_id,:owner_id,:scope_kind,:scope_id,:version,:title,:content,:url,
                     :content_kind,:provenance_json,:created_at,:purged_at)''', result)
-            return result
+                if original is not None:
+                    raw, filename, media_type = original
+                    c.execute('''INSERT INTO learning_material_original
+                        (version_id,filename,media_type,content,sha256) VALUES (?,?,?,?,?)''',
+                        (result['id'], filename, media_type, raw, hashlib.sha256(raw).hexdigest()))
+            return self.with_original(result)
 
     def freeze(self, identity, kind, scope_id, selection=None):
         with self.lock:

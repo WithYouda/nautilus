@@ -1,4 +1,4 @@
-"""File uploads use isolated synthetic conversations and never retain raw bytes."""
+"""File uploads use isolated synthetic conversations and retain versioned originals."""
 from io import BytesIO
 from zipfile import ZipFile
 

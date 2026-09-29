@@ -414,7 +414,7 @@ export type AppliedSourceScope = SourceScope & {
   fingerprint: string;
   purged?: boolean;
 };
-export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; inherited?: boolean; provenance?: Record<string, unknown> };
+export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; inherited?: boolean; provenance?: Record<string, unknown>; original?: { filename: string; media_type: string; bytes: number; sha256: string } | null };
 export type MaterialKind = 'conversation' | 'discussion';
 export function getMaterials(kind: MaterialKind, id: string): Promise<{ versions: MaterialVersion[] }> {
   return request(`/api/materials/${kind}/${id}`);

@@ -52,7 +52,18 @@ test('settings, automatic upload references, independent network, versions and p
   await panel.getByLabel('正文').fill('第二版补充合成概念B。');
   await panel.getByRole('button', { name: '保存版本' }).click();
   await expect(panel.getByText('第 2 版 · 合成教材.txt · 当前使用')).toBeVisible();
-  await panel.getByLabel('只依据所选资料（严格范围）').check();
+  // Editing extracted text creates a new version; it must not acquire the old file.
+  await expect(panel.getByText('此版本未保存原件', { exact: true })).toBeVisible();
+  const originalDownload = page.waitForEvent('download');
+  await panel.getByRole('link', { name: '下载原件：合成教材.txt' }).click();
+  const downloaded = await originalDownload;
+  expect(downloaded.suggestedFilename()).toBe('合成教材.txt');
+  const stream = await downloaded.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+  expect(Buffer.concat(chunks).toString('utf8')).toBe('第一版只解释合成概念A。');
+  await panel.getByLabel('只依据所选资料（严格范围）').click();
+  await expect(panel.getByLabel('只依据所选资料（严格范围）')).toBeChecked();
   await panel.getByLabel('资料冲突时').selectOption('materials');
   await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
   await expect(page.locator('.ai-composer').getByRole('button', { name: /联网搜索：Bing/ })).toBeEnabled();
@@ -74,10 +85,16 @@ test('settings, automatic upload references, independent network, versions and p
   await panel.getByRole('button', { name: '清除', exact: true }).click();
   await panel.getByRole('button', { name: '确认清除' }).click();
   await expect(panel.getByRole('status')).toContainText('清除状态');
+  // A1 keeps invalid references until the user explicitly repairs the scope.
+  await expect(panel.getByLabel('只依据所选资料（严格范围）')).toBeChecked();
+  await expect(panel.getByRole('link', { name: '下载原件：合成教材.txt' })).toHaveCount(0);
+  expect((await page.request.get(`/api/materials/conversation/${run.conversation_id}/versions/${first.postDataJSON().source_scope.version_ids[0]}/original`)).status()).toBe(404);
+  await panel.getByRole('button', { name: '取消全部资料参考，重新选择' }).click();
   await expect(panel.getByLabel('只依据所选资料（严格范围）')).not.toBeChecked();
   const erased = await (await page.request.get(`/api/ai/conversations/${run.conversation_id}`)).json();
   expect(erased.messages.filter((message: { role: string; ai_run_id: string; content: string }) => message.role === 'assistant' && message.ai_run_id === run.id).every((message: { content: string }) => !message.content)).toBeTruthy();
   await page.reload();
+  await expect(page.locator('.ai-composer').getByRole('button', { name: /联网搜索/ })).toBeEnabled();
   await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
   await panel.getByRole('button', { name: '查看清除状态' }).click();
   await expect(panel.getByRole('status')).toContainText('清除状态');
@@ -86,6 +103,7 @@ test('settings, automatic upload references, independent network, versions and p
 test('long uploaded materials and selections beyond eight survive refresh', async ({ page }) => {
   await authorize(page);
   await page.getByRole('button', { name: '学习室', exact: true }).click();
+  await page.getByRole('button', { name: '新建对话', exact: true }).click();
   await page.locator('.ai-composer').getByRole('button', { name: '资料', exact: true }).click();
   const panel = page.locator('.task-materials-panel');
   const file = panel.getByLabel(/上传资料/);
@@ -94,10 +112,11 @@ test('long uploaded materials and selections beyond eight survive refresh', asyn
     await file.setInputFiles({ name: `教材${index}.txt`, mimeType: 'text/plain', buffer: Buffer.from(index < 2 ? '完整正文'.repeat(20000) : '第九份资料也可参考') });
     await expect(panel.getByRole('checkbox', { name: `教材${index}.txt · 文本资料` })).toBeChecked();
   }
-  await expect(panel).toContainText('当前参考 9 份资料');
+  await expect(panel.getByText(/^当前参考 9 份资料/)).toBeVisible();
   await expect(panel.getByLabel('正文')).not.toHaveAttribute('maxlength', /.+/);
   await page.reload();
+  await expect(page.locator('.ai-composer').getByRole('button', { name: /联网搜索/ })).toBeEnabled();
   await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
-  await expect(panel).toContainText('当前参考 9 份资料');
+  await expect(panel.getByText(/^当前参考 9 份资料/)).toBeVisible();
   for (let index = 0; index < 9; index++) await expect(panel.getByRole('checkbox', { name: `教材${index}.txt · 文本资料` })).toBeChecked();
 });

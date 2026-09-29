@@ -84,6 +84,12 @@ def erase_learning(c, owner, material_id, now, source_message_ids=(), source_tur
     if _has_table(c, 'learning_task_material'):
         c.execute('''UPDATE learning_task_material SET title=NULL,content=NULL,url=NULL,provenance_json='{}',purged_at=?
             WHERE owner_id=? AND material_id=? AND purged_at IS NULL''', (now, owner, material_id))
+    # Retry also clears inconsistent originals under an already-purged material.
+    if _has_table(c, 'learning_material_original'):
+        c.execute('''UPDATE learning_material_original SET filename=NULL,media_type=NULL,content=NULL,
+            sha256=NULL,purged_at=? WHERE version_id IN
+            (SELECT id FROM learning_task_material WHERE owner_id=? AND material_id=?)''',
+            (now, owner, material_id))
     if not _has_table(c, 'learning_discussion_turn'):
         return []
     for turn_id in affected:

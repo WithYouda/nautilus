@@ -1,9 +1,9 @@
 from typing import Literal
 import json
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 from pathlib import PurePath
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -50,7 +50,7 @@ def create_material(scope_kind: ScopeKind, scope_id: str, payload: MaterialCreat
 
 @router.post('/{scope_kind}/{scope_id}/upload', status_code=201)
 async def upload_material(scope_kind: ScopeKind, scope_id: str, request: Request,
-                          identity=Depends(current_identity)):
+                          material_id: str | None = None, identity=Depends(current_identity)):
     try:
         service = request.app.state.materials
         # Resolve ownership before reading or parsing untrusted bytes.
@@ -61,7 +61,27 @@ async def upload_material(scope_kind: ScopeKind, scope_id: str, request: Request
         async for chunk in request.stream():
             raw.extend(chunk)
         content = await run_in_threadpool(extract_material_text, name, bytes(raw))
-        return await run_in_threadpool(service.create, identity, scope_kind, scope_id, title=name, content=content)
+        media_type = ('application/pdf' if name.lower().endswith('.pdf') else
+                      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                      if name.lower().endswith('.docx') else 'text/plain')
+        return await run_in_threadpool(service.create, identity, scope_kind, scope_id,
+                                      title=name, content=content, material_id=material_id,
+                                      original=(bytes(raw), name, media_type))
+    except DomainError as error:
+        fail(error)
+
+
+@router.get('/{scope_kind}/{scope_id}/versions/{version_id}/original')
+def material_original(scope_kind: ScopeKind, scope_id: str, version_id: str,
+                      request: Request, identity=Depends(current_identity)):
+    try:
+        service = request.app.state.materials
+        with service.lock:
+            original = service.original(identity, scope_kind, scope_id, version_id)
+            return Response(original['content'], media_type='application/octet-stream', headers={
+                'Content-Disposition': "attachment; filename*=UTF-8''" + quote(original['filename'], safe=''),
+                'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+            })
     except DomainError as error:
         fail(error)
 

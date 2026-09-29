@@ -11,14 +11,20 @@ export function webMaterialCandidates(rows: Array<{ runId: string | null | undef
     ? [{ runId, itemIndex, title: item.title || item.url, url: item.url, text: item.text }] : []));
 }
 
-export function MaterialUse({ scope, versions }: { scope?: AppliedSourceScope | null; versions?: MaterialVersion[] }) {
+function MaterialOriginal({ version, kind, scopeId }: { version: MaterialVersion; kind: MaterialKind; scopeId: string }) {
+  return version.original
+    ? <a href={`/api/materials/${kind}/${encodeURIComponent(scopeId)}/versions/${encodeURIComponent(version.id)}/original`} download={version.original.filename}>下载原件：{version.original.filename}</a>
+    : <small>此版本未保存原件</small>;
+}
+
+export function MaterialUse({ scope, versions, kind, scopeId }: { scope?: AppliedSourceScope | null; versions?: MaterialVersion[]; kind: MaterialKind; scopeId: string }) {
   if (scope?.purged) return <p className="task-material-use">资料及关联内容已清除。</p>;
   if (!scope || scope.mode === 'unspecified') return null;
   return <details className="task-material-use"><summary>本回答资料范围：{scope.mode === 'only' ? '只依据所选资料' : '参考所选资料'} · {scope.materials.length} 个版本{scope.conflict_policy ? ` · 冲突时${policyLabel(scope.conflict_policy)}` : ''}</summary>
     <p>这里记录回答中出现的【资料1】等标记；标记不证明引用准确，选入资料也不代表内容已核实或学会。</p>
     <ol>{scope.materials.map((item, index) => <li key={item.id}><strong>【资料{index + 1}】{item.title}</strong> · 第 {item.version} 版 · {materialKindLabel(item.content_kind)} · {item.cited ? '正文出现引用标记' : '正文未出现引用标记'}
       {safeSourceUrl(item.url) && <> · <a href={safeSourceUrl(item.url)!} target="_blank" rel="noopener noreferrer">来源网页</a></>}
-      {versions?.find(version => version.id === item.id && !version.purged_at) && <details><summary>查看保存的版本</summary><pre>{versions.find(version => version.id === item.id)?.content}</pre></details>}
+      {versions?.find(version => version.id === item.id && !version.purged_at) && <details><summary>查看保存的版本</summary><pre>{versions.find(version => version.id === item.id)?.content}</pre><MaterialOriginal version={versions.find(version => version.id === item.id)!} kind={kind} scopeId={scopeId} /></details>}
     </li>)}</ol>
   </details>;
 }
@@ -102,12 +108,12 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     try {
       const target = await targetId();
       if (!target) throw new Error('请先打开对话。');
-      const response = await fetch(`/api/materials/${kind}/${target}/upload`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, body: file });
+      const response = await fetch(`/api/materials/${kind}/${target}/upload${editing ? `?material_id=${encodeURIComponent(editing.material_id)}` : ''}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, body: file });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(uploadError(result?.detail));
       if (epoch.current !== current) return;
       await refresh(target, current);
-      if (epoch.current === current) selectSaved(result as MaterialVersion);
+      if (epoch.current === current) { selectSaved(result as MaterialVersion); setEditing(null); setTitle(''); setContent(''); }
     } catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '文件读取失败。'); }
     finally { if (epoch.current === current) { setFileReading(false); setBusy(false); } if (fileInput.current) fileInput.current.value = ''; }
   }
@@ -142,6 +148,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     <button className="button button--quiet" type="button" aria-expanded={open} onClick={() => { const current = epoch.current; setOpen(value => !value); if (id) void refresh(id, current).catch(() => { if (epoch.current === current) setError('资料列表加载失败'); }); else if (onEnsure) void onEnsure().catch(reason => { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '无法创建对话'); }); }}>资料{scope.mode !== 'unspecified' ? ` · ${selected.length}` : ''}</button>
     {open && <section className="task-materials-panel" aria-label="本对话资料" onKeyDown={event => { if (event.key === 'Enter' && event.target instanceof HTMLInputElement) event.preventDefault(); }}>
       <h3>本对话资料</h3><p>保存或上传成功后即可在本对话参考。联网由工具栏单独控制。取消参考不会删除历史回答；明确选择严格范围时，会隔离范围外的旧对话，答案只依据所选资料。</p>
+      {editing && <p>正在编辑“{editing.title}”。上传文件会保存为这份资料的新版本；旧版本和原件继续保留。</p>}
       <label className="task-material-upload">上传资料（UTF-8 文本、DOCX 或文字版 PDF）<input ref={fileInput} type="file" disabled={disabled || busy || !id} accept=".txt,.md,.markdown,.json,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,.sql,.sh,.rs,.go,.java,.c,.cpp,.h,.docx,.pdf" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></label>
       {fileReading && <p role="status">正在读取资料…</p>}
       <label><input type="checkbox" checked={scope.mode === 'only'} disabled={disabled || busy || selected.length === 0} onChange={event => change({ ...scope, mode: event.target.checked ? 'only' : selected.length ? 'reference' : 'unspecified' })} />只依据所选资料（严格范围）</label>
@@ -154,7 +161,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
       {groups.length > 0 && <ul className="task-material-list">{groups.map(group => <li key={group.material_id}>
         <label><input type="checkbox" disabled={disabled || busy || !!group.purged_at} checked={versions.some(item => item.material_id === group.material_id && selected.includes(item.id))} onChange={() => { const own = versions.filter(item => item.material_id === group.material_id).map(item => item.id); const isSelected = own.some(value => selected.includes(value)); const remaining = selected.filter(value => !own.includes(value)); change({ ...scope, mode: isSelected && remaining.length === 0 ? 'unspecified' : scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: isSelected ? remaining : [...remaining, group.id] }); }} /><strong>{group.title || '已清除的资料'}</strong> · {materialKindLabel(group.content_kind)}{group.inherited && <span> · 从原对话继承（只读）</span>}{group.purged_at && <span> · 已清除</span>}</label>
         {safeSourceUrl(group.url) && <a href={safeSourceUrl(group.url)!} target="_blank" rel="noopener noreferrer">来源网页</a>}
-        {!group.purged_at && <details><summary>查看当前版本和历史</summary>{versions.filter(item => item.material_id === group.material_id && !item.purged_at).map(item => <div key={item.id}><p>第 {item.version} 版 · {item.title}{item.inherited ? ' · 继承（只读）' : ''}{selected.includes(item.id) ? ' · 当前使用' : ''}</p><pre>{item.content}</pre>{!item.inherited && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setEditing(item); setTitle(item.title ?? ''); setContent(item.content ?? ''); }}>编辑为新版本</button>}</div>)}</details>}
+        {!group.purged_at && <details><summary>查看当前版本和历史</summary>{versions.filter(item => item.material_id === group.material_id && !item.purged_at).map(item => <div key={item.id}><p>第 {item.version} 版 · {item.title}{item.inherited ? ' · 继承（只读）' : ''}{selected.includes(item.id) ? ' · 当前使用' : ''}</p><pre>{item.content}</pre>{id && <MaterialOriginal version={item} kind={kind} scopeId={id} />}{!item.inherited && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setEditing(item); setTitle(item.title ?? ''); setContent(item.content ?? ''); }}>编辑为新版本</button>}</div>)}</details>}
         {!group.purged_at && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setPurgeId(group.material_id); void showPurgeReport(group.material_id); }}>清除</button>}
         {group.purged_at && <button type="button" className="text-button" disabled={busy} onClick={() => void showPurgeReport(group.material_id)}>查看清除状态</button>}
         {group.purged_at && purgeReport?.materialId === group.material_id && ['partial', 'pending'].includes(purgeReport.report.status) && <button type="button" className="text-button" disabled={busy} onClick={() => setPurgeId(group.material_id)}>重试未完成的清除</button>}
@@ -167,7 +174,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
         {editing && <button type="button" className="text-button" onClick={() => { setEditing(null); setTitle(''); setContent(''); }}>取消编辑</button>}
       </div>
       {candidates.length > 0 && <details><summary>从本对话已取得内容的网页结果保存</summary><ul>{candidates.map(item => <li key={`${item.runId}:${item.itemIndex}`}><strong>{item.title}</strong><p>{item.text.slice(0, 200)}{item.text.length > 200 ? '…' : ''}</p><button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => void save({ title: item.title, web_run_id: item.runId, web_item_index: item.itemIndex })}>保存此网页内容</button></li>)}</ul><p>搜索取得内容不代表已核实网页真伪。</p></details>}
-      {purgeId && <div className="task-material-purge" role="alert"><p>确认彻底清除？这份资料的所有版本、取得该网页内容的原检索回答，以及使用它的后续回答都会一起清除。原对话和其他分支中使用这些内容的回答也会受影响。同一次检索保存的其他资料也可能联动清除。此操作不可撤销。</p><button type="button" className="button button--danger" disabled={busy} onClick={() => void purge()}>确认清除</button><button type="button" className="button button--quiet" onClick={() => setPurgeId(null)}>取消</button></div>}
+      {purgeId && <div className="task-material-purge" role="alert"><p>确认彻底清除？这份资料的所有版本及保存的原件、取得该网页内容的原检索回答，以及使用它的后续回答都会一起清除。原对话和其他分支中使用这些内容的回答也会受影响。同一次检索保存的其他资料也可能联动清除。此操作不可撤销。</p><button type="button" className="button button--danger" disabled={busy} onClick={() => void purge()}>确认清除</button><button type="button" className="button button--quiet" onClick={() => setPurgeId(null)}>取消</button></div>}
       {purgeReport && <p role="status">清除状态：{purgeStatusLabel(purgeReport.report.status)}。{purgeReport.report.files.map(file => `${file.name} ${fileStatusLabel(file.status)}`).join('；')}{purgeReport.report.external_limits.length ? `；外部限制：${purgeReport.report.external_limits.join('；')}` : ''}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </section>}
