@@ -84,7 +84,7 @@ class CurrentConversationState:
                 raise DomainError('conversation_state_path_invalid', 422)
 
     def _validate_scope(self, identity, kind, scope_id, scope):
-        if not isinstance(scope, dict) or set(scope) - {'mode', 'version_ids', 'conflict_policy'}:
+        if not isinstance(scope, dict) or set(scope) - {'mode', 'version_ids', 'conflict_policy', 'knowledge_base'}:
             raise DomainError('invalid_material_selection', 422)
         self.materials.freeze(identity, kind, scope_id, scope)
 
@@ -168,6 +168,8 @@ class CurrentConversationState:
                     (owner, kind, scope_id, revision, editable['leaf_id'], json.dumps(editable['paths']),
                      json.dumps(editable['source_scope']), json.dumps(editable['search_override']) if editable['search_override'] is not None else None,
                      utc_timestamp()))
+            if previous['source_scope'].get('knowledge_base') != editable['source_scope'].get('knowledge_base'):
+                self.materials.revoke_knowledge(owner, kind, scope_id)
             return self.get(identity, kind, scope_id)
 
     def check_send(self, owner, kind, scope_id, revision, source_scope=None, search=None,

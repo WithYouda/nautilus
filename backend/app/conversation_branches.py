@@ -26,10 +26,12 @@ def branch_metadata(service, owner, conversation_id):
     snapshot = json.loads(row[0])
     origin = snapshot['branch_origin']
     scope = snapshot.get('source_scope') or {}
+    selection = ({key: scope[key] for key in ('mode', 'version_ids', 'conflict_policy', 'knowledge_base') if key in scope}
+                 if scope.get('mode') and not scope.get('purged') else {'mode': 'unspecified', 'version_ids': []})
+    if 'selection_version_ids' in scope and not scope.get('purged'):
+        selection['version_ids'] = scope['selection_version_ids']
     return {'branch_origin': {key: origin[key] for key in ('conversation_id', 'message_id')},
-            'branch_source_scope': ({key: scope[key] for key in ('mode', 'version_ids', 'conflict_policy') if key in scope}
-                                    if scope.get('mode') and not scope.get('purged') else
-                                    {'mode': 'unspecified', 'version_ids': []})}
+            'branch_source_scope': selection}
 
 
 @material_guard

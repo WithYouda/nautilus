@@ -407,11 +407,16 @@ export type AiMessage = {
   source_scope?: AppliedSourceScope | null;
   inherited_from?: { conversation_id: string; message_id: string } | null;
 };
-export type SourceScope = { mode: 'unspecified' | 'reference' | 'only'; version_ids: string[]; conflict_policy?: 'ask' | 'balanced' | 'materials' };
+export type KnowledgeBaseSelection = { kind: 'obsidian_local'; connection_id: string; connection_revision: number };
+export type KnowledgeReference = { version_id: string; material_id: string; start_line: number; end_line: number; sha256: string; retrieved_at: string; marker?: string };
+export type SourceScope = { mode: 'unspecified' | 'reference' | 'only'; version_ids: string[]; conflict_policy?: 'ask' | 'balanced' | 'materials'; knowledge_base?: KnowledgeBaseSelection };
 export type AppliedSourceScope = SourceScope & {
   material_ids: string[];
   materials: Array<{ id: string; material_id: string; version: number; title: string; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; cited: boolean }>;
   fingerprint: string;
+  knowledge_base_name?: string;
+  selection_version_ids?: string[];
+  knowledge_references?: KnowledgeReference[];
   purged?: boolean;
 };
 export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; library: boolean; inherited?: boolean; provenance?: Record<string, unknown>; provenance_json?: string | null; original?: { filename: string; media_type: string; bytes: number; sha256: string } | null };

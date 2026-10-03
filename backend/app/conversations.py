@@ -1749,7 +1749,8 @@ class ConversationService:
                     raise ConversationError("回答上下文不存在")
                 history_items = [item for item in scoped_path(self.message_path(messages, parent_id), frozen)
                                  if item['status'] == 'complete' and item['content']][-HISTORY_LIMIT:]
-                history = [self._history_message(connection, item, bool(search_run and search_run.selection['mode'] == 'external'))
+                history = [self._history_message(connection, item, bool(search_run and search_run.selection['mode'] == 'external'
+                           and not (frozen and frozen['mode'] == 'only' and frozen.get('knowledge_base'))))
                            for item in history_items]
                 if search_run and search_run.selection['mode'] == 'native':
                     from .outbound import native_public_only, NATIVE_PRIVATE_MESSAGE
@@ -1876,6 +1877,7 @@ class ConversationService:
             "provider_config": config,
             "search_run": search_run,
             "material_prompt": self.materials.prompt(frozen) if material_bound else None,
+            "frozen_scope": frozen,
         }
 
     def mark_run_running(self, run_id: str) -> bool:
@@ -1910,6 +1912,27 @@ class ConversationService:
 
     def save_search_trace(self, run_id, trace):
         return self._save_runtime_value(run_id, "search_trace", trace)
+
+    def register_knowledge_reference(self, run_id, version, reference):
+        """Called inside the material lock after the learning snapshot commit.
+
+        This commit precedes disclosure to the provider. The two database files
+        are serialized against purge, without claiming a crash-atomic commit.
+        """
+        import asyncio
+        from .search_runtime import merge_knowledge_reference
+        with self.database.transaction() as connection:
+            row = connection.execute('''SELECT r.config_snapshot_json FROM ai_run r
+                JOIN conversation c ON c.id=r.conversation_id
+                WHERE r.id=? AND r.status='running' AND c.deleted_at IS NULL''', (run_id,)).fetchone()
+            if row is None:
+                raise asyncio.CancelledError()
+            snapshot = json.loads(row['config_snapshot_json'] or '{}')
+            scope = merge_knowledge_reference(snapshot.get('source_scope'), version, reference)
+            snapshot['source_scope'] = scope
+            connection.execute('UPDATE ai_run SET config_snapshot_json=? WHERE id=?',
+                               (json.dumps(snapshot, ensure_ascii=False), run_id))
+            return scope
 
     def _save_runtime_value(self, run_id, key, trace):
         with self.database.transaction() as connection:

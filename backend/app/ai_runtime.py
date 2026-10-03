@@ -12,6 +12,7 @@ import httpx
 
 from .conversations import ConversationError, ConversationService
 from .providers import ProviderChunk, ProviderConfig, ProviderError, build_provider
+from .learning_domain import DomainError
 from .search_runtime import external_stream, apply_native_event
 from .generation_trace import GenerationRecorder, interrupt_trace
 from .outbound import OutboundApprovals, RunOutbound, ProviderLease
@@ -143,7 +144,8 @@ class AiRunManager:
             if help_kind in HELP_PROMPTS:
                 messages[0] = {**messages[0], "content": messages[0]["content"] + "\n" + HELP_PROMPTS[help_kind]}
             state.task = asyncio.create_task(
-                self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"), public_search_query)
+                self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"), public_search_query,
+                              prepared.get('frozen_scope'))
             )
         except Exception as error:
             self._finish(
@@ -171,6 +173,7 @@ class AiRunManager:
         config: ProviderConfig,
         search_run=None,
         public_search_query=None,
+        frozen_scope=None,
     ) -> None:
         stream: AsyncIterator[ProviderChunk] | None = None
         try:
@@ -196,9 +199,17 @@ class AiRunManager:
                     outbound = RunOutbound(self.outbound, owner=state.identity_id, kind='conversation',
                         scope_id=state.conversation_id, run_id=state.run_id, active=active,
                         public_query=public_search_query, timeout=deadline, lease=lease)
-                    if search_run is not None and search_run.selection["mode"] == "external":
+                    knowledge = None
+                    if frozen_scope and frozen_scope.get('knowledge_base'):
+                        from .knowledge import KnowledgeRun
+                        knowledge = KnowledgeRun(self.conversations.materials, {'id': state.identity_id},
+                            'conversation', state.conversation_id, frozen_scope, active=active,
+                            register=lambda version, reference: self.conversations.register_knowledge_reference(
+                                state.run_id, version, reference))
+                    if knowledge or (search_run is not None and search_run.selection["mode"] == "external"):
                         stream = external_stream(self.conversations.search_service, search_run, messages, provider,
-                            lambda trace: self._publish_search(state, trace), outbound=outbound)
+                            lambda trace: self._publish_search(state, trace), outbound=outbound, knowledge=knowledge,
+                            strict_only=bool(frozen_scope and frozen_scope['mode'] == 'only' and knowledge))
                     else:
                         stream = provider.stream_chat(messages)
                     async for chunk in stream:
@@ -245,6 +256,9 @@ class AiRunManager:
             self._finish(state, "failed", kind="timeout", message="提供方响应超时")
         except ProviderError as error:
             self._finish(state, "failed", kind=error.kind, message=str(error))
+        except DomainError as error:
+            self._finish(state, 'failed', kind=error.code,
+                         message='本轮知识库选择已失效，请读取最新状态并重新选择后重试。')
         except Exception:  # noqa: BLE001 - 兜底，错误详情不外泄
             logger.exception("AI 运行失败：%s", state.run_id)
             self._finish(state, "failed", kind="internal_error", message="AI 运行内部错误")

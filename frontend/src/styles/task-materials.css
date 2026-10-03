@@ -37,6 +37,8 @@
   .task-materials-panel { position: fixed; left: 12px; right: 12px; bottom: 88px; width: auto; max-height: calc(100dvh - 160px); box-sizing: border-box; }
 }
 .task-material-obsidian { margin: .9rem 0; padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
+.task-material-knowledge { margin: .9rem 0; padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
+.task-material-knowledge > p, .task-material-knowledge-reference p { margin: .4rem 0; }
 .task-material-obsidian-panel > p { margin: .6rem 0; }
 .task-material-obsidian-search { display: flex; align-items: flex-end; gap: .5rem; margin: .5rem 0; }
 .task-material-obsidian-search label { flex: 1; margin: 0; }

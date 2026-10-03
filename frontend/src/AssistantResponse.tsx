@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Clock3, ExternalLink, Globe2, Search, X } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronUp, Clock3, ExternalLink, Globe2, Search, X } from 'lucide-react';
 import LearningMarkdown from './LearningMarkdown';
 import SearchResults, { SearchSuggestions, type SearchTrace } from './SearchResults';
 import DialogPortal from './DialogPortal';
+import type { KnowledgeReference } from './api';
 
 type ProcessStatus = 'running' | 'succeeded' | 'failed' | 'canceled' | 'interrupted';
 export type ProcessPart = {
   id: string; type: 'reasoning' | 'text' | 'tool'; status: ProcessStatus;
   started_at: string; finished_at?: string; duration_ms: number;
   text?: string; call_id?: string; name?: string; query?: string; url?: string;
-  service_name?: string; result?: SearchTrace; message?: string;
+  service_name?: string; result?: SearchTrace | KnowledgeToolResult; message?: string;
 };
+type KnowledgeToolResult = { status?: ProcessStatus; references?: KnowledgeReference[]; count?: number; has_more?: boolean; complete?: boolean; unreadable_count?: number };
 export type GenerationTrace = {
   version: 1; status: ProcessStatus; started_at: string; finished_at?: string;
   elapsed_ms: number; parts: ProcessPart[];
@@ -52,10 +54,12 @@ function ToolStep({ part, onExpandGroup }: { part: ProcessPart; onExpandGroup: (
   const [showDetail, setShowDetail] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
-  const result = part.result;
-  const count = result?.items?.length ?? 0;
+  const localKnowledge = part.name === 'search_knowledge_base' || part.name === 'read_knowledge_note';
+  const knowledgeResult = localKnowledge ? part.result as KnowledgeToolResult | undefined : undefined;
+  const result = localKnowledge ? undefined : part.result as SearchTrace | undefined;
+  const count = knowledgeResult?.count ?? knowledgeResult?.references?.length ?? result?.items?.length ?? 0;
   const domains = [...new Set((result?.items ?? []).flatMap(item => { try { const url = new URL(item.url); return ['http:', 'https:'].includes(url.protocol) ? [url.hostname.replace(/^www\./, '')] : []; } catch { return []; } }))].slice(0, 3);
-  const title = part.name === 'scrape_web' ? '读取网页' : part.name === 'native_search' ? '模型内置搜索' : '联网搜索';
+  const title = part.name === 'search_knowledge_base' ? '检索本地知识库' : part.name === 'read_knowledge_note' ? '读取知识库笔记' : part.name === 'scrape_web' ? '读取网页' : part.name === 'native_search' ? '模型内置搜索' : '联网搜索';
   useEffect(() => {
     if (!showDetail) return;
     dialogRef.current?.focus();
@@ -73,13 +77,19 @@ function ToolStep({ part, onExpandGroup }: { part: ProcessPart; onExpandGroup: (
   }, [showDetail]);
   return <div className="ai-process-step ai-process-tool">
     <button className="ai-process-step-head" type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <Search size={15} aria-hidden="true" /><span>{title}{part.query ? `：${part.query}` : ''}</span><small>{part.status === 'running' ? '进行中' : part.status === 'failed' ? '失败' : part.status === 'canceled' ? '已取消' : part.status === 'interrupted' ? '已中断' : `${count} 条来源`}</small>{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      {localKnowledge ? <BookOpen size={15} aria-hidden="true" /> : <Search size={15} aria-hidden="true" />}<span>{title}{part.query ? `：${part.query}` : ''}</span><small>{part.status === 'running' ? '进行中' : part.status === 'failed' ? '失败' : part.status === 'canceled' ? '已取消' : part.status === 'interrupted' ? '已中断' : `${count} 条来源`}</small>{open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
     </button>
     {open && <div className="ai-process-tool-summary">
       {part.service_name && <span>{part.service_name}</span>}
       {part.url && <span className="ai-process-tool-url">{part.url}</span>}
       {result?.answer && <p>{result.answer}</p>}
       {part.message && <p>{part.message}</p>}
+      {knowledgeResult && <>
+        <p>本地只读检索；本次实际读取的保存证据可在回答资料范围中回看。</p>
+        {knowledgeResult.references?.map((reference, index) => <p key={`${reference.version_id}:${index}`}>{reference.marker ? `${reference.marker} · ` : ''}第 {reference.start_line}–{reference.end_line} 行 · 内容指纹 {reference.sha256.slice(0, 12)}…</p>)}
+        {knowledgeResult.has_more && <p>还有更多可读取内容，本次没有自动读取全部笔记。</p>}
+        {(knowledgeResult.complete === false || Boolean(knowledgeResult.unreadable_count)) && <p role="status">部分文件或目录未能读取，本次结果可能不完整。</p>}
+      </>}
       {!!domains.length && <div className="ai-process-domains">{domains.map(domain => <span key={domain}><Globe2 size={12} />{domain}</span>)}{count > domains.length && <span>+{count - domains.length}</span>}</div>}
       {result && result.status === 'succeeded' && <button ref={triggerRef} type="button" className="ai-process-detail-trigger" onClick={() => { onExpandGroup(); setShowDetail(true); }}>查看来源与检索过程 <ExternalLink size={13} /></button>}
     </div>}
@@ -121,7 +131,7 @@ export default function AssistantResponse({ trace, content, reasoningContent, se
       : block.part.text && <div key={block.part.id} className="ai-message-content ai-markdown"><LearningMarkdown>{block.part.text}</LearningMarkdown></div>)}
       {!hasText && content && <div className="ai-message-content ai-markdown"><LearningMarkdown>{content}</LearningMarkdown></div>}
       {!hasText && !content && streaming && <p className="ai-message-content" role="status">…</p>}
-      {trace.parts.filter(part => part.type === 'tool' && part.result?.search_suggestions_html).map(part => <SearchSuggestions key={`suggestions-${part.id}`} html={part.result?.search_suggestions_html} />)}
+      {trace.parts.filter(part => part.type === 'tool' && part.result && 'search_suggestions_html' in part.result && part.result.search_suggestions_html).map(part => <SearchSuggestions key={`suggestions-${part.id}`} html={(part.result as SearchTrace).search_suggestions_html} />)}
     </div>;
   }
   const actualSearch = searchTrace && searchTrace.mode !== 'off' && !['off', 'not_used', 'queued'].includes(searchTrace.status);

@@ -16,6 +16,11 @@ def scope_key(scope):
     scope = scope or {}
     if scope.get('purged'):
         return ('purged',)
+    knowledge = scope.get('knowledge_base')
+    if knowledge:
+        return (scope.get('mode', 'unspecified'),
+                tuple(scope.get('selection_version_ids', scope.get('version_ids', []))),
+                knowledge.get('kind'), knowledge.get('connection_id'), knowledge.get('connection_revision'))
     return (scope.get('mode', 'unspecified'), tuple(scope.get('version_ids', [])))
 
 
@@ -40,7 +45,7 @@ def compatible_scope(previous, current):
 def public_scope(scope, answer=''):
     if scope is None:
         return None
-    result = {key: value for key, value in scope.items() if key != 'materials'}
+    result = {key: value for key, value in scope.items() if key != 'materials' and not key.startswith('_')}
     result['materials'] = [
         {**{key: value for key, value in material.items() if key != 'content'},
          'cited': f'【资料{index}】' in (answer or '')}

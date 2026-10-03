@@ -1,6 +1,7 @@
 """Bounded, owner-scoped question conversations with erasable private turns."""
 import asyncio
 import json
+from contextlib import suppress
 from dataclasses import replace
 from uuid import uuid4
 
@@ -11,7 +12,7 @@ from .learning_records import LearningRecords
 from .providers import build_provider
 from .verification import _clean_json
 from .search_adapters import SearchError
-from .search_runtime import external_stream, apply_native_event
+from .search_runtime import external_stream, apply_native_event, merge_knowledge_reference
 from .generation_trace import GenerationRecorder, interrupt_trace
 from .outbound import OutboundApprovals, RunOutbound, OutboundCanceled
 from .help_records import HELP_PROMPTS, public_help, record_display
@@ -460,6 +461,7 @@ class QuestionDiscussionService:
 
         recorder = GenerationRecorder(lambda value: publish_value('generation_trace', value))
         self.recorders[turn_id] = recorder
+        stream = None
         try:
             if preparation_error:
                 raise preparation_error
@@ -501,7 +503,8 @@ class QuestionDiscussionService:
                     if previous is None:
                         continue
                     assistant = {'role': 'assistant', 'content': previous['assistant_content']}
-                    if search_run is not None and search_run.selection['mode'] == 'external':
+                    if (search_run is not None and search_run.selection['mode'] == 'external'
+                            and not (frozen and frozen['mode'] == 'only' and frozen.get('knowledge_base'))):
                         assistant['reasoning_content'] = previous['reasoning_content'] or ''
                         assistant['_model_turn'] = json.loads(previous['provider_snapshot_json']).get('model_turn')
                     messages.extend([{'role': 'user', 'content': previous['user_content']}, assistant])
@@ -509,14 +512,39 @@ class QuestionDiscussionService:
                 help_kind = snapshot.get('help_request', {}).get('kind')
                 if help_kind in HELP_PROMPTS:
                     messages[0] = {**messages[0], 'content': messages[0]['content'] + '\n' + HELP_PROMPTS[help_kind]}
-                if search_run is not None and search_run.selection['mode'] == 'external':
-                    def active():
-                        with self.db.transaction() as c:
-                            return (self._active(c, discussion_id, turn_id, attempt_id)
-                                    and all(self._resolve(owner, discussion['delegation_id'], ref) is not None for ref in refs))
+                def active():
+                    # Also used inside KnowledgeRun's learning DB transaction:
+                    # do not start a nested transaction on the same connection.
+                    with self.db._lock:
+                        c = self.db.connection
+                        return (self._active(c, discussion_id, turn_id, attempt_id)
+                                and all(self._resolve(owner, discussion['delegation_id'], ref) is not None for ref in refs))
+
+                def register_knowledge(version, reference):
+                    # The material lock covers snapshot + dependency commits;
+                    # no nested transaction or provider delivery occurs between.
+                    with self.db.transaction(immediate=True) as c:
+                        if not active():
+                            raise asyncio.CancelledError()
+                        row = c.execute('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?',
+                                        (turn_id,)).fetchone()
+                        current = json.loads(row[0])
+                        scope = merge_knowledge_reference(current.get('source_scope'), version, reference)
+                        c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=json_patch(provider_snapshot_json,?) WHERE id=?',
+                                  (json.dumps({'source_scope': scope}, ensure_ascii=False), turn_id))
+                        return scope
+
+                knowledge = None
+                if frozen and frozen.get('knowledge_base'):
+                    from .knowledge import KnowledgeRun
+                    knowledge = KnowledgeRun(self.chats.materials, identity, 'discussion', discussion_id,
+                                             frozen, active=active, register=register_knowledge)
+                if knowledge or (search_run is not None and search_run.selection['mode'] == 'external'):
                     outbound = RunOutbound(self.outbound, owner=owner, kind='discussion', scope_id=discussion_id,
                         run_id=attempt_id, active=active, public_query=public_search_query, timeout=deadline)
-                    stream = external_stream(self.chats.search_service, search_run, messages, provider, publish_search, outbound=outbound)
+                    stream = external_stream(getattr(self.chats, 'search_service', None), search_run, messages, provider, publish_search,
+                                             outbound=outbound, knowledge=knowledge,
+                                             strict_only=bool(frozen and frozen['mode'] == 'only' and knowledge))
                 else:
                     stream = provider.stream_chat(messages)
                 reply = ''
@@ -575,6 +603,9 @@ class QuestionDiscussionService:
             if not isinstance(error, Exception):
                 raise
         finally:
+            if stream is not None:
+                with suppress(Exception, asyncio.CancelledError):
+                    await stream.aclose()
             if self.recorders.get(turn_id) is recorder:
                 self.recorders.pop(turn_id, None)
         return self.get(identity, discussion_id)

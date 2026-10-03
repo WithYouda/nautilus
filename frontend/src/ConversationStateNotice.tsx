@@ -3,7 +3,7 @@ import type useConversationState from './useConversationState';
 type State = ReturnType<typeof useConversationState>;
 const issueText: Record<string, string> = {
   path_unavailable: '原来选择的回答路径已不可用，请明确选择新的路径。',
-  material_unavailable: '所选资料版本已不可用，请打开资料重新选择或明确取消参考。',
+  material_unavailable: '所选资料版本或知识库连接已不可用，请打开资料重新选择或明确取消参考。',
   search_unavailable: '所选搜索服务或参数已不可用，请重新选择服务或关闭联网。',
 };
 export default function ConversationStateNotice({ state, onSelectPath }: { state: State; onSelectPath?: () => void }) {

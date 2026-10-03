@@ -21,6 +21,12 @@ class MaterialService:
         # Optional narrow hook: a local Obsidian connection invalidates its in-process
         # selection candidates when material content is erased. It is not an event bus.
         self.obsidian = None
+        self._knowledge_epochs = {}
+
+    def revoke_knowledge(self, owner, kind, scope_id):
+        """A removed conversation grant stays revoked even if selected again later."""
+        key = (owner, kind, scope_id)
+        self._knowledge_epochs[key] = self._knowledge_epochs.get(key, 0) + 1
 
     def owned_scope(self, identity, kind, scope_id):
         owner = self.learning.principal(identity).owner_id
@@ -263,7 +269,30 @@ class MaterialService:
             ids = selection.get('version_ids')
             if not isinstance(ids, list) or any(not isinstance(x, str) for x in ids) or len(ids) != len(set(ids)):
                 raise DomainError('invalid_material_selection', 422)
-            if (selection['mode'] == 'unspecified' and ids) or (selection['mode'] != 'unspecified' and not ids):
+            knowledge = selection.get('knowledge_base')
+            knowledge_fields = {}
+            if knowledge is not None:
+                if (not isinstance(knowledge, dict)
+                        or set(knowledge) != {'kind', 'connection_id', 'connection_revision'}
+                        or knowledge.get('kind') != 'obsidian_local'
+                        or not isinstance(knowledge.get('connection_id'), str)
+                        or not isinstance(knowledge.get('connection_revision'), int)
+                        or isinstance(knowledge.get('connection_revision'), bool)):
+                    raise DomainError('invalid_material_selection', 422)
+                record = self.obsidian.connection(owner) if self.obsidian else None
+                if (not record or not record['enabled']
+                        or record['connection_id'] != knowledge['connection_id']
+                        or record['revision'] != knowledge['connection_revision']):
+                    raise DomainError('obsidian_connection_revision', 409)
+                if self.obsidian._purge_pending(owner):
+                    raise DomainError('obsidian_purge_pending', 409)
+                knowledge_fields = {
+                    'knowledge_base': dict(knowledge), 'knowledge_base_name': record['vault_name'],
+                    'selection_version_ids': list(ids),
+                    '_knowledge_generation': self.obsidian._generation(owner),
+                    '_knowledge_scope_epoch': self._knowledge_epochs.get((owner, kind, scope_id), 0),
+                }
+            if (selection['mode'] == 'unspecified' and (ids or knowledge)) or (selection['mode'] != 'unspecified' and not ids and not knowledge):
                 raise DomainError('invalid_material_selection', 422)
             materials = []
             inherited = self.inherited_versions(owner, kind, scope_id) | self.linked_versions(owner, kind, scope_id)
@@ -280,14 +309,17 @@ class MaterialService:
                 materials.append(dict(row))
             if len({x['material_id'] for x in materials}) != len(materials):
                 raise DomainError('invalid_material_selection', 422)
-            fingerprint = hashlib.sha256(json.dumps([selection['mode'], ids, conflict_policy], ensure_ascii=False,
+            fingerprint_parts = [selection['mode'], ids, conflict_policy]
+            if knowledge:
+                fingerprint_parts.append(knowledge)
+            fingerprint = hashlib.sha256(json.dumps(fingerprint_parts, ensure_ascii=False,
                                             separators=(',', ':')).encode()).hexdigest()
             return {'mode':selection['mode'], 'version_ids':ids, 'materials':materials, 'conflict_policy':conflict_policy,
-                    'material_ids':[x['material_id'] for x in materials], 'fingerprint':fingerprint}
+                    'material_ids':[x['material_id'] for x in materials], 'fingerprint':fingerprint, **knowledge_fields}
 
     @staticmethod
     def public(frozen, answer=''):
-        result = {key:value for key,value in frozen.items() if key != 'materials'}
+        result = {key:value for key,value in frozen.items() if key != 'materials' and not key.startswith('_')}
         result['materials'] = [{**{k:v for k,v in item.items() if k != 'content'},
                                 'cited':f'【资料{index}】' in answer}
                                for index,item in enumerate(frozen['materials'], 1)]
@@ -297,7 +329,7 @@ class MaterialService:
     def prompt(frozen):
         if frozen['mode'] == 'unspecified':
             return ''
-        policy = ('本次答案仅依据以下资料；资料不足时明确指出缺口，请用户决定是否扩展范围。即使已允许联网，外部信息也不能成为答案依据；发现冲突可提示，但不得暗中扩大回答范围。'
+        policy = ('本次答案仅依据以下所选资料以及本轮明确选中的知识库工具实际返回的内容；资料不足时明确指出缺口，请用户决定是否扩展范围。即使已允许联网，外部信息也不能成为答案依据；发现冲突可提示，但不得暗中扩大回答范围。'
                   if frozen['mode'] == 'only' else
                   '以下资料可供当前对话参考；根据问题实际查阅相关部分，明确区分资料原文、你的推断和联网取得的依据。历史对话可能使用过其他资料或旧版本，当前资料以本轮版本为准；不要把旧回答中的引用编号套到本轮资料上。')
         conflict = {
@@ -324,7 +356,8 @@ class MaterialService:
         return purge(self, identity, material_id)
 
     def capture_obsidian(self, identity, kind, scope_id, *, connection_id, vault_name, relative_path,
-                         byte_sha256, line_count, title, filename, content, raw, generation=None):
+                         byte_sha256, line_count, title, filename, content, raw, generation=None,
+                         store_in_library=True):
         """One transaction for a server-built Obsidian snapshot: version, original, library, link."""
         with self.lock, self.db._lock:
             owner = self.owned_scope(identity, kind, scope_id)
@@ -346,14 +379,24 @@ class MaterialService:
                           'sha256': byte_sha256, 'captured_at': utc_timestamp(),
                           'locator': {'kind': 'whole_document', 'start_line': 1,
                                       'end_line': max(1, int(line_count))}}
+            if not store_in_library:
+                provenance['retrieval_scope'] = {'kind': kind, 'id': scope_id}
             with self.db.transaction(immediate=True) as c:
-                group = c.execute('''SELECT material_id FROM learning_task_material
-                    WHERE owner_id=? AND purged_at IS NULL
-                      AND json_extract(provenance_json,'$.kind')='obsidian_local'
-                      AND json_extract(provenance_json,'$.connection_id')=?
-                      AND json_extract(provenance_json,'$.relative_path')=?
-                    ORDER BY version DESC LIMIT 1''',
-                    (owner, connection_id, relative_path)).fetchone()
+                # Only explicit library membership makes a group independent of its
+                # originating scope. Automatic evidence must not share an unpromoted
+                # group's lifecycle with another conversation or discussion.
+                group = c.execute('''SELECT m.material_id FROM learning_task_material m
+                    WHERE m.owner_id=? AND m.purged_at IS NULL
+                      AND json_extract(m.provenance_json,'$.kind')='obsidian_local'
+                      AND json_extract(m.provenance_json,'$.connection_id')=?
+                      AND json_extract(m.provenance_json,'$.relative_path')=?
+                      AND (EXISTS (SELECT 1 FROM learning_material_library l
+                           WHERE l.owner_id=m.owner_id AND l.material_id=m.material_id)
+                           OR (m.scope_kind=? AND m.scope_id=?))
+                    ORDER BY EXISTS (SELECT 1 FROM learning_material_library l
+                        WHERE l.owner_id=m.owner_id AND l.material_id=m.material_id) DESC,
+                        m.created_at DESC, m.version DESC LIMIT 1''',
+                    (owner, connection_id, relative_path, kind, scope_id)).fetchone()
                 latest = None
                 if group is not None:
                     latest = c.execute('''SELECT id,material_id,version,provenance_json
@@ -383,9 +426,10 @@ class MaterialService:
                     c.execute('''INSERT INTO learning_material_original
                         (version_id,filename,media_type,content,sha256) VALUES (?,?,?,?,?)''',
                         (version_id, filename, 'text/markdown', raw, byte_sha256))
-                c.execute('''INSERT INTO learning_material_library(owner_id,material_id,created_at)
-                    VALUES (?,?,?) ON CONFLICT(owner_id,material_id) DO UPDATE SET removed_at=NULL''',
-                    (owner, material_id, utc_timestamp()))
+                if store_in_library:
+                    c.execute('''INSERT INTO learning_material_library(owner_id,material_id,created_at)
+                        VALUES (?,?,?) ON CONFLICT(owner_id,material_id) DO UPDATE SET removed_at=NULL''',
+                        (owner, material_id, utc_timestamp()))
                 c.execute('''INSERT OR IGNORE INTO learning_material_link
                     (owner_id,scope_kind,scope_id,version_id,created_at) VALUES (?,?,?,?,?)''',
                     (owner, kind, scope_id, version_id, utc_timestamp()))

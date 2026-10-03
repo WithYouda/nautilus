@@ -51,7 +51,7 @@ export default function ObsidianSettings() {
   const canConnect = Boolean(rootPath.trim()) && !busy;
   return <section className="obsidian-settings" aria-label="本地 Obsidian Vault">
     <h3>知识库：本地 Obsidian Vault</h3>
-    <p>只读连接运行 Nautilus 后端的主机上的一个本地 Vault。路径由你填写，不会自动搜索磁盘；不需要 Obsidian 插件或 API Key。连接和检索只在本地进行：Nautilus 只读取 .md 笔记，不会自动上传整个 Vault，也不会创建、修改或删除 Vault 里的文件。只有你明确“保存快照并选用”的笔记才会成为当前对话的教学模型输入；使用远端 Provider 时，这部分正文会发送到相应服务。联网搜索或工具外发仍按既有的逐次授权处理。</p>
+    <p>只读连接运行 Nautilus 后端的主机上的一个本地 Vault。路径由你填写，不会自动搜索磁盘；不需要 Obsidian 插件或 API Key。Nautilus 只读取 .md 笔记，不会自动上传整个 Vault，也不会创建、修改或删除 Vault 里的文件。在对话资料中，你可以手动“保存快照并选用”，或明确选择本对话使用这个知识库，让 AI 在回复时检索相关笔记。使用远端 Provider 时，所选快照或检索到的片段会作为教学模型输入发送到相应服务。联网搜索或工具外发仍按既有的逐次授权处理。</p>
     {!loaded && !error && <p role="status">正在读取连接设置…</p>}
     {loaded && !connection && <>
       <label className="field"><span>Vault 路径（后端主机上的绝对路径）</span>

@@ -124,7 +124,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
-        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools", "mock-process-tools"} else "mock-success"
+        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools", "mock-process-tools", "mock-knowledge-tools"} else "mock-success"
         is_title_request = payload.get("stream") is not True and int(payload.get("max_tokens") or 0) >= 256
         STATE.requested(f"title:{scenario}" if is_title_request else scenario)
 
@@ -216,6 +216,34 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             messages = payload.get("messages", [])
             last_user = max((i for i, message in enumerate(messages) if message.get("role") == "user"), default=-1)
             has_result = any(message.get("role") == "tool" for message in messages[last_user + 1:])
+            if scenario == "mock-knowledge-tools":
+                results = [message for message in messages[last_user + 1:] if message.get("role") == "tool"]
+                available = {tool.get("function", {}).get("name") for tool in payload.get("tools", [])}
+                name = None
+                arguments = {}
+                if "search_knowledge_base" in available and not results:
+                    name = "search_knowledge_base"
+                    arguments = {"query": "KNOWLEDGE_B2_MARKER"}
+                elif "read_knowledge_note" in available and len(results) == 1:
+                    result = json.loads(results[0].get("content", "{}"))
+                    items = result.get("items", [])
+                    if items:
+                        name = "read_knowledge_note"
+                        arguments = {"version_id": items[0]["version_id"], "start_line": 1,
+                                     "end_line": min(items[0]["total_lines"], 80)}
+                if name and payload.get("tool_choice") != "none":
+                    call = {"index": 0, "id": f"mock-knowledge-{len(results)}", "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)}}
+                    self.wfile.write(('data: ' + json.dumps({"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": "tool_calls"}]}) + '\n\ndata: [DONE]\n\n').encode())
+                    self.wfile.flush()
+                    return
+                marker = ""
+                if results:
+                    result = json.loads(results[0].get("content", "{}"))
+                    if result.get("items"):
+                        marker = result["items"][0]["marker"]
+                chunks = [f"本次依据知识库保存证据解释合成笔记 {marker}。"]
+                delay = 0.1
             if scenario == "mock-process-tools":
                 results = [message for message in messages[last_user + 1:] if message.get("role") == "tool"]
                 phase = len(results)
