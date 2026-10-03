@@ -17,6 +17,7 @@ from .generation_trace import GenerationRecorder, interrupt_trace
 from .outbound import OutboundApprovals, RunOutbound, OutboundCanceled
 from .help_records import HELP_PROMPTS, public_help, record_display
 from .source_runtime import material_guard, scope_key, public_scope, compatible_scope
+from .material_images import attach_material_images, check_image_sources, require_image_capability
 from .provider_network import ProviderDiagnostics
 
 
@@ -171,14 +172,20 @@ class QuestionDiscussionService:
         try:
             _profile, config = self.verification._runtime(owner, discussion['session_id'])
             protocol = config.provider_kind
+            database = getattr(self.chats, 'database', None)
+            model = database.fetchone('SELECT id,capabilities_json FROM provider_model WHERE provider_profile_id=? AND model_id=?',
+                                      (_profile['id'], config.model)) if database is not None and _profile.get('id') else None
+            image_model = {'provider_profile_id': _profile['id'], 'provider_model_id': model['id'],
+                           'model': config.model, 'supports_image_input': json.loads(model['capabilities_json'] or '{}').get('supports_image_input')} if model else None
         except (ConversationError, DomainError):
             protocol = None
+            image_model = None
         evaluation = connection.execute("SELECT provider_snapshot_json FROM learning_verification_evaluation WHERE owner_id=? AND id=?",
             (owner, discussion['evaluation_id'])).fetchone() if discussion['evaluation_id'] else None
         evaluation_snapshot = json.loads(evaluation[0] or '{}') if evaluation else {}
         from .discussion_branches import branch_metadata
         from .branch_maps import discussion_title
-        return dict(title=discussion_title(connection, discussion), **branch_metadata(connection, discussion_id), id=discussion_id, identity_id=owner, verification_id=discussion['verification_id'], submission_id=discussion['submission_id'],
+        return dict(image_model=image_model, title=discussion_title(connection, discussion), **branch_metadata(connection, discussion_id), id=discussion_id, identity_id=owner, verification_id=discussion['verification_id'], submission_id=discussion['submission_id'],
                     evaluation_id=discussion['evaluation_id'], help_displays={} if discussion['purged_at'] else evaluation_snapshot.get('help_displays') or {},
                     question_id=discussion['question_id'], purged=bool(discussion['purged_at']), source=source, turns=turns, provider_protocol=protocol)
 
@@ -247,6 +254,10 @@ class QuestionDiscussionService:
         frozen = materials.freeze(identity, 'discussion', discussion_id, source_scope) if materials else None
         if source_scope and source_scope.get('mode') != 'unspecified' and not materials:
             raise DomainError('material_scope_invalid', 422)
+        image_runtime = None
+        if any(item.get('input_mode') == 'image' for item in (frozen or {}).get('materials', [])):
+            image_runtime = self.verification._runtime(owner, discussion['session_id'])
+            require_image_capability(self.chats, owner, image_runtime[0]['id'], image_runtime[1].model, frozen)
         material_bound = bool(frozen and frozen['mode'] != 'unspecified')
         if regenerate_turn_id and help_request is None:
             original = self.db.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE discussion_id=? AND id=?',
@@ -327,7 +338,7 @@ class QuestionDiscussionService:
             prepared_runtime = None
             preparation_error = None
             try:
-                prepared_runtime = self.verification._runtime(owner, discussion['session_id'])
+                prepared_runtime = image_runtime or self.verification._runtime(owner, discussion['session_id'])
                 if getattr(self.chats, 'search_service', None):
                     search_run = self.chats.search_service.prepare(owner, search, prepared_runtime[1].provider_kind)
             except (SearchError, ConversationError, DomainError) as error:
@@ -470,6 +481,7 @@ class QuestionDiscussionService:
             with self.db._lock:
                 if not self._active(self.db.connection, discussion_id, turn_id, attempt_id):
                     raise asyncio.CancelledError()
+            check_image_sources(getattr(self.chats, 'materials', None), identity, 'discussion', discussion_id, frozen)
         diagnostic.check = check_running
         try:
             if preparation_error:
@@ -522,6 +534,9 @@ class QuestionDiscussionService:
                         assistant['_model_turn'] = json.loads(previous['provider_snapshot_json']).get('model_turn')
                     messages.extend([{'role': 'user', 'content': previous['user_content']}, assistant])
                 messages.append({'role': 'user', 'content': content})
+                messages = await asyncio.to_thread(attach_material_images, getattr(self.chats, 'materials', None), identity,
+                    'discussion', discussion_id, frozen, messages, check_running)
+                check_running()
                 help_kind = snapshot.get('help_request', {}).get('kind')
                 if help_kind in HELP_PROMPTS:
                     messages[0] = {**messages[0], 'content': messages[0]['content'] + '\n' + HELP_PROMPTS[help_kind]}

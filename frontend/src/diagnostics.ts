@@ -17,8 +17,8 @@ export type DiagnosticEntry = {
   source?: string;
   line?: number;
   run_id?: string;
-  scope_kind?: 'conversation' | 'discussion';
-  phase?: 'initial_response' | 'tool_continuation' | 'history_selection' | 'title' | 'provider_request';
+  scope_kind?: 'conversation' | 'discussion' | 'material_ocr';
+  phase?: 'initial_response' | 'tool_continuation' | 'history_selection' | 'title' | 'provider_request' | 'ocr';
   provider_kind?: string;
   target_host?: string;
   request_seq?: number;

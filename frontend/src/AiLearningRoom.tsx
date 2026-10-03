@@ -14,6 +14,8 @@ import type { SearchTrace } from "./SearchResults";
 import AssistantResponse, { type GenerationTrace } from "./AssistantResponse";
 import HelpControls from "./HelpControls";
 import HelpRecord, { HelpRecordFacts } from "./HelpRecord";
+import ComposerAttachments from './ComposerAttachments';
+import { attachmentError } from './AttachmentSupport';
 import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
 import {
   ApiError,
@@ -316,6 +318,9 @@ export default function AiLearningRoom({
   const titlePollTimerRef = useRef<number | null>(null);
   const runIdRef = useRef<string | null>(null);
   const conversationIdRef = useRef<string | null>(null);
+  const creationEpoch = useRef(0);
+  const [attachmentContext, setAttachmentContext] = useState(0);
+  const creatingConversation = useRef<Promise<AiConversationDetail> | null>(null);
   const currentRunRef = useRef<AiRun | null>(null);
   const subscribeRef = useRef<(run: AiRun, attempt?: number) => Promise<void>>(async () => undefined);
   const cancelRequestedRef = useRef(false);
@@ -347,6 +352,14 @@ export default function AiLearningRoom({
   useDismissibleLayer(openLayer === "history" && !historyDismissSuspended, [historyLayerRef, deleteDialogRef], dismissLayer);
   useDismissibleLayer(openLayer === "context", [contextLayerRef], dismissLayer);
 
+  useEffect(() => {
+    creationEpoch.current++; creatingConversation.current = null;
+  }, [effectiveScope, effectiveTargetId]);
+  useEffect(() => {
+    const update = () => { void listAiProviders().then(setProviders).catch(() => {}); };
+    window.addEventListener('nautilus:image-settings-changed', update);
+    return () => window.removeEventListener('nautilus:image-settings-changed', update);
+  }, []);
   const currentRun = detail?.active_run ?? null;
   const conversationId = detail?.conversation.id ?? null;
   const sharedState = useConversationState('conversation', detail?.conversation.identity_id ?? null, conversationId, async () => {
@@ -685,28 +698,40 @@ export default function AiLearningRoom({
 
   async function ensureConversation(): Promise<AiConversationDetail> {
     if (detail) return detail;
-    let created = await createAiConversation(effectiveScope, effectiveTargetId);
-    if (learningBrief?.session_id) await selectLearningRoomConversation(learningBrief.session_id, created.conversation.id);
-    if (draftConfig) {
-      await setAiConversationConfig(created.conversation.id, {
-        provider_profile_id: draftConfig.providerProfileId,
-        provider_model_id: draftConfig.providerModelId,
-      });
-      created = await getAiConversation(created.conversation.id);
-      setDraftConfig(null);
-      saveCurrentSession({ conversationId: created.conversation.id, draftConfig: null });
-    }
-    await sharedState.initializeNew(created.conversation.id);
-    if (mountedRef.current) {
-      setDetail(created);
-      conversationContextRef.current = conversationContext(created);
-      conversationIdRef.current = created.conversation.id;
-      setConversations((items) => upsertConversation(items, conversationListItem(created), true));
-      saveCurrentSession({ conversationId: created.conversation.id, runId: null });
-      const currentConfig = await getAiConversationConfig(created.conversation.id);
-      setConversationConfig(currentConfig.config);
-    }
-    return created;
+    if (creatingConversation.current) return creatingConversation.current;
+    const current = creationEpoch.current;
+    const stillCurrent = () => mountedRef.current && creationEpoch.current === current;
+    const create = async () => {
+      let created = await createAiConversation(effectiveScope, effectiveTargetId);
+      if (!stillCurrent()) throw new Error('对话已切换，请在当前对话重新上传。');
+      if (learningBrief?.session_id) await selectLearningRoomConversation(learningBrief.session_id, created.conversation.id);
+      if (draftConfig) {
+        await setAiConversationConfig(created.conversation.id, {
+          provider_profile_id: draftConfig.providerProfileId,
+          provider_model_id: draftConfig.providerModelId,
+        });
+        created = await getAiConversation(created.conversation.id);
+        setDraftConfig(null);
+        saveCurrentSession({ conversationId: created.conversation.id, draftConfig: null });
+      }
+      if (!stillCurrent()) throw new Error('对话已切换，请在当前对话重新上传。');
+      await sharedState.initializeNew(created.conversation.id);
+      if (!stillCurrent()) throw new Error('对话已切换，请在当前对话重新上传。');
+      if (stillCurrent()) {
+        setDetail(created);
+        conversationContextRef.current = conversationContext(created);
+        conversationIdRef.current = created.conversation.id;
+        setConversations((items) => upsertConversation(items, conversationListItem(created), true));
+        saveCurrentSession({ conversationId: created.conversation.id, runId: null });
+        const currentConfig = await getAiConversationConfig(created.conversation.id);
+        if (!stillCurrent()) throw new Error('对话已切换，请在当前对话重新上传。');
+        setConversationConfig(currentConfig.config);
+      }
+      return created;
+    };
+    const pending = create(); creatingConversation.current = pending;
+    try { return await pending; }
+    finally { if (creatingConversation.current === pending) creatingConversation.current = null; }
   }
 
   async function handleConfigChange(event: ChangeEvent<HTMLSelectElement>) {
@@ -869,7 +894,7 @@ export default function AiLearningRoom({
       }
       if (!preserveDraft) setDraft(content);
       setStatus("failed");
-      setError(stateRejected ? "消息未发送，请核对最新状态后重新发送。" : reason instanceof Error ? reason.message : "消息发送失败");
+      setError(stateRejected ? "消息未发送，请核对最新状态后重新发送。" : attachmentError(reason));
       return false;
     } finally {
       sendingRef.current = false;
@@ -916,6 +941,7 @@ export default function AiLearningRoom({
 
   function handleNewConversation() {
     if (branchBusyRef.current) return;
+    creationEpoch.current++; creatingConversation.current = null; setAttachmentContext(value => value + 1);
     abortRef.current?.abort();
     runIdRef.current = null;
     pendingSubmissionRef.current = null;
@@ -942,6 +968,7 @@ export default function AiLearningRoom({
       setOpenLayer(null);
       return;
     }
+    creationEpoch.current++; creatingConversation.current = null; setAttachmentContext(value => value + 1);
     abortRef.current?.abort();
     if (titlePollTimerRef.current !== null) window.clearTimeout(titlePollTimerRef.current);
     runIdRef.current = null;
@@ -1065,8 +1092,8 @@ export default function AiLearningRoom({
   const contextTitle = learningContextTitle(displayContext, displayScope);
   const selectedProviderId = conversationConfig?.provider_profile_id ?? draftConfig?.providerProfileId;
   const selectedModelId = conversationConfig?.provider_model_id ?? draftConfig?.providerModelId;
-  const activeProvider = providers.find((item) => item.id === selectedProviderId) ?? provider;
-  const activeModel = activeProvider?.models?.find((item) => item.id === selectedModelId) ?? activeProvider?.default_model ?? null;
+  const activeProvider = providers.find((item) => item.id === selectedProviderId) ?? providers.find(item => item.id === provider?.id) ?? provider;
+  const activeModel = activeProvider?.models?.find((item) => item.id === (selectedModelId ?? activeProvider.default_model_id)) ?? activeProvider?.default_model ?? null;
   const selectedConfigValue = selectedProviderId && selectedModelId ? `${selectedProviderId}::${selectedModelId}` : "";
   const conversationTitle = detail?.conversation.title ?? "新的学习对话";
   const canSend = entryReady && !branchBusy && !sharedState.blocked && Boolean(
@@ -1255,6 +1282,7 @@ export default function AiLearningRoom({
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
+        attachments={<ComposerAttachments kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} onEnsure={async () => (await ensureConversation()).conversation.id} supportsImages={activeModel?.capabilities.supports_image_input} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} />}
         disabled={!canSend || Boolean(editingMessageId)} suggestions={<HelpControls disabled={!canSend || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={(detail?.messages ?? []).flatMap(message => message.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {

@@ -90,6 +90,11 @@ def erase_learning(c, owner, material_id, now, source_message_ids=(), source_tur
             sha256=NULL,purged_at=? WHERE version_id IN
             (SELECT id FROM learning_task_material WHERE owner_id=? AND material_id=?)''',
             (now, owner, material_id))
+    if _has_table(c, 'learning_material_ocr'):
+        c.execute('''UPDATE learning_material_ocr SET pages_json='[]',model_json=NULL,error_code=NULL,
+            status='purged',updated_at=?,purged_at=? WHERE source_version_id IN
+            (SELECT id FROM learning_task_material WHERE owner_id=? AND material_id=?)''',
+            (now, now, owner, material_id))
     if not _has_table(c, 'learning_discussion_turn'):
         return []
     for turn_id in affected:

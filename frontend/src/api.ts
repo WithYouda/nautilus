@@ -409,17 +409,34 @@ export type AiMessage = {
 };
 export type KnowledgeBaseSelection = { kind: 'obsidian_local'; connection_id: string; connection_revision: number };
 export type KnowledgeReference = { version_id: string; material_id: string; start_line: number; end_line: number; sha256: string; retrieved_at: string; marker?: string };
-export type SourceScope = { mode: 'unspecified' | 'reference' | 'only'; version_ids: string[]; conflict_policy?: 'ask' | 'balanced' | 'materials'; knowledge_base?: KnowledgeBaseSelection };
+export type SourceScope = { mode: 'unspecified' | 'reference' | 'only'; version_ids: string[]; image_version_ids?: string[]; conflict_policy?: 'ask' | 'balanced' | 'materials'; knowledge_base?: KnowledgeBaseSelection };
 export type AppliedSourceScope = SourceScope & {
   material_ids: string[];
-  materials: Array<{ id: string; material_id: string; version: number; title: string; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; cited: boolean }>;
+  materials: Array<{ id: string; material_id: string; version: number; title: string; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; cited: boolean; input_mode?: 'image' | 'text'; page_numbers?: number[]; source_version_id?: string }>;
   fingerprint: string;
   knowledge_base_name?: string;
   selection_version_ids?: string[];
   knowledge_references?: KnowledgeReference[];
   purged?: boolean;
 };
-export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; library: boolean; inherited?: boolean; provenance?: Record<string, unknown>; provenance_json?: string | null; original?: { filename: string; media_type: string; bytes: number; sha256: string } | null };
+export type AttachmentPage = { number: number; text: string; status?: string; reviewed?: boolean; error_code?: string | null };
+export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; library: boolean; inherited?: boolean; provenance?: Record<string, unknown>; provenance_json?: string | null; original?: { filename: string; media_type: string; bytes: number; sha256: string } | null; attachment?: { kind: 'image' | 'pdf' | 'text'; mode: 'image' | 'text'; source_version_id: string; page_count: number; origin: 'uploaded' | 'ocr'; pages: AttachmentPage[] } };
+export type MaterialOcrSettings = { provider_profile_id: string | null; provider_model_id: string | null };
+export type MaterialOcrJob = { id: string; source_version_id: string; status: 'running' | 'review' | 'failed' | 'canceled' | 'confirmed'; pages: AttachmentPage[]; model: { provider_profile_id: string; provider_model_id: string; model: string; protocol: string } | null; error_code: string | null; result_version_id: string | null; created_at: string; updated_at: string };
+export function uploadMaterial(kind: MaterialKind, id: string, file: File, materialId?: string): Promise<MaterialVersion> {
+  return request(`/api/materials/${kind}/${encodeURIComponent(id)}/upload${materialId ? `?material_id=${encodeURIComponent(materialId)}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, body: file });
+}
+export function materialPreviewUrl(kind: MaterialKind, id: string, versionId: string, page = 1): string {
+  return `/api/materials/${kind}/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/preview/${page}`;
+}
+export function getMaterialOcrSettings(): Promise<MaterialOcrSettings> { return request('/api/material-ocr/settings'); }
+export function saveMaterialOcrSettings(settings: MaterialOcrSettings): Promise<MaterialOcrSettings> { return request('/api/material-ocr/settings', { method: 'PUT', body: JSON.stringify(settings) }); }
+const ocrPath = (kind: MaterialKind, id: string, version: string) => `/api/material-ocr/${kind}/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}`;
+export function getMaterialOcr(kind: MaterialKind, id: string, version: string, jobId?: string): Promise<{ job: MaterialOcrJob | null }> { return request(`${ocrPath(kind, id, version)}${jobId ? `?job_id=${encodeURIComponent(jobId)}` : ''}`); }
+export function startMaterialOcr(kind: MaterialKind, id: string, version: string): Promise<{ job: MaterialOcrJob | null }> { return request(ocrPath(kind, id, version), { method: 'POST' }); }
+export function cancelMaterialOcr(kind: MaterialKind, id: string, version: string, job: string): Promise<{ job: MaterialOcrJob | null }> { return request(`${ocrPath(kind, id, version)}/${encodeURIComponent(job)}/cancel`, { method: 'POST' }); }
+export function confirmMaterialOcr(kind: MaterialKind, id: string, version: string, job: string, pages: Array<{ number: number; text: string }>, acknowledgeIncomplete: boolean): Promise<MaterialVersion> { return request(`${ocrPath(kind, id, version)}/${encodeURIComponent(job)}/confirm`, { method: 'POST', body: JSON.stringify({ pages, acknowledge_incomplete: acknowledgeIncomplete }) }); }
+export function setModelImageCapability(provider: string, model: string, supports: boolean | null): Promise<{ model: AiProviderModel }> { return request(`/api/ai/providers/${encodeURIComponent(provider)}/models/${encodeURIComponent(model)}/image-capability`, { method: 'PUT', body: JSON.stringify({ supports_image_input: supports }) }); }
 export type MaterialKind = 'conversation' | 'discussion';
 export function getMaterials(kind: MaterialKind, id: string): Promise<{ versions: MaterialVersion[] }> {
   return request(`/api/materials/${kind}/${id}`);
@@ -2099,6 +2116,7 @@ export type QuestionDiscussion = {
   help_displays?: Record<string, ReferenceHelpDisplay>;
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
   provider_protocol?: AiApiProtocol | null;
+  image_model?: { provider_profile_id: string; provider_model_id: string; model: string; supports_image_input: boolean | null } | null;
   turns: Array<{ search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; source_scope?: AppliedSourceScope | null; inherited_from?: { discussion_id: string; turn_id: string } | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; outcome_id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };

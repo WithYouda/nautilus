@@ -136,11 +136,11 @@ export function LearningUserMessage({ content, automatic, editing, onStartEdit, 
   return <LearningMessage role="user" state={editing ? 'editing' : undefined}>{body}</LearningMessage>;
 }
 
-export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, tools, suggestions, actions, sendLabel = '发送问题' }: {
+export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, attachments, tools, suggestions, actions, sendLabel = '发送问题' }: {
   id: string; label?: string; value: string; onChange: (value: string) => void;
   onSubmit: FormEventHandler<HTMLFormElement>; onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   placeholder: string; disabled?: boolean; maxLength?: number;
-  textareaRef?: RefObject<HTMLTextAreaElement | null>; tools?: ReactNode; suggestions?: ReactNode; actions?: ReactNode; sendLabel?: string;
+  textareaRef?: RefObject<HTMLTextAreaElement | null>; attachments?: ReactNode; tools?: ReactNode; suggestions?: ReactNode; actions?: ReactNode; sendLabel?: string;
 }) {
   const localRef = useRef<HTMLTextAreaElement>(null);
   const ref = textareaRef ?? localRef;
@@ -151,13 +151,14 @@ export function LearningComposer({ id, label = '输入学习问题', value, onCh
   return <form className={`ai-composer${suggestions ? " ai-composer--suggestions" : ""}`} onSubmit={onSubmit}>
     {suggestions && <div className="ai-composer-suggestions">{suggestions}</div>}
     <label htmlFor={id}>{label}</label>
+    <div className={`ai-composer-input${attachments ? "" : " ai-composer-input--plain"}`}>{attachments}
     <textarea ref={ref} id={id} value={value} onChange={event => onChange(event.target.value)}
       onKeyDown={onKeyDown ?? (event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
           event.preventDefault();
           if (!disabled && value.trim()) event.currentTarget.form?.requestSubmit();
         }
-      })} placeholder={placeholder} rows={1} maxLength={maxLength} disabled={disabled} />
+      })} placeholder={placeholder} rows={1} maxLength={maxLength} disabled={disabled} /></div>
     <div className="ai-composer-actions"><span>Enter 发送 · Shift+Enter 换行 · {value.length}/{maxLength}</span>
       <div>{tools}{actions}<button className="button button--accent button--with-icon" type="submit" disabled={disabled || !value.trim()}><Send size={14} />{sendLabel}</button></div>
     </div>

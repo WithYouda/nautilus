@@ -167,6 +167,10 @@ def _raise_learning_error(error: DomainError) -> None:
         "verification_independent_evidence_required": "当前已审核标准要求独立作答；本次有资料或提示帮助的产出保留，但不作为独立能力证据",
     }
     messages.update(VERIFICATION_FAILURE_MESSAGES)
+    messages.update({
+        'image_model_unverified': '当前模型的图片输入能力尚未确认，请在图片模型设置中确认，或对附件使用 OCR。题目讨论沿用学习室选择的模型。',
+        'image_model_unsupported': '当前模型不支持图片，请在学习室选择支持图片的模型，或对附件使用 OCR。',
+    })
     messages.update(SETUP_FAILURE_MESSAGES)
     raise HTTPException(
         status_code=error.status,
@@ -614,6 +618,7 @@ def purge_verification(verification_id: str, payload: LearningVerificationPurgeR
         service = verification_service(request)
         result = ManagedPurge(service.learning).run(identity, 'verification', verification_id,
             lambda: service.purge(identity, verification_id))
+        request.app.state.material_ocr.forget_purged()
         return result
     except DomainError as error:
         _raise_learning_error(error)
@@ -764,6 +769,7 @@ def purge_learning_artifact(
             },
             payload.idempotency_key,
         ))
+        request.app.state.material_ocr.forget_purged()
         return result
     except DomainError as error:
         _raise_learning_error(error)

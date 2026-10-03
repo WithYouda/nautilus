@@ -42,9 +42,11 @@ from .verification import VerificationService
 from .question_discussion import QuestionDiscussionService
 from .model_discovery import ModelDiscoveryService
 from .materials import MaterialService
+from .material_ocr import MaterialOCR
 from .obsidian import ObsidianService
 from .conversation_state import CurrentConversationState
 from .routers import materials
+from .routers import material_ocr
 from .routers import obsidian
 from .network import wsl_ip
 from .plan_editor import PlanEditorService
@@ -60,6 +62,11 @@ def create_app(
 ) -> FastAPI:
     """provider_transport 仅供测试注入 httpx.MockTransport，生产路径保持为 None。"""
     app_settings = settings or Settings.from_env()
+    # Tolerant PDF parsers may quote file bytes in warnings. API callers receive
+    # fixed extraction error codes; document content must not enter runtime logs.
+    pdf_logger = logging.getLogger('pypdf')
+    pdf_logger.addHandler(logging.NullHandler())
+    pdf_logger.propagate = False
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -89,6 +96,8 @@ def create_app(
         preferences_service = PreferencesService(credential_store, search_service)
         material_service = MaterialService(learning_service, conversation_service, preferences_service)
         conversation_service.materials = material_service
+        ocr_service = MaterialOCR(material_service, credential_store, transport=provider_transport)
+        ocr_service.recover()
         obsidian_service = ObsidianService(credential_store, material_service)
         material_service.obsidian = obsidian_service
         learning_setup_service = LearningSetupService(
@@ -158,6 +167,7 @@ def create_app(
         app.state.outbound = outbound_approvals
         app.state.preferences = preferences_service
         app.state.materials = material_service
+        app.state.material_ocr = ocr_service
         app.state.obsidian = obsidian_service
         diagnostic_service = DiagnosticService(app_settings.data_dir / 'runtime' / 'diagnostics')
         app.state.diagnostics = diagnostic_service
@@ -177,6 +187,7 @@ def create_app(
             outbound_approvals.close()
             await discussion_service.shutdown()
             await ai_run_manager.shutdown()
+            await ocr_service.shutdown()
             diagnostic_service.record(identity['id'], module='system', event='service.stopped')
             logging.getLogger('nautilus').removeHandler(runtime_handler)
             diagnostic_service.close()
@@ -237,6 +248,7 @@ def create_app(
     app.include_router(search.router)
     app.include_router(outbound.router)
     app.include_router(materials.router)
+    app.include_router(material_ocr.router)
     app.include_router(obsidian.router)
     app.include_router(preferences.router)
     return app

@@ -33,7 +33,7 @@ test('settings, automatic upload references, independent network, versions and p
   await expect(panel.getByLabel('资料冲突时')).toHaveValue('');
   await expect(panel.getByLabel('资料冲突时')).toContainText('沿用默认（由 AI 综合判断）');
   // Unsupported files remain visible failures, without replacing the successful upload.
-  await panel.getByLabel(/上传资料/).setInputFiles({ name: 'image.png', mimeType: 'image/png', buffer: Buffer.from('synthetic') });
+  await panel.getByLabel(/上传资料/).setInputFiles({ name: 'image.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('synthetic') });
   await expect(panel.getByRole('alert')).toContainText('暂不支持此文件格式');
   await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
   const question = page.getByLabel('输入学习问题');

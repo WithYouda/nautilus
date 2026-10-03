@@ -16,6 +16,7 @@ import httpx
 
 from .providers import ProviderChunk, ProviderConfig, ProviderError, normalize_base_url
 from .provider_network import ProviderHTTPClient
+from .provider_messages import encode_messages
 
 MAX_EVENT_BYTES = 512 * 1024
 MAX_EVENTS = 10000
@@ -210,8 +211,8 @@ class OpenAIResponsesProvider(_NativeProvider):
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.config.api_key}", "Content-Type": "application/json"}
 
-    def _payload(self, messages: list[dict[str, str]], *, stream: bool, max_tokens: int | None = None, json_mode: bool = False) -> dict[str, Any]:
-        payload: dict[str, Any] = {"model": self.config.model, "input": messages, "stream": stream, "store": False}
+    def _payload(self, messages: list[dict[str, Any]], *, stream: bool, max_tokens: int | None = None, json_mode: bool = False) -> dict[str, Any]:
+        payload: dict[str, Any] = {"model": self.config.model, "input": encode_messages(messages, self.kind), "stream": stream, "store": False}
         if max_tokens is not None:
             payload["max_output_tokens"] = max_tokens
         if json_mode:
@@ -220,7 +221,7 @@ class OpenAIResponsesProvider(_NativeProvider):
             payload["tools"] = [{"type": "web_search"}]
         return payload
 
-    async def stream_chat(self, messages: list[dict[str, str]]) -> AsyncIterator[ProviderChunk]:
+    async def stream_chat(self, messages: list[dict[str, Any]]) -> AsyncIterator[ProviderChunk]:
         enabled = bool(getattr(self.config, "web_search", False))
         seen = False
         searched = False
@@ -276,7 +277,7 @@ class OpenAIResponsesProvider(_NativeProvider):
                 yield _sources(list(sources.values())[:MAX_SOURCES])
             yield _status(self.kind, "succeeded" if searched else "not_used")
 
-    async def generate_text(self, messages: list[dict[str, str]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
+    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
         # Responses JSON mode requires an explicit JSON instruction in the input.
         inputs = ([{"role": "system", "content": "Return only a valid JSON object."}] + messages) if json_mode else messages
         body = await self._post_json(self.endpoint, self._payload(inputs, stream=False, max_tokens=max_tokens, json_mode=json_mode))
@@ -307,9 +308,9 @@ class GoogleProvider(_NativeProvider):
         action = "streamGenerateContent?alt=sse" if stream else "generateContent"
         return f"{base}/models/{model}:{action}"
 
-    def _payload(self, messages: list[dict[str, str]], *, stream: bool, max_tokens: int | None = None, json_mode: bool = False) -> dict[str, Any]:
+    def _payload(self, messages: list[dict[str, Any]], *, stream: bool, max_tokens: int | None = None, json_mode: bool = False) -> dict[str, Any]:
         system = "\n".join(str(m.get("content", "")) for m in messages if m.get("role") == "system")
-        contents = [{"role": "model" if m.get("role") == "assistant" else "user", "parts": [{"text": str(m.get("content", ""))}]} for m in messages if m.get("role") != "system"]
+        contents = encode_messages(messages, self.kind)
         payload: dict[str, Any] = {"contents": contents}
         if system:
             payload["systemInstruction"] = {"parts": [{"text": system}]}
@@ -329,7 +330,7 @@ class GoogleProvider(_NativeProvider):
         candidates = _array(body.get("candidates"))
         return _object(candidates[0]) if candidates else {}
 
-    async def stream_chat(self, messages: list[dict[str, str]]) -> AsyncIterator[ProviderChunk]:
+    async def stream_chat(self, messages: list[dict[str, Any]]) -> AsyncIterator[ProviderChunk]:
         enabled = bool(getattr(self.config, "web_search", False))
         saw = False
         got_event = False
@@ -386,7 +387,7 @@ class GoogleProvider(_NativeProvider):
                 yield _sources(list(sources.values())[:MAX_SOURCES], search_suggestions_html=search_suggestions_html)
             yield _status(self.kind, "succeeded" if grounded else "not_used")
 
-    async def generate_text(self, messages: list[dict[str, str]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
+    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
         body = await self._post_json(self._endpoint(False), self._payload(messages, stream=False, max_tokens=max_tokens, json_mode=json_mode))
         candidate = self._candidate(body)
         if candidate.get("finishReason") == "MAX_TOKENS":
@@ -413,9 +414,9 @@ class AnthropicProvider(_NativeProvider):
     def _headers(self) -> dict[str, str]:
         return {"x-api-key": self.config.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
 
-    def _payload(self, messages: list[dict[str, str]], *, stream: bool, max_tokens: int = 4096, json_mode: bool = False) -> dict[str, Any]:
+    def _payload(self, messages: list[dict[str, Any]], *, stream: bool, max_tokens: int = 4096, json_mode: bool = False) -> dict[str, Any]:
         system = "\n".join(str(m.get("content", "")) for m in messages if m.get("role") == "system")
-        converted = [{"role": "assistant" if m.get("role") == "assistant" else "user", "content": str(m.get("content", ""))} for m in messages if m.get("role") != "system"]
+        converted = encode_messages(messages, self.kind)
         payload: dict[str, Any] = {"model": self.config.model, "messages": converted, "max_tokens": max_tokens, "stream": stream}
         if json_mode:
             system += "\nReturn only a valid JSON object." if system else "Return only a valid JSON object."
@@ -425,7 +426,7 @@ class AnthropicProvider(_NativeProvider):
             payload["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
         return payload
 
-    async def stream_chat(self, messages: list[dict[str, str]]) -> AsyncIterator[ProviderChunk]:
+    async def stream_chat(self, messages: list[dict[str, Any]]) -> AsyncIterator[ProviderChunk]:
         enabled = bool(getattr(self.config, "web_search", False))
         saw = False
         completed = False
@@ -487,7 +488,7 @@ class AnthropicProvider(_NativeProvider):
                 yield _sources(list(sources.values())[:MAX_SOURCES])
             yield _status(self.kind, "succeeded" if searched else "not_used")
 
-    async def generate_text(self, messages: list[dict[str, str]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
+    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
         body = await self._post_json(self.endpoint, self._payload(messages, stream=False, max_tokens=max_tokens, json_mode=json_mode))
         if body.get("stop_reason") == "max_tokens":
             raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")

@@ -13,6 +13,8 @@ import OutboundApproval from './OutboundApproval';
 import AssistantResponse from './AssistantResponse';
 import HelpControls from './HelpControls';
 import HelpRecord, { HelpRecordFacts } from './HelpRecord';
+import ComposerAttachments from './ComposerAttachments';
+import { attachmentError } from './AttachmentSupport';
 import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
 import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
 
@@ -54,6 +56,11 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     setEditingTurnId(null); editRequest.current = null; searchByRequestKey.current.clear(); setDiscussion(null); setContent(drafts.current.get(id) ?? ''); setPublicQuery(''); setMaterialVersions([]); setError(''); setPending(null); setBusy(false); setBranchBusy(false); branching.current = false; sending.current = false; key.current = requestId();
     getQuestionDiscussion(id).then(value => { if (active) { setDiscussion(value); } }).catch(reason => { if (active) setError(String(reason.message ?? reason)); });
     return () => { active = false; generation.current += 1; };
+  }, [id]);
+  useEffect(() => {
+    const update = () => { const current = generation.current; void getQuestionDiscussion(id).then(value => { if (generation.current === current) setDiscussion(value); }).catch(() => {}); };
+    window.addEventListener('nautilus:image-settings-changed', update);
+    return () => window.removeEventListener('nautilus:image-settings-changed', update);
   }, [id]);
   const runningTurn = discussion?.turns.find(turn => turn.status === 'running');
   const running = Boolean(runningTurn);
@@ -155,7 +162,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         if (key.current === requestKey) key.current = requestId();
         if (!retry && !regenerateTurnId && !editTurnId) { setPending(null); if (!preserveDraft) { setContent(text); drafts.current.set(id, text); } }
       } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ content: text, key: requestKey, failed: true, helpRequest: frozenHelp, sourceScope: frozenScope });
-      setError(stateRejected ? '消息未发送，请核对最新状态后重新发送。' : reason instanceof Error ? reason.message : '消息发送未确认，请重试。');
+      setError(stateRejected ? '消息未发送，请核对最新状态后重新发送。' : attachmentError(reason));
       return false;
     } finally {
       if (generation.current === currentGeneration) { sending.current = false; setBusy(false); }
@@ -214,6 +221,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         onSubmit={event => { event.preventDefault(); void send(); }}
         placeholder="输入关于这道题的问题，或回答拓展问题" maxLength={12000}
         disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
+        attachments={<ComposerAttachments kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} supportsImages={discussion.image_model?.supports_image_input} discussionModel disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} />}
         suggestions={<HelpControls disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onChoose={(kind, label) => void send(label, key.current, false, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !searchChoice.ready} providerKind={discussion.provider_protocol ?? undefined} /><TaskMaterials kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={discussion.turns.flatMap(turn => turn.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onPurged={async () => { const current = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === current) { setDiscussion(next); await sharedState.reload(); } }} candidates={webMaterialCandidates(discussion.turns.map(turn => ({ runId: turn.id, trace: turn.search_trace, complete: turn.status === 'succeeded' })))} /></>}
         actions={running && <button className="button button--danger button--with-icon" type="button" disabled={cancelling} onClick={() => void cancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}

@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, StrictBool
 
 from ..ai_runtime import AiRunManager
 from ..conversations import ConversationConflict, ConversationError
@@ -171,6 +172,20 @@ def list_provider_models(
 ) -> list[dict[str, Any]]:
     try:
         return conversation_service(request).list_models(identity["id"], provider_id)
+    except ConversationError as error:
+        _raise(error)
+
+
+class ImageCapabilityRequest(BaseModel):
+    supports_image_input: StrictBool | None
+
+
+@router.put('/providers/{provider_id}/models/{model_id}/image-capability')
+def set_image_capability(provider_id: str, model_id: str, payload: ImageCapabilityRequest,
+                         request: Request, identity=Depends(current_identity)):
+    try:
+        return {'model': conversation_service(request).set_image_capability(
+            identity['id'], provider_id, model_id, payload.supports_image_input)}
     except ConversationError as error:
         _raise(error)
 
@@ -411,6 +426,7 @@ def delete_conversation(
 ) -> Response:
     try:
         conversation_service(request).delete_conversation(identity["id"], conversation_id)
+        request.app.state.material_ocr.forget_purged()
     except ConversationError as error:
         _raise(error)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

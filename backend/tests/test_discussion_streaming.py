@@ -210,6 +210,10 @@ async def test_upgrade_028_preserves_existing_turn_and_erases_new_reasoning(lear
         for column in ('title', 'title_source', 'branch_parent_id', 'branch_turn_id'):
             legacy.execute(f'ALTER TABLE learning_question_discussion DROP COLUMN {column}')
         legacy.execute('DROP TRIGGER learning_discussion_purge_materials')
+        legacy.execute('DROP TABLE learning_material_ocr')
+        legacy.execute('DROP TABLE learning_material_link')
+        legacy.execute('DROP TABLE learning_material_library')
+        legacy.execute('DROP TABLE learning_material_original')
         legacy.execute('DROP TABLE learning_task_material')
         legacy.execute('DROP TRIGGER learning_delayed_source_erased')
         legacy.execute('DROP TABLE learning_delayed_view')

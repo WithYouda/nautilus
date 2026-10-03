@@ -84,7 +84,7 @@ class CurrentConversationState:
                 raise DomainError('conversation_state_path_invalid', 422)
 
     def _validate_scope(self, identity, kind, scope_id, scope):
-        if not isinstance(scope, dict) or set(scope) - {'mode', 'version_ids', 'conflict_policy', 'knowledge_base'}:
+        if not isinstance(scope, dict) or set(scope) - {'mode', 'version_ids', 'conflict_policy', 'knowledge_base', 'image_version_ids'}:
             raise DomainError('invalid_material_selection', 422)
         self.materials.freeze(identity, kind, scope_id, scope)
 

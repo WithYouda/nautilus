@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .providers import ProviderChunk, ProviderError, _ThinkStreamParser
+from .provider_messages import encode_message, message_images
 
 MAX_CALLS = 8
 MAX_ARGUMENTS = 20_000
@@ -78,8 +79,11 @@ class ToolSession:
         self._initial_history_length = 0
         self._system = ""
         self._pending: ToolTurn | None = None
+        self._image_data: set[str] = set()
 
     def _initial(self) -> list[dict]:
+        for message in self.messages:
+            self._image_data.update(image["data"] for image in message_images(message))
         self._system = "\n".join(str(m.get("content", "")) for m in self.messages if m.get("role") == "system")
         # This limits only private protocol replay, not the ordinary conversation
         # history. Keep complete recent turns; never trim inside a tool exchange.
@@ -108,14 +112,13 @@ class ToolSession:
                 continue
             if self.kind in {"openai_compatible", "openai_responses"}:
                 clean = {"role": role, "content": str(message.get("content", ""))}
+                if "_images" in message:
+                    clean["_images"] = message["_images"]
                 if self.kind == "openai_compatible" and role == "assistant" and "reasoning_content" in message:
                     clean["reasoning_content"] = message["reasoning_content"]
-                history.append(clean)
+                history.append(encode_message(clean, self.kind))
             elif role != "system":
-                if self.kind == "google":
-                    history.append({"role": "model" if role == "assistant" else "user", "parts": [{"text": str(message.get("content", ""))}]})
-                else:
-                    history.append({"role": "assistant" if role == "assistant" else "user", "content": str(message.get("content", ""))})
+                history.append(encode_message(message, self.kind))
         return history
 
     def export_turn(self) -> dict:
@@ -123,7 +126,12 @@ class ToolSession:
         if self._history is None or self._pending is not None:
             raise ProviderError("模型轮次尚未完成", kind="protocol_error")
         generated = self._history[self._initial_history_length:]
-        if len(json.dumps(generated, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
+        serialized = json.dumps(generated, ensure_ascii=False)
+        # Only generated messages are persisted. Refuse a vendor/tool echo of
+        # transient input bytes, even when it appears inside a text field.
+        if any(data in serialized for data in self._image_data):
+            raise _bad("模型轮次记录包含图片输入")
+        if len(serialized.encode("utf-8")) > MAX_CONTINUATION:
             raise _bad("模型轮次记录过大")
         return {"provider_kind": self.kind, "model": self.provider.config.model,
                 "base_url": self.provider.config.base_url, "messages": copy.deepcopy(generated)}
@@ -201,7 +209,8 @@ class ToolSession:
             async with provider._client() as client:
                 async with client.stream("POST", provider.endpoint, headers=provider._headers(), json=payload) as response:
                     if not response.is_success:
-                        raise provider._http_error(response.status_code, await provider._read_limited(response))
+                        raise provider._http_error(response.status_code, await provider._read_limited(response),
+                                                   include_detail=not self._image_data)
                     count = 0
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):

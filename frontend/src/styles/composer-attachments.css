@@ -1,0 +1,57 @@
+.ai-composer-input { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 8px; align-items: end; }
+.ai-composer-input > textarea { grid-column: 2; grid-row: 2; width: 100%; box-sizing: border-box; }
+.ai-composer-input--plain { grid-template-columns: minmax(0, 1fr); }
+.ai-composer-input--plain > textarea { grid-column: 1; }
+.composer-attachments { display: contents; }
+.attachment-picker { grid-column: 1; grid-row: 2; position: relative; align-self: end; }
+.attachment-plus { width: 36px; height: 36px; border: 1px solid var(--line, #ccc); border-radius: 10px; }
+.attachment-picker-menu { position: absolute; bottom: 44px; left: 0; z-index: 45; display: grid; gap: 6px; width: min(260px, calc(100vw - 60px)); padding: 10px; border: 1px solid var(--line, #ccc); border-radius: 10px; background: var(--paper, #fff); box-shadow: 0 8px 24px #0002; }
+.attachment-picker-menu small { line-height: 1.5; }
+.composer-attachment-cards { grid-row: 1; grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; max-height: 210px; overflow: auto; }
+.composer-attachment-card { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; border: 1px solid var(--line, #ccc); border-radius: 8px; padding: 8px; background: var(--paper-soft, #f6f7f4); }
+.composer-attachment-card > div { min-width: 0; }
+.composer-attachment-card strong { display: block; overflow-wrap: anywhere; font-size: .85rem; }
+.composer-attachment-card small { display: block; font-size: .75rem; line-height: 1.5; }
+.attachment-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px; }
+.attachment-card-actions .text-button { font-size: .75rem; padding: 2px 0; }
+.attachment-thumbnail { flex: 0 0 48px; width: 48px; height: 48px; border: 0; background: transparent; padding: 0; cursor: pointer; }
+.attachment-thumbnail img { width: 100%; height: 100%; object-fit: contain; }
+.composer-attachment-cards > p { flex-basis: 100%; font-size: .8rem; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.attachment-backdrop { padding: 12px; align-items: center; }
+.attachment-dialog { width: min(1000px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; box-sizing: border-box; background: var(--paper, #fff); color: var(--ink, inherit); border: 1px solid var(--line, #ccc); border-radius: 12px; padding: 16px; }
+.attachment-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.attachment-dialog h2 { font-size: 1.15rem; margin: 0; overflow-wrap: anywhere; }
+.attachment-dialog p { line-height: 1.6; }
+.attachment-dialog h3 { font-size: .95rem; }
+.attachment-page-navigation, .attachment-review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+.attachment-review-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-bottom: 12px; }
+.attachment-review-columns > :only-child { grid-column: 1 / -1; }
+.attachment-review-columns img { display: block; width: 100%; max-height: 65dvh; object-fit: contain; background: var(--paper-soft, #f5f5f5); }
+.attachment-review-columns pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 65dvh; overflow: auto; }
+.attachment-page-text label:not(.attachment-review-check) { display: block; }
+.attachment-page-text textarea { width: 100%; box-sizing: border-box; min-height: 250px; resize: vertical; margin: 8px 0; font: inherit; }
+.attachment-review-check { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; line-height: 1.6; }
+.attachment-review-check input { margin-top: 6px; flex-shrink: 0; }
+.image-model-settings { padding: 12px; margin: 12px 0; border: 1px solid var(--line, #ccc); border-radius: 8px; }
+.image-model-settings label, .image-model-settings small { display: block; margin: 8px 0; }
+.image-model-settings select { display: block; width: 100%; min-width: 0; margin: 6px 0 12px; }
+.image-model-settings button { margin-right: 8px; }
+@media (max-width: 600px) {
+  .attachment-review-columns { grid-template-columns: minmax(0, 1fr); }
+  .attachment-review-columns img { max-height: 45dvh; }
+  .attachment-page-text textarea { min-height: 180px; }
+  .composer-attachment-cards { max-height: 150px; }
+  .attachment-dialog { padding: 12px; }
+}
+
+.attachment-input-choice { display: block; margin-top: 7px; font-size: .75rem; overflow-wrap: anywhere; }
+.attachment-input-choice select { display: block; width: 100%; margin-top: 4px; font: inherit; }
+.ai-composer > .ai-composer-input { grid-column: 1; grid-row: 1 / span 2; min-width: 0; }
+.ai-composer.ai-composer--suggestions > .ai-composer-input { grid-row: 2; }
+.ai-composer .ai-composer-input > textarea { grid-column: 2; grid-row: 2; }
+.ai-composer .ai-composer-input--plain > textarea { grid-column: 1; }
+@media (max-width: 760px) {
+  .ai-composer > .ai-composer-input { grid-column: 1 / -1; grid-row: 1; }
+  .ai-composer.ai-composer--suggestions > .ai-composer-input { grid-row: 2; }
+  .ai-composer.ai-composer--suggestions > .ai-composer-actions { grid-row: 3; }
+}

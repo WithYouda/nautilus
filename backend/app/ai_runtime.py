@@ -17,6 +17,7 @@ from .search_runtime import external_stream, apply_native_event
 from .generation_trace import GenerationRecorder, interrupt_trace
 from .outbound import OutboundApprovals, RunOutbound, ProviderLease
 from .provider_network import ProviderDiagnostics
+from .material_images import attach_material_images, check_image_sources
 
 logger = logging.getLogger("nautilus.ai")
 
@@ -214,9 +215,14 @@ class AiRunManager:
                     def check_request():
                         if not active():
                             raise asyncio.CancelledError()
+                        check_image_sources(self.conversations.materials, {'id': state.identity_id},
+                            'conversation', state.conversation_id, frozen_scope)
                         if knowledge:
                             knowledge.check()
                     diagnostic.check = check_request
+                    messages = await asyncio.to_thread(attach_material_images, self.conversations.materials,
+                        {'id': state.identity_id}, 'conversation', state.conversation_id, frozen_scope, messages, check_request)
+                    check_request()
                     if knowledge or (search_run is not None and search_run.selection["mode"] == "external"):
                         stream = external_stream(self.conversations.search_service, search_run, messages, provider,
                             lambda trace: self._publish_search(state, trace), outbound=outbound, knowledge=knowledge,

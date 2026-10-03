@@ -105,6 +105,11 @@ export default function useConversationState(kind: MaterialKind, identity: strin
     } catch { if (keyRef.current === target) { loadedRef.current = null; setLoadedKey(null); setError('最新学习状态暂时无法读取，请重试；草稿保留。'); } }
   }
   async function save(patch: Partial<ConversationStateValues>, initial = false) {
+    if (patch.source_scope) {
+      const { image_version_ids, ...scope } = patch.source_scope;
+      const selectedImages = image_version_ids?.filter(version => scope.version_ids.includes(version));
+      patch = { ...patch, source_scope: { ...scope, ...(selectedImages?.length ? { image_version_ids: [...new Set(selectedImages)] } : {}) } };
+    }
     if (!id || !key) {
       const value = { ...stateRef.current, ...patch }; stateRef.current = value; setSnapshot(value); return true;
     }

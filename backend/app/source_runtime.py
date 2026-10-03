@@ -20,8 +20,10 @@ def scope_key(scope):
     if knowledge:
         return (scope.get('mode', 'unspecified'),
                 tuple(scope.get('selection_version_ids', scope.get('version_ids', []))),
-                knowledge.get('kind'), knowledge.get('connection_id'), knowledge.get('connection_revision'))
-    return (scope.get('mode', 'unspecified'), tuple(scope.get('version_ids', [])))
+                knowledge.get('kind'), knowledge.get('connection_id'), knowledge.get('connection_revision'),
+                tuple(scope.get('image_version_ids', [])))
+    return (scope.get('mode', 'unspecified'), tuple(scope.get('version_ids', [])),
+            tuple(scope.get('image_version_ids', [])))
 
 
 def scoped_path(path, scope):

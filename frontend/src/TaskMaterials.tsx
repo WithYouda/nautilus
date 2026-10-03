@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SearchTrace } from './SearchResults';
-import { getMaterialLibrary, getMaterialPurge, getMaterials, purgeLibraryMaterial, purgeMaterial, removeMaterialFromLibrary, saveMaterial, storeMaterialInLibrary, useMaterialFromLibrary, type AppliedSourceScope, type MaterialKind, type MaterialVersion, type PurgeReport, type SourceScope } from './api';
+import { getMaterialLibrary, getMaterialPurge, getMaterials, purgeLibraryMaterial, purgeMaterial, removeMaterialFromLibrary, saveMaterial, storeMaterialInLibrary, uploadMaterial, useMaterialFromLibrary, type AppliedSourceScope, type MaterialKind, type MaterialVersion, type PurgeReport, type SourceScope } from './api';
 import { getPreferences, type ConflictPolicy } from './preferences';
 import DialogPortal from './DialogPortal';
 import ObsidianMaterials, { ObsidianSourceReview, obsidianSource } from './ObsidianMaterials';
 import ObsidianKnowledgeChoice from './ObsidianKnowledgeChoice';
 import './styles/task-materials.css';
+import AttachmentInputChoice from './AttachmentInputChoice';
+import { AttachmentOcrReview, AttachmentPreview } from './AttachmentReview';
+import { attachmentChanged, attachmentError, attachmentLabel, imageFileAccept, materialFileAccept } from './AttachmentSupport';
 
 export const emptySourceScope = (): SourceScope => ({ mode: 'unspecified', version_ids: [] });
 export type WebMaterialCandidate = { runId: string; itemIndex: number; title: string; url: string; text: string };
@@ -20,6 +23,17 @@ function MaterialOriginal({ version, kind, scopeId }: { version: MaterialVersion
     : <small>此版本未保存原件</small>;
 }
 
+function MaterialSavedView({ version, kind, scopeId, inputMode, pageNumbers }: { version: MaterialVersion; kind: MaterialKind; scopeId: string; inputMode?: 'image' | 'text'; pageNumbers?: number[] }) {
+  const [preview, setPreview] = useState(false);
+  return <>
+    {inputMode && <p>本次输入：{inputMode === 'image' ? '原页图片' : '保存的文字'}{pageNumbers?.length ? ` · 第 ${pageNumbers.join('、')} 页` : ''}。</p>}
+    {version.attachment?.origin === 'ocr' && <p>已核对的 OCR 文字（派生版本）；核对不代表内容已核实。</p>}
+    <pre>{version.content}</pre><MaterialOriginal version={version} kind={kind} scopeId={scopeId} />
+    {version.attachment && ['image', 'pdf'].includes(version.attachment.kind) && <button type="button" className="text-button" onClick={() => setPreview(true)}>查看本次保存的原件与页面</button>}
+    {preview && <AttachmentPreview kind={kind} id={scopeId} version={version} pageNumbers={pageNumbers} onClose={() => setPreview(false)} />}
+  </>;
+}
+
 export function MaterialUse({ scope, versions, kind, scopeId }: { scope?: AppliedSourceScope | null; versions?: MaterialVersion[]; kind: MaterialKind; scopeId: string }) {
   if (scope?.purged) return <p className="task-material-use">资料及关联内容已清除。</p>;
   if (!scope || scope.mode === 'unspecified') return null;
@@ -30,18 +44,19 @@ export function MaterialUse({ scope, versions, kind, scopeId }: { scope?: Applie
       const saved = versions?.find(version => version.id === item.id);
       const source = obsidianSource(saved);
       const references = scope.knowledge_references?.filter(reference => reference.version_id === item.id) ?? [];
-      return <li key={item.id}><strong>【资料{index + 1}】{item.title}</strong> · 第 {item.version} 版 · {materialKindLabel(item.content_kind)} · {item.cited ? '正文出现引用标记' : '正文未出现引用标记'}
+      return <li key={item.id}><strong>【资料{index + 1}】{item.title}</strong> · 第 {item.version} 版 · {saved ? materialVersionKindLabel(saved) : materialKindLabel(item.content_kind)} · {item.cited ? '正文出现引用标记' : '正文未出现引用标记'}
       {safeSourceUrl(item.url) && <> · <a href={safeSourceUrl(item.url)!} target="_blank" rel="noopener noreferrer">来源网页</a></>}
       {source && <> · Obsidian 保存快照（{source.vault_name} · {source.relative_path}）</>}
       {references.map((reference, referenceIndex) => <div key={`${reference.start_line}:${reference.end_line}:${referenceIndex}`} className="task-material-knowledge-reference">
         <p>本次知识库读取：第 {reference.start_line}–{reference.end_line} 行 · 内容指纹 {reference.sha256.slice(0, 12)}… · 取得于 {reference.retrieved_at}</p>
         {saved?.content && !saved.purged_at && <details><summary>查看本次保存证据</summary><pre>{saved.content.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/).slice(reference.start_line - 1, reference.end_line).join('\n')}</pre></details>}
       </div>)}
-      {saved && !saved.purged_at && <details><summary>查看保存的版本</summary><pre>{saved.content}</pre><MaterialOriginal version={saved} kind={kind} scopeId={scopeId} />{source && <ObsidianSourceReview kind={kind} id={scopeId} version={saved} />}</details>}
+      {saved && !saved.purged_at && <details><summary>查看保存的版本</summary><MaterialSavedView version={saved} kind={kind} scopeId={scopeId} inputMode={item.input_mode} pageNumbers={item.page_numbers} />{source && <ObsidianSourceReview kind={kind} id={scopeId} version={saved} />}</details>}
     </li>; })}</ol>
   </details>;
 }
 const materialKindLabel = (kind: MaterialVersion['content_kind']) => ({ text: '文本资料', excerpt: '搜索摘录', page: '网页读取片段' })[kind];
+const materialVersionKindLabel = (version: MaterialVersion) => version.attachment?.origin === 'ocr' || version.attachment?.mode === 'image' ? attachmentLabel(version) : materialKindLabel(version.content_kind);
 function safeSourceUrl(value: string | null) {
   try { const url = new URL(value ?? ''); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
   catch { return null; }
@@ -49,16 +64,6 @@ function safeSourceUrl(value: string | null) {
 const policyLabel = (policy: ConflictPolicy) => ({ ask: '询问我', balanced: '由 AI 综合判断', materials: '以所选资料为准' })[policy];
 function latestActive(versions: MaterialVersion[]) {
   return [...new Map(versions.filter(item => !item.purged_at).sort((a, b) => a.version - b.version).map(item => [item.material_id, item])).values()];
-}
-function uploadError(code: unknown) {
-  const messages: Record<string, string> = {
-    material_file_encoding: '文本文件需要使用 UTF-8 编码。',
-    material_file_unsupported: '暂不支持此文件格式。',
-    material_file_no_text: '没有读到可用文字。扫描版 PDF 和图片暂不支持。',
-    material_file_unreadable: '文件无法读取，请检查文件是否损坏。',
-    material_file_encrypted: '加密 PDF 暂不支持。',
-  };
-  return typeof code === 'string' ? messages[code] ?? `资料未保存：${code}` : '资料未保存，请重试。';
 }
 
 export default function TaskMaterials({ kind, id, identity, scope, onChange, candidates, disabled, onEnsure, onPurged, onVersions, evidenceVersionIds = [] }: {
@@ -68,6 +73,9 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
   candidates: WebMaterialCandidate[]; disabled?: boolean; onEnsure?: () => Promise<string>; onPurged: () => Promise<void>; onVersions?: (versions: MaterialVersion[]) => void; evidenceVersionIds?: string[];
 }) {
   const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState<MaterialVersion | null>(null);
+  const [ocrReview, setOcrReview] = useState<MaterialVersion | null>(null);
+  const [unselected, setUnselected] = useState<MaterialVersion | null>(null);
   const [versions, setVersions] = useState<MaterialVersion[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryVersions, setLibraryVersions] = useState<MaterialVersion[]>([]);
@@ -117,9 +125,19 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     selectionOperation.current++;   // a new context invalidates any pending selection
     if (previousId.current && previousId.current !== id) setOpen(false);
     previousId.current = id;
-    setFileReading(false); setVersions([]); onVersions?.([]); setEditing(null); setTitle(''); setContent(''); setError(''); setBusy(false); setConfirmation(null); setPurgeNotice(''); setPurgeHints({}); setLibraryOpen(false); setLibraryVersions([]); setLibraryRetryIds([]); setLibraryError(''); setLibraryLoading(false);
+    setPreview(null); setOcrReview(null); setUnselected(null); setFileReading(false); setVersions([]); onVersions?.([]); setEditing(null); setTitle(''); setContent(''); setError(''); setBusy(false); setConfirmation(null); setPurgeNotice(''); setPurgeHints({}); setLibraryOpen(false); setLibraryVersions([]); setLibraryRetryIds([]); setLibraryError(''); setLibraryLoading(false);
     if (id) void refresh(id, current).catch(() => { if (epoch.current === current) setError('资料列表加载失败，可重新打开重试。'); });
     return () => { epoch.current++; };
+  }, [kind, id, identity]);
+  useEffect(() => {
+    const update = (event: Event) => {
+      const target = (event as CustomEvent<{ kind: string; id: string }>).detail;
+      if (!id || target?.kind !== kind || target.id !== id) return;
+      const current = epoch.current;
+      void refresh(id, current).catch(() => { if (epoch.current === current) setError('附件已保存，资料列表暂时无法读取，请重新打开重试。'); });
+    };
+    window.addEventListener('nautilus:materials-changed', update);
+    return () => window.removeEventListener('nautilus:materials-changed', update);
   }, [kind, id, identity]);
   const evidenceKey = [...new Set(evidenceVersionIds)].sort().join(':');
   useEffect(() => {
@@ -130,6 +148,10 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
   useEffect(() => {
     if (!id) return;
     const current = epoch.current;
+    const purged = new Set(versions.filter(item => item.purged_at).map(item => item.material_id));
+    setPreview(previous => previous && purged.has(previous.material_id) ? null : previous);
+    setOcrReview(previous => previous && purged.has(previous.material_id) ? null : previous);
+    setUnselected(previous => previous && purged.has(previous.material_id) ? null : previous);
     const cleared = [...new Set(versions.filter(item => item.purged_at).map(item => item.material_id))]
       .filter(materialId => versions.filter(item => item.material_id === materialId).every(item => item.purged_at));
     if (!cleared.length) return;
@@ -170,9 +192,14 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     change({ ...rest, ...(knowledgeBase ? { knowledge_base: knowledgeBase } : {}),
       mode: scope.version_ids.length || knowledgeBase ? scope.mode === 'only' ? 'only' : 'reference' : 'unspecified' });
   }
-  function selectSaved(item: MaterialVersion) {
-    const other = scope.version_ids.filter(versionId => !versions.some(version => version.id === versionId && version.material_id === item.material_id));
-    change({ ...scope, mode: scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: [...other, item.id] });
+  async function selectSaved(item: MaterialVersion): Promise<boolean> {
+    const current = epoch.current;
+    const latest = scopeRef.current;
+    const other = latest.version_ids.filter(versionId => !versions.some(version => version.id === versionId && version.material_id === item.material_id));
+    const applied = await change({ ...latest, mode: latest.mode === 'unspecified' ? 'reference' : latest.mode, version_ids: [...other, item.id] });
+    if (epoch.current !== current) return false;
+    if (applied === false) { setUnselected(item); setError('资料已保存，但当前参考未确认。请核对当前状态后重试参考。'); return false; }
+    setUnselected(null); return true;
   }
   /** Returns true only when the current-conversation scope was persisted for this version. */
   async function useCaptured(version: MaterialVersion, isOperationCurrent: () => boolean): Promise<boolean> {
@@ -254,14 +281,13 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
     try {
       const target = await targetId();
       if (!target) throw new Error('请先打开对话。');
-      const response = await fetch(`/api/materials/${kind}/${target}/upload${editing ? `?material_id=${encodeURIComponent(editing.material_id)}` : ''}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, body: file });
-      const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(uploadError(result?.detail));
+      const result = await uploadMaterial(kind, target, file, editing?.material_id);
+      attachmentChanged(kind, target);
       if (epoch.current !== current) return;
       await refresh(target, current);
       if (libraryOpen) await loadLibrary(current);
-      if (epoch.current === current) { selectSaved(result as MaterialVersion); setEditing(null); setTitle(''); setContent(''); }
-    } catch (reason) { if (epoch.current === current) setError(reason instanceof Error ? reason.message : '文件读取失败。'); }
+      if (epoch.current === current) { await selectSaved(result); setEditing(null); setTitle(''); setContent(''); }
+    } catch (reason) { if (epoch.current === current) setError(attachmentError(reason)); }
     finally { if (epoch.current === current) { setFileReading(false); setBusy(false); } if (fileInput.current) fileInput.current.value = ''; }
   }
   async function removeFromLibrary(materialId: string) {
@@ -333,7 +359,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
       {retryGroups.map(group => <p className="task-material-purge-retry" role="alert" key={group.material_id}>“{group.title || '资料'}”{purgeHints[group.material_id] === 'pending' ? '的清除仍在处理中。' : '有部分内容未能清除。'}<button type="button" className="text-button" disabled={busy} onClick={() => { setConfirmation({ action: 'purge', source: 'scope', materialId: group.material_id }); setPurgeNotice(''); }}>重试清除</button></p>)}
       <p>保存或上传成功后即可在本对话参考。联网由工具栏单独控制。取消参考不会删除历史回答；严格范围包含明确选用的笔记与知识库，范围外的旧对话和联网内容不作为答案依据。</p>
       {editing && <p>正在编辑“{editing.title}”。上传文件会保存为这份资料的新版本；旧版本和原件继续保留。</p>}
-      <label className="task-material-upload">上传资料（UTF-8 文本、DOCX 或文字版 PDF）<input ref={fileInput} type="file" disabled={disabled || busy || !id} accept=".txt,.md,.markdown,.json,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yaml,.yml,.sql,.sh,.rs,.go,.java,.c,.cpp,.h,.docx,.pdf" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></label>
+      <label className="task-material-upload">上传资料（图片、PDF、DOCX 或 UTF-8 文本）<input ref={fileInput} type="file" disabled={disabled || busy || !id} accept={`${imageFileAccept},${materialFileAccept}`} onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></label>
       {fileReading && <p role="status">正在读取资料…</p>}
       <label><input type="checkbox" checked={scope.mode === 'only'} disabled={disabled || busy || (selected.length === 0 && !scope.knowledge_base && scope.mode !== 'only')} onChange={event => change({ ...scope, mode: event.target.checked ? 'only' : scope.version_ids.length || scope.knowledge_base ? 'reference' : 'unspecified' })} />只依据所选资料（严格范围）</label>
       <label>资料冲突时<select value={scope.conflict_policy ?? ''} disabled={disabled || busy || !id} onChange={event => change({ ...scope, conflict_policy: event.target.value ? event.target.value as ConflictPolicy : undefined })}>
@@ -353,7 +379,7 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
           {!libraryLoading && libraryRetryIds.map(materialId => <p className="task-material-purge-retry" role="alert" key={materialId}>一份资料的清除尚未完成。<button type="button" className="text-button" disabled={busy} onClick={() => { setConfirmation({ action: 'purge', source: 'library', materialId }); setPurgeNotice(''); }}>重试清除</button></p>)}
           {!libraryLoading && !libraryError && libraryGroups.length === 0 && libraryRetryIds.length === 0 && <p>资料库暂无资料。请在对话资料中点击“存入资料库”。</p>}
           {libraryGroups.length > 0 && <ul className="task-material-library-list">{libraryGroups.map(group => <li key={group.material_id}>
-            <details><summary><strong>{group.title || '未命名资料'}</strong> · {materialKindLabel(group.content_kind)} · {libraryVersions.filter(item => item.material_id === group.material_id && !item.purged_at).length} 个版本</summary>
+            <details><summary><strong>{group.title || '未命名资料'}</strong> · {materialVersionKindLabel(group)} · {libraryVersions.filter(item => item.material_id === group.material_id && !item.purged_at).length} 个版本</summary>
               {libraryVersions.filter(item => item.material_id === group.material_id && !item.purged_at).sort((a, b) => b.version - a.version).map(item => <div className="task-material-library-version" key={item.id}>
                 <p>第 {item.version} 版 · {item.title || '未命名资料'}{selected.includes(item.id) ? ' · 当前使用' : ''}</p>
                 <details><summary>查看保存的文本</summary><pre>{item.content}</pre></details>
@@ -365,9 +391,10 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
         </div>}
       </section>
       {groups.length > 0 && <ul className="task-material-list">{groups.map(group => <li key={group.material_id}>
-        <label><input type="checkbox" disabled={disabled || busy} checked={versions.some(item => item.material_id === group.material_id && selected.includes(item.id))} onChange={() => { const own = versions.filter(item => item.material_id === group.material_id).map(item => item.id); const isSelected = own.some(value => selected.includes(value)); const remaining = scope.version_ids.filter(value => !own.includes(value)); change({ ...scope, mode: isSelected && remaining.length === 0 && !scope.knowledge_base ? 'unspecified' : scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: isSelected ? remaining : [...remaining, group.id] }); }} /><strong>{group.title}</strong> · {materialKindLabel(group.content_kind)}{group.inherited && <span> · 从原对话继承（只读）</span>}</label>
+        <label><input type="checkbox" disabled={disabled || busy} checked={versions.some(item => item.material_id === group.material_id && selected.includes(item.id))} onChange={() => { const own = versions.filter(item => item.material_id === group.material_id).map(item => item.id); const isSelected = own.some(value => selected.includes(value)); const remaining = scope.version_ids.filter(value => !own.includes(value)); change({ ...scope, mode: isSelected && remaining.length === 0 && !scope.knowledge_base ? 'unspecified' : scope.mode === 'unspecified' ? 'reference' : scope.mode, version_ids: isSelected ? remaining : [...remaining, group.id] }); }} /><strong>{group.title}</strong> · {materialVersionKindLabel(group)}{group.inherited && <span> · 从原对话继承（只读）</span>}</label>
         {safeSourceUrl(group.url) && <a href={safeSourceUrl(group.url)!} target="_blank" rel="noopener noreferrer">来源网页</a>}
-        <details><summary>查看当前版本和历史</summary>{versions.filter(item => item.material_id === group.material_id && !item.purged_at).map(item => <div key={item.id}><p>第 {item.version} 版 · {item.title}{item.inherited ? ' · 继承（只读）' : ''}{selected.includes(item.id) ? ' · 当前使用' : ''}</p><pre>{item.content}</pre>{id && <MaterialOriginal version={item} kind={kind} scopeId={id} />}{id && <ObsidianSourceReview kind={kind} id={id} version={item} disabled={busy} />}{!item.inherited && <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setEditing(item); setTitle(item.title ?? ''); setContent(item.content ?? ''); }}>编辑为新版本</button>}</div>)}</details>
+        <details><summary>查看当前版本和历史</summary>{versions.filter(item => item.material_id === group.material_id && !item.purged_at).map(item => <div key={item.id}><p>第 {item.version} 版 · {item.title}{item.inherited ? ' · 继承（只读）' : ''}{selected.includes(item.id) ? ' · 当前使用' : ''}</p><pre>{item.content}</pre>{id && <MaterialOriginal version={item} kind={kind} scopeId={id} />}{id && <ObsidianSourceReview kind={kind} id={id} version={item} disabled={busy} />}{id && item.attachment && ['image', 'pdf'].includes(item.attachment.kind) && <button type="button" className="text-button" onClick={() => setPreview(item)}>预览保存的原件</button>}{(!item.inherited || item.library) && (item.attachment?.origin === 'ocr' || item.attachment?.mode === 'image' ? <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => setOcrReview(item)}>{item.attachment.origin === 'ocr' ? '修改核对文字，保存新版本' : '识别与核对文字'}</button> : <button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => { setEditing(item); setTitle(item.title ?? ''); setContent(item.content ?? ''); }}>编辑为新版本</button>)}</div>)}</details>
+        <AttachmentInputChoice version={versions.find(item => item.material_id === group.material_id && selected.includes(item.id)) ?? group} scope={scope} disabled={busy || disabled} onChange={onChange} />
         <div className="task-material-actions">
         {group.library ? <span className="task-material-library-status">已存入资料库</span> : <button type="button" className="button button--quiet" disabled={busy || disabled || !id} onClick={() => void storeInLibrary(group.material_id)}>存入资料库</button>}
         <button type="button" className="button button--danger" disabled={busy || disabled || !id} onClick={() => { setConfirmation({ action: 'purge', source: 'scope', materialId: group.material_id }); setPurgeNotice(''); }}>清除</button>
@@ -381,8 +408,10 @@ export default function TaskMaterials({ kind, id, identity, scope, onChange, can
         {editing && <button type="button" className="text-button" onClick={() => { setEditing(null); setTitle(''); setContent(''); }}>取消编辑</button>}
       </div>
       {candidates.length > 0 && <details><summary>从本对话已取得内容的网页结果保存</summary><ul>{candidates.map(item => <li key={`${item.runId}:${item.itemIndex}`}><strong>{item.title}</strong><p>{item.text.slice(0, 200)}{item.text.length > 200 ? '…' : ''}</p><button type="button" className="text-button" disabled={busy || disabled || !id} onClick={() => void save({ title: item.title, web_run_id: item.runId, web_item_index: item.itemIndex })}>保存此网页内容</button></li>)}</ul><p>搜索取得内容不代表已核实网页真伪。</p></details>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}{unselected && <button type="button" className="text-button" disabled={busy || disabled} onClick={() => void selectSaved(unselected)}>重试参考已保存版本</button>}
     </section>}
+    {id && preview && <AttachmentPreview key={`${id}:${preview.id}`} kind={kind} id={id} version={preview} onClose={() => setPreview(null)} />}
+    {id && ocrReview && <AttachmentOcrReview key={`${id}:${ocrReview.id}`} kind={kind} id={id} version={ocrReview} onClose={() => setOcrReview(null)} onConfirmed={async version => { const current = epoch.current; await refresh(id, current); if (epoch.current !== current) return false; return selectSaved(version); }} />}
     {confirmation && <DialogPortal><div className="dialog-backdrop task-material-purge-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setConfirmation(null); }}><section ref={purgeDialog} className="task-material-purge-dialog" role="dialog" aria-modal="true" aria-labelledby="task-material-purge-title" onKeyDown={event => event.stopPropagation()}><h2 id="task-material-purge-title">{confirmation.action === 'remove' ? '从资料库移除这份资料？' : '清除这份资料？'}</h2><p>{confirmation.action === 'remove' ? '已有对话中的资料引用和回答将保留。这不会彻底清除资料文件。' : <>这会永久清除这份资料的所有版本和原件，包括资料库中的共享资料；所有选用它的对话、讨论及相关回答内容都可能受影响，同一次检索保存的其他资料也可能一并清除。无法撤销。已下载到设备的副本不会受影响。{confirmationHasObsidianSource && <><br />清除的是 Nautilus 保存的这份资料及相关内容；不会删除 Obsidian 原文或其云端备份。</>}</>}</p>{busy && <p role="status">{confirmation.action === 'remove' ? '正在移除…' : '正在清除…'}</p>}{error && <p className="form-error" role="alert">{error}</p>}<div className="task-material-purge-actions"><button ref={purgeCancel} type="button" className="button button--quiet" disabled={busy} onClick={() => setConfirmation(null)}>取消</button><button type="button" className="button button--danger" disabled={busy} onClick={() => confirmation.action === 'remove' ? void removeFromLibrary(confirmation.materialId) : void purge()}>{busy ? '处理中' : confirmation.action === 'remove' ? '确认移除' : '确认清除'}</button></div></section></div></DialogPortal>}
   </div>;
 }

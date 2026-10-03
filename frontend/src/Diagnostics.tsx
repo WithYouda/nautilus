@@ -39,11 +39,12 @@ const events: Record<string, string> = {
   'provider.failed': '模型请求失败，不再重试', 'ai.run_finished': 'AI 运行结束',
 };
 const results: Record<string, string> = { complete: '完成', partial: '未全部完成', pending: '待处理', succeeded: '成功完成', failed: '失败', canceled: '已取消', connected: '连接成功' };
-const phases: Record<string, string> = { initial_response: '首次模型请求', tool_continuation: '工具结果续接', history_selection: '历史记录筛选', title: '生成标题', provider_request: '模型请求' };
-const scopes = { conversation: '普通对话', discussion: '题目讨论' };
+const phases: Record<string, string> = { initial_response: '首次模型请求', tool_continuation: '工具结果续接', history_selection: '历史记录筛选', title: '生成标题', provider_request: '模型请求', ocr: '附件文字识别' };
+const scopes = { conversation: '普通对话', discussion: '题目讨论', material_ocr: '附件文字识别' };
 const providerKinds: Record<string, string> = { openai_compatible: 'OpenAI 兼容接口', openai_responses: 'OpenAI Responses', anthropic: 'Anthropic', google: 'Google' };
 const errorStages: Record<string, string> = { dns: '域名解析', connect: '建立连接', tls: '安全连接', proxy: '代理连接', write: '发送请求', read: '读取响应', pool: '等待可用连接', protocol: '响应协议', http: 'HTTP 响应', overall: '整体请求', canceled: '取消请求', unknown: '未知' };
 const errorCodes: Record<string, string> = {
+  ocr_failed: '附件文字识别失败', image_model_unverified: '模型图片能力未确认', image_model_unsupported: '模型不支持图片输入', invalid_image_input: '图片输入无法读取',
   dns_temporary: '域名解析暂时失败', dns_not_found: '域名不存在或无法解析',
   connection_refused: '连接被拒绝', connection_reset: '连接被重置', network_unreachable: '网络不可达',
   connect_timeout: '建立连接超时', connect_error: '建立连接失败',

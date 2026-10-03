@@ -6,6 +6,7 @@ import { getPreferences, savePreferences, type ConflictPolicy, type UserPreferen
 import './styles/settings.css';
 import { DiagnosticSettings } from './Diagnostics';
 import ObsidianSettings from './ObsidianSettings';
+import ImageModelSettings from './ImageModelSettings';
 
 export type SettingsSection = 'general' | 'search' | 'provider';
 const initial: UserPreferences = { conflict_policy: 'ask', search: { mode: 'off' } };
@@ -54,6 +55,7 @@ export default function Settings({ open, section, provider, onClose, onOpenSearc
           </section>
           <section className={section === 'provider' ? 'is-target' : ''}><h3>AI 提供方</h3><p>配置模型、协议与凭据。</p><button className="button button--quiet" type="button" onClick={onOpenProviderSettings}>打开提供方设置</button></section>
           <section><DiagnosticSettings onOpen={() => { if (!dirty || window.confirm('有未保存的设置，确定放弃修改吗？')) { onClose(); window.dispatchEvent(new Event('nautilus:open-diagnostics')); } }} /></section>
+          <ImageModelSettings />
           <ObsidianSettings />
         </div>
         {error && <p className="form-error unified-settings-error" role="alert">{error}</p>}

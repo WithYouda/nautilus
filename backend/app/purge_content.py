@@ -220,6 +220,11 @@ def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifac
             '''version_id IN (SELECT id FROM learning_task_material
                 WHERE owner_id=? AND scope_kind=? AND scope_id=? AND purged_at IS NOT NULL)''',
             (owner, 'discussion', discussion))
+        _update(connection, 'learning_material_ocr', dict(pages_json='[]', model_json=None,
+            error_code=None, status='purged', updated_at=now, purged_at=now),
+            '''source_version_id IN (SELECT id FROM learning_task_material
+                WHERE owner_id=? AND scope_kind=? AND scope_id=? AND purged_at IS NOT NULL)''',
+            (owner, 'discussion', discussion))
 
     claims = set()
     for artifact in artifacts:

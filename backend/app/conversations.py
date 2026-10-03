@@ -263,6 +263,25 @@ class ConversationService:
         )
         return [self._model_public(row) for row in rows]
 
+    def set_image_capability(self, identity_id, provider_id, model_id, supports):
+        with self._provider_lock:
+            self._provider_by_id(identity_id, provider_id)
+            row = self.database.fetchone('SELECT * FROM provider_model WHERE id=? AND provider_profile_id=?',
+                                         (model_id, provider_id))
+            if row is None:
+                raise ConversationError('模型不存在')
+            capabilities = self._decode_json(row['capabilities_json'], DEFAULT_CAPABILITIES).copy()
+            capabilities['supports_image_input'] = supports
+            modalities = [value for value in capabilities.get('input_modalities', ['text']) if value != 'image']
+            if supports is True:
+                modalities.append('image')
+            capabilities['input_modalities'] = modalities
+            with self.database.transaction() as c:
+                c.execute("UPDATE provider_model SET capabilities_json=?,capability_source='manual_override',updated_at=? WHERE id=?",
+                          (json.dumps(capabilities), _now(), model_id))
+                c.execute('UPDATE provider_profile SET config_version=config_version+1,updated_at=? WHERE id=?', (_now(), provider_id))
+            return self._model_public(self.database.fetchone('SELECT * FROM provider_model WHERE id=?', (model_id,)))
+
     def add_manual_model(
         self,
         identity_id: str,
@@ -1650,6 +1669,13 @@ class ConversationService:
                 raise ConversationError("资料范围不可用，请重新选择资料") from error
         elif source_scope and source_scope.get("mode") != "unspecified":
             raise ConversationError("资料服务不可用")
+        if frozen:
+            from .material_images import require_image_capability
+            try:
+                require_image_capability(self, identity_id, profile['id'], config.model, frozen)
+            except DomainError as error:
+                label = '当前模型不支持图片' if error.code == 'image_model_unsupported' else '当前模型的图片输入能力尚未确认'
+                raise ConversationError(label + '，请在图片模型设置中确认能力、选择支持图片的模型，或对附件使用 OCR。') from error
         material_bound = bool(frozen and frozen["mode"] != "unspecified")
         config_snapshot["source_request"] = source_scope or {"mode": "unspecified", "version_ids": []}
         config_snapshot["source_scope"] = public_scope(frozen)

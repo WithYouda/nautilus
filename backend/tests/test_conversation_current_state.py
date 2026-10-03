@@ -173,6 +173,8 @@ async def test_formal_034_to_current_upgrade_preserves_discussion(tmp_path, lear
         learning_database.connection.backup(old)
         old.execute('DROP TRIGGER learning_discussion_purge_current_state')
         old.execute('DROP TABLE learning_conversation_current_state')
+        old.execute('DROP TRIGGER learning_material_purge_ocr')
+        old.execute('DROP TABLE learning_material_ocr')
         old.execute('DROP TRIGGER learning_material_purge_original')
         old.execute('DROP TABLE learning_material_original')
         old.execute('DROP TRIGGER learning_discussion_purge_materials')
@@ -188,7 +190,7 @@ async def test_formal_034_to_current_upgrade_preserves_discussion(tmp_path, lear
         before = {table: old.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() for table in tables}
         assert old.execute('SELECT 1 FROM learning_question_discussion WHERE id=?', (discussion['id'],)).fetchone()
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '038_material_library_removal'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '039_material_ocr'
     with sqlite3.connect(path) as upgraded:
         assert all(upgraded.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() == rows
                    for table, rows in before.items())

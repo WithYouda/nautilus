@@ -210,6 +210,7 @@ def _backup_loses_purge_barriers(
         ("learning_delayed_view", ("owner_id", "id")),
         ("learning_task_material", ("owner_id", "id")),
         ("learning_material_original", ("version_id",)),
+        ("learning_material_ocr", ("id",)),
     )
     for table, keys in barriers:
         current_columns = {row[1] for row in current.execute(f"PRAGMA table_info({table})")}
@@ -254,6 +255,12 @@ def _backup_contains_purged_content(
 
 
 def _contains_material_original(connection, owner, material_id):
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE name='learning_material_ocr'").fetchone():
+        if connection.execute('''SELECT 1 FROM learning_material_ocr j
+            JOIN learning_task_material m ON m.id=j.source_version_id WHERE m.owner_id=? AND m.material_id=?
+            AND (j.purged_at IS NULL OR j.pages_json<>'[]' OR j.model_json IS NOT NULL OR j.error_code IS NOT NULL)''',
+            (owner, material_id)).fetchone():
+            return True
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='learning_material_original'").fetchone():
         return False
     return connection.execute('''SELECT 1 FROM learning_material_original o
@@ -532,6 +539,7 @@ def _check_purge_receipts(target_path, candidate_path):
                 'learning_delayed_view': ['provided_at', 'displayed_at', 'after_arranging'],
                 'learning_task_material': ['title','content','url','provenance_json'],
                 'learning_material_original': ['filename','media_type','content','sha256'],
+                'learning_material_ocr': ['pages_json','model_json','error_code'],
                 'learning_conversation_current_state': ['search_override_json'],
             }
             def snapshot():

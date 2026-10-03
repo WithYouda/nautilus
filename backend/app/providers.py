@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .provider_network import ProviderHTTPClient
+from .provider_messages import encode_messages
 
 logger = logging.getLogger("nautilus.providers")
 
@@ -194,13 +195,14 @@ class OpenAICompatibleProvider:
         )
 
     # ------------------------------------------------------------------
-    async def stream_chat(self, messages: list[dict[str, str]]) -> AsyncIterator[ProviderChunk]:
+    async def stream_chat(self, messages: list[dict[str, Any]]) -> AsyncIterator[ProviderChunk]:
         """逐块产出正文增量。异常统一为 ProviderError，便于写入 ai_run.error_kind。"""
         payload: dict[str, Any] = {
             "model": self.config.model,
-            "messages": messages,
+            "messages": encode_messages(messages, "openai_compatible"),
             "stream": True,
         }
+        include_error_detail = not any(message.get("_images") for message in messages)
         try:
             async with self._client() as client:
                 async with client.stream(
@@ -208,13 +210,13 @@ class OpenAICompatibleProvider:
                 ) as response:
                     if not 200 <= response.status_code < 300:
                         body = await self._read_limited(response)
-                        raise self._http_error(response.status_code, body)
+                        raise self._http_error(response.status_code, body, include_detail=include_error_detail)
                     terminal = False
                     saw_content = False
                     think_parser = _ThinkStreamParser()
                     async for line in response.aiter_lines():
                         chunks, line_terminal = self._parse_stream_event(
-                            line, secret=self.config.api_key
+                            line, secret=self.config.api_key, include_error_detail=include_error_detail
                         )
                         for chunk in chunks:
                             normalized = (
@@ -249,7 +251,7 @@ class OpenAICompatibleProvider:
 
     async def generate_text(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         max_tokens: int = 48,
         json_mode: bool = False,
@@ -257,10 +259,11 @@ class OpenAICompatibleProvider:
         """执行一次短的非流式文本请求，用于标题等轻量后台任务。"""
         payload: dict[str, Any] = {
             "model": self.config.model,
-            "messages": messages,
+            "messages": encode_messages(messages, "openai_compatible"),
             "stream": False,
             "max_tokens": max_tokens,
         }
+        include_error_detail = not any(message.get("_images") for message in messages)
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         try:
@@ -277,7 +280,7 @@ class OpenAICompatibleProvider:
                 f"无法连接提供方：{type(error).__name__}", kind="network_error"
             ) from error
         if not 200 <= response.status_code < 300:
-            raise self._http_error(response.status_code, response.content)
+            raise self._http_error(response.status_code, response.content, include_detail=include_error_detail)
         try:
             parsed = response.json()
         except (ValueError, json.JSONDecodeError) as error:
@@ -318,7 +321,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _parse_stream_event(
-        line: str, *, secret: str | None = None
+        line: str, *, secret: str | None = None, include_error_detail: bool = True
     ) -> tuple[list[ProviderChunk], bool]:
         """解析一行 SSE，返回（规范化增量、是否终止）。"""
         stripped = line.strip()
@@ -340,7 +343,7 @@ class OpenAICompatibleProvider:
             if isinstance(detail, dict):
                 detail = detail.get("message", "")
             raise ProviderError(
-                _truncate(redact(str(detail), secret)) or "提供方流式请求失败",
+                (_truncate(redact(str(detail), secret)) if include_error_detail else "") or "提供方流式请求失败",
                 kind="upstream_error",
             )
         choices = event.get("choices")
@@ -468,7 +471,7 @@ class OpenAICompatibleProvider:
         }
 
     # ------------------------------------------------------------------
-    def _http_error(self, status_code: int, body: bytes) -> ProviderError:
+    def _http_error(self, status_code: int, body: bytes, *, include_detail: bool = True) -> ProviderError:
         detail = ""
         try:
             parsed = json.loads(body.decode("utf-8"))
@@ -497,7 +500,7 @@ class OpenAICompatibleProvider:
         else:
             kind = "request_error"
             message = f"提供方拒绝了请求（HTTP {status_code}）"
-        if detail:
+        if detail and include_detail:
             # 提供方有时会把密钥回显在错误里，写进 ai_run 之前必须抹掉。
             message = f"{message}：{_truncate(redact(detail, self.config.api_key))}"
         return ProviderError(message, kind=kind)

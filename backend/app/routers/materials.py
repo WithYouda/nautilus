@@ -11,7 +11,7 @@ from ..dependencies import current_identity
 from ..learning_domain import DomainError
 from ..purge_storage import receipt_path
 from ..managed_purge import EXTERNAL_LIMITS
-from ..material_files import extract_material_text
+from ..material_files import prepare_material_file, render_material_page
 
 router = APIRouter(prefix='/api/materials')
 ScopeKind = Literal['conversation', 'discussion']
@@ -48,6 +48,7 @@ def finish_purge(request, identity, material_id):
         failed_count=sum(item['status'] == 'failed' for item in report['files']))
     request.app.state.ai_runs.forget_material_runs(result['affected_run_ids'])
     request.app.state.discussions.forget_purged_turns()
+    request.app.state.material_ocr.forget_purged()
     return result
 
 
@@ -121,13 +122,25 @@ async def upload_material(scope_kind: ScopeKind, scope_id: str, request: Request
         raw = bytearray()
         async for chunk in request.stream():
             raw.extend(chunk)
-        content = await run_in_threadpool(extract_material_text, name, bytes(raw))
-        media_type = ('application/pdf' if name.lower().endswith('.pdf') else
-                      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                      if name.lower().endswith('.docx') else 'text/plain')
+        prepared = await run_in_threadpool(prepare_material_file, name, bytes(raw))
         return await run_in_threadpool(service.create, identity, scope_kind, scope_id,
-                                      title=name, content=content, material_id=material_id,
-                                      original=(bytes(raw), name, media_type))
+                                      title=name, content=prepared['content'], material_id=material_id,
+                                      original=(bytes(raw), name, prepared['media_type']), file_metadata=prepared)
+    except DomainError as error:
+        fail(error)
+
+
+@router.get('/{scope_kind}/{scope_id}/versions/{version_id}/preview/{page_number}')
+async def material_preview(scope_kind: ScopeKind, scope_id: str, version_id: str, page_number: int,
+                           request: Request, identity=Depends(current_identity)):
+    try:
+        service = request.app.state.materials
+        with service.lock:
+            original = service.original(identity, scope_kind, scope_id, version_id)
+        raw, media_type = await run_in_threadpool(render_material_page, original['content'], original['media_type'], page_number)
+        with service.lock:
+            service.original(identity, scope_kind, scope_id, version_id)
+        return Response(raw, media_type=media_type, headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
     except DomainError as error:
         fail(error)
 
