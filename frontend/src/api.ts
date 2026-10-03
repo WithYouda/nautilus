@@ -387,9 +387,9 @@ export type HelpRecord = {
 };
 export type ReferenceHelpDisplay = { kind: 'reference_answer'; at: string; basis: 'client_report' };
 
-export type TeachingMethod = 'stepwise' | 'socratic' | 'feynman';
+export type TeachingMethod = 'stepwise' | 'socratic' | 'feynman' | 'practice_first';
 export type TeachingSelection = TeachingMethod | 'default';
-export type TeachingAction = 'practice' | 'retell' | 'continue';
+export type TeachingAction = 'practice' | 'retell' | 'continue' | 'next_question';
 export type TeachingMode = TeachingMethod | 'direct_answer' | 'full_explanation';
 export type TeachingCheckpoint = {
   mode: TeachingMode | null;
@@ -398,6 +398,13 @@ export type TeachingCheckpoint = {
   step: { id: string; source_answer_id: string; text: string; start: number; end: number } | null;
   guidance?: { level: 0 | 1 | 2 | 3 | 4; stuck_count: number; reset_answer_id: string | null } | null;
   practice?: TeachingPractice | null;
+  exercise?: TeachingExercise | null;
+};
+export type TeachingExercise = {
+  id: string;
+  question: { answer_id: string; start: number; end: number };
+  phase: 'awaiting_attempt' | 'feedback_available';
+  last_observation_id: string | null;
 };
 export type TeachingPractice = {
   id: string;
@@ -426,6 +433,8 @@ export type TeachingRecord = {
   practice_question?: TeachingPractice | null;
   practice_observation?: TeachingPracticeObservation | null;
   retelling_observation?: TeachingPracticeObservation | null;
+  exercise_question?: TeachingExercise | null;
+  exercise_observation?: TeachingPracticeObservation | null;
   guidance?: { level: 0 | 1 | 2 | 3 | 4; reason: string } | null;
   mode_request: { mode: TeachingMode; scope: 'turn' | 'conversation'; start: number; end: number } | null;
   attempt: {

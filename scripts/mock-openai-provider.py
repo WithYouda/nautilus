@@ -320,6 +320,21 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 if str(message.get('content', '')).startswith('Nautilus 本轮执行上下文')), None)
             practice_context = json.loads(runtime.split('\n', 1)[1]) if runtime else None
             practice_reply = None
+            requested_mode = None
+            for phrase, value in [('完整讲解', 'full_explanation'), ('直接给答案', 'direct_answer'),
+                                  ('提问引导', 'socratic'), ('分步讲解', 'stepwise'), ('费曼复述', 'feynman'),
+                                  ('练习优先', 'practice_first')]:
+                if phrase in c1_request:
+                    persistent = any(word in c1_request for word in ['以后', '今后', '接下来都'])
+                    requested_mode = {'value': value, 'scope': 'conversation' if persistent else 'turn',
+                                      'quote': c1_request, 'persistence_quote': c1_request if persistent else None}
+                    break
+            requested_help = None
+            for phrase, kind in [('给个提示', 'hint'), ('给我提示', 'hint'), ('只解释这一步', 'explain_step'),
+                                 ('换个例子', 'example'), ('让我先试试', 'try_first')]:
+                if phrase in c1_request:
+                    requested_help = {'kind': kind, 'quote': c1_request}
+                    break
             if practice_context and practice_context.get('action') == 'retell':
                 invitation = '请用自己的话说说，为什么要先检查输入边界；也可以举一个简单例子。'
                 practice_reply = (invitation, {'step': None, 'attempt': None, 'mode': None, 'help': None,
@@ -347,6 +362,35 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                             else '💡合成练习反馈：你先检查了缺失编号，并说明了边界处理的理由；可以继续比较两个编号都存在时的情况。')
                 practice_reply = (feedback, {'step': None, 'attempt': {'quote': c1_request, 'needs_help': needs_help},
                     'mode': None, 'help': None, 'practice': {'question': None, 'feedback': feedback}})
+            elif practice_context and not practice_context['before'].get('practice') and (
+                    practice_context.get('action') == 'next_question'
+                    or (requested_mode or {}).get('value', practice_context['before'].get('mode')) == 'practice_first'
+                    or practice_context['before'].get('exercise') and (requested_mode or {}).get('value') in {'full_explanation', 'direct_answer'}):
+                before = practice_context['before']
+                exercise = before.get('exercise')
+                help_kind = practice_context.get('help_kind') or (requested_help or {}).get('kind')
+                direct = (requested_mode or {}).get('value') in {'full_explanation', 'direct_answer'}
+                proposal = {'step': None, 'attempt': None, 'mode': requested_mode, 'help': requested_help, 'practice': None}
+                if practice_context.get('action') == 'next_question' or not exercise and not help_kind and not direct and '[C2澄清]' not in c1_request:
+                    sequence = STATE.snapshot()['requests'].get(scenario, 1)
+                    body = f'🧩合成练习{sequence}：输入包含两个编号，其中一个缺失。你会怎样检查输入边界，并说明缺失时的处理？'
+                    proposal['practice'] = {'question': body, 'feedback': None}
+                elif exercise and ('[C2练习作答]' in c1_request or '[C2作答]' in c1_request):
+                    needs_help = '[C2卡住]' in c1_request
+                    body = ('💡合成练习反馈：你已检查缺失编号；还需要说明缺失时的处理。' if needs_help
+                            else '💡合成练习反馈：你检查了缺失编号，并说明了边界处理；可以补充另一种输入。')
+                    proposal['attempt'] = {'quote': c1_request, 'needs_help': needs_help}
+                    proposal['practice'] = {'question': None, 'feedback': body}
+                elif direct:
+                    body = '合成完整讲解：先检查编号是否缺失，缺失时返回明确提示，再处理正常输入。'
+                elif help_kind:
+                    body = {'hint': '想想缺失编号时，程序能否继续读取。', 'explain_step': '先检查编号是否存在，再使用它。',
+                            'example': '例如第二个编号缺失时，先返回缺失提示。', 'try_first': '你可以先写出自己的处理方法。'}[help_kind]
+                elif not exercise:
+                    body = '你想先练习哪个主题？'
+                else:
+                    body = '可以继续补充这道题的处理方法。'
+                practice_reply = (body, proposal)
             elif practice_context and not practice_context['before'].get('practice') and practice_context['before'].get('mode') == 'feynman':
                 point = (practice_context['before'].get('step') or {}).get('text') or '输入边界检查（合成C2复述）。'
                 if '[C2复述作答]' in c1_request and practice_context['before'].get('step'):
@@ -382,20 +426,8 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 if runtime:
                     context = json.loads(runtime.split('\n', 1)[1])
                     before = context['before']
-                    mode = None
-                    for phrase, value in [('完整讲解', 'full_explanation'), ('直接给答案', 'direct_answer'),
-                                          ('提问引导', 'socratic'), ('分步讲解', 'stepwise'), ('费曼复述', 'feynman')]:
-                        if phrase in c1_request:
-                            persistent = any(word in c1_request for word in ['以后', '今后', '接下来都'])
-                            mode = {'value': value, 'scope': 'conversation' if persistent else 'turn',
-                                    'quote': c1_request, 'persistence_quote': c1_request if persistent else None}
-                            break
-                    help_request = None
-                    for phrase, kind in [('给个提示', 'hint'), ('给我提示', 'hint'), ('只解释这一步', 'explain_step'),
-                                         ('换个例子', 'example'), ('让我先试试', 'try_first')]:
-                        if phrase in c1_request:
-                            help_request = {'kind': kind, 'quote': c1_request}
-                            break
+                    mode = requested_mode
+                    help_request = requested_help
                     attempt = None
                     if before['step'] and ('[C2尝试]' in c1_request or '[C2卡住]' in c1_request):
                         attempt = {'quote': c1_request, 'needs_help': '[C2卡住]' in c1_request}

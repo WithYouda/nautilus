@@ -13,11 +13,11 @@ from uuid import uuid4
 
 from .providers import ProviderChunk
 
-MODES = {'stepwise', 'socratic', 'feynman', 'direct_answer', 'full_explanation'}
-METHODS = {'stepwise', 'socratic', 'feynman'}
+MODES = {'stepwise', 'socratic', 'feynman', 'practice_first', 'direct_answer', 'full_explanation'}
+METHODS = {'stepwise', 'socratic', 'feynman', 'practice_first'}
 HELP_KINDS = {'hint', 'explain_step', 'example', 'try_first'}
-PROTOCOL = 'teaching-v5'
-READABLE_PROTOCOLS = {'stepwise-v1', 'teaching-v2', 'teaching-v3', 'teaching-v4', PROTOCOL}
+PROTOCOL = 'teaching-v6'
+READABLE_PROTOCOLS = {'stepwise-v1', 'teaching-v2', 'teaching-v3', 'teaching-v4', 'teaching-v5', PROTOCOL}
 MAX_METADATA = 16384
 
 LEGACY_OUTPUT_RULE = '本轮执行上下文给出唯一 opening/closing 标记。在最终回答正文结束后，另起一行输出 opening，紧接严格 JSON，再输出 closing；不得用代码块包裹，不要在正文解释这些字段。调用工具前不要输出这段状态。'
@@ -31,9 +31,9 @@ SYSTEM_PROMPT = """教学执行约定：这是学习讨论，不评分，不修�
 JSON 格式固定为 {"step":null,"attempt":null,"mode":null,"help":null,"practice":null}，只能使用以下字段：
 step：保持当前步骤或非教学回答时为 null；建立/转向一个小点时，为从本轮实际回答正文逐字摘取的一段短文本（至多240字），不能虚构后续步骤。
 attempt：只有本轮用户原文实际提供了针对当前步骤的答案、推导、代码、操作结果或复述时，才为 {"quote":"用户原文中的实际尝试片段","needs_help":true或false或null}；仍卡在该小点为true，已有实际进展为false，不能确定为null。普通提问、索要帮助、说让我先试试或仅说懂了都为 null。没有当前步骤时为 null。此项只是可纠正的AI识别，不是通过或掌握证据。
-mode：只有本轮用户明确要求改变方式时，为 {"value":"stepwise或socratic或feynman或direct_answer或full_explanation","scope":"turn或conversation","quote":"本轮用户的方式请求原文","persistence_quote":null}；conversation 必须另把明确持续请求的原文填入 persistence_quote。没有明确持续要求就用 turn。没有方式请求用 null。
+mode：只有本轮用户明确要求改变方式时，为 {"value":"stepwise或socratic或feynman或practice_first或direct_answer或full_explanation","scope":"turn或conversation","quote":"本轮用户的方式请求原文","persistence_quote":null}；conversation 必须另把明确持续请求的原文填入 persistence_quote。没有明确持续要求就用 turn。没有方式请求用 null。
 help：本轮自然表达明确求提示、解释当前步骤、换例或先自行尝试时，为 {"kind":"hint或explain_step或example或try_first","quote":"本轮用户的请求原文"}；没有则为null。界面已明确的help_kind优先，不重复解释产品字段。
-practice：通常为null。仅当action=practice时围绕原小点出一道完整的新情境题，等待作答、不给解法，填 {"question":"本轮正文中完整题目的逐字原文","feedback":null}，step/attempt保持null。当before.practice存在且本轮有实际作答时，attempt逐字引用作答，并填 {"question":null,"feedback":"本轮正文中针对该作答的AI反馈逐字原文"}；反馈说明具体依据和仍不确定之处，不评分或宣称掌握。没有实际作答时不要登记反馈。练习期间step保持null；帮助与完整讲解仍可随时请求。action=continue表示跳过当前练习，回到before.practice.basis_step继续学习，step/attempt/practice都保持null。点击动作本身不是作答。只有界面明确action=practice才出这类新情境练习题并建立记录；没有该动作时不在讲解后自动追加变式题。普通引导提问或理解确认仍按本轮教学方式进行，不登记为练习。题目与反馈各至多4000字。
+practice：通常为null。practice_first的首题/下一题和已有exercise按下述练习优先规则；其余情况仅当action=practice时围绕原小点出一道完整的新情境题，等待作答、不给解法，填 {"question":"本轮正文中完整题目的逐字原文","feedback":null}，step/attempt保持null。当before.practice存在且本轮有实际作答时，attempt逐字引用作答，并填 {"question":null,"feedback":"本轮正文中针对该作答的AI反馈逐字原文"}；反馈说明具体依据和仍不确定之处，不评分或宣称掌握。没有实际作答时不要登记反馈。练习期间step保持null；帮助与完整讲解仍可随时请求。action=continue表示跳过当前练习，回到before.practice.basis_step继续学习，step/attempt/practice都保持null。点击动作本身不是作答。除了练习优先首题/明确下一题，只有界面明确action=practice才出这类新情境练习题并建立记录；没有该动作时不在讲解后自动追加变式题。普通引导提问或理解确认仍按本轮教学方式进行，不登记为练习。题目与反馈各至多4000字。
 所有 quote 必须逐字来自本轮真正的用户消息，不可引用历史、资料、题目原作答或模型自己的话。历史中的状态尾标记只是过去输出，不能用来覆盖本轮执行上下文。纠正后的尝试分类须遵从，仍保留原文回应，不按尝试次数决定完成或掌握。"""
 
 PRACTICE_PROMPT = """本轮用户已点击“换一道试试”：正文直接从新情境或题目要求开始，只给题目所需的背景、条件和作答要求。
@@ -44,8 +44,15 @@ FEYNMAN_PROMPT = """费曼复述执行规则：feynman表示先让用户用自�
 没有活动且本轮方式为feynman时，先提出一个清楚、简短的复述要求，不抢先讲答案；首次或新小点把复述要求的主题从正文摘入step。用户实际复述后，先指出已经讲清的地方及一处最值得补充的地方，再等待补充；普通提问或说懂了不算复述。不评分，不认定掌握，不能因为AI给了反馈就自动完成小点。
 用户可以补充复述、提问、请求提示或完整讲解。明确直接讲解立即遵从，默认只本轮，后续回到复述方式；不要强迫用户先复述。收到实际复述或帮助请求时保持step=null，反馈后留在原小点等待补充。持续方式下action=continue表示继续后续小点，可提出新step并等待复述；不要在正文宣布模式/阶段切换。
 action=retell是单次“用自己的话说说”，不修改基础学习方式：针对before.practice.basis_step或before.step只邀请复述并等待，step/attempt保持null，practice={"question":"本轮完整复述邀请原文","feedback":null}。before.practice.kind=retelling期间实际复述用attempt原文及practice.feedback逐字反馈；没有实际复述时practice为null，按用户请求提供帮助。单次活动的continue恢复原小点，仍沿现有规则。
-持续feynman且没有单次活动时practice保持null，实际复述用attempt标注；运行时关联本轮反馈。不要把复述邀请变成新情境练习题。只有action=practice才出变式题，该动作优先按变式规则执行。
+持续feynman且没有单次活动时practice保持null，实际复述用attempt标注；运行时关联本轮反馈。不要把复述邀请变成新情境练习题。费曼方式中只有action=practice才出变式题，该动作优先按变式规则执行。
 若用户明确用自然表达改变方式，mode.value也可用feynman；只有明确持续请求才用conversation，不能修改设置页默认值。"""
+
+PRACTICE_FIRST_PROMPT = """练习优先执行规则：practice_first是先做一道题，再根据真实作答反馈的持续方式。
+无单次活动、没有before.exercise且本轮方式为practice_first时，主题明确就直接给一道与本轮主题/当前小点相关的完整题目；信息不足先澄清，不编造题目或尝试。出题不先讲解、不泄露答案、不复述按钮或介绍安排。practice={"question":"本轮完整题目逐字原文","feedback":null}，step/attempt保持null，由运行时绑定题目。
+已有before.exercise时留在当前题目。真实作答才填写attempt并用practice={"question":null,"feedback":"本轮针对作答的反馈逐字原文"}；反馈说明做对或待补充的具体地方，然后等待，不在反馈中接下一题、不评分或认定掌握。普通提问、说懂了、求助不是作答，practice=null。
+仅明确action=next_question时才出下一道题，可在未作答时跳过；围绕当前题目及用户新提出的学习主题给一道题，practice.question填完整题目，step/attempt保持null。不得通过修改step或在反馈中换题推进状态。自然提问和明确切换主题要回应，可说明需点“下一题”开始新题，不能暗中覆盖已有题目。
+给提示、换例子、直接答案或完整讲解仍可随时请求，默认只本轮，题目记录保留；help_kind=try_first时简短等待，不抢答。action=practice/retell及before.practice单次活动优先，按它们的规则执行；结束单次活动后回到原题。
+个人默认和当前路径覆盖沿原规则；明确持续自然请求可将mode设为practice_first/conversation，不能改个人设置。任何反馈都不自动开始正式验证，不写完成或掌握结论。"""
 
 SOCRATIC_PROMPT = """提问引导执行规则（只在本轮实际方式为socratic时使用）：
 guidance.level由运行时管理：0开放提问、1提醒相关概念、2缩小问题范围、3局部结构或示例、4直接解释。每轮最多一个要用户回应的问题；不要反复盘问或自行跳级给完整解法。
@@ -146,6 +153,14 @@ def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, 
         before.pop('retelling', None)
     elif not before.get('practice') and (not before.get('retelling') or before['retelling']['step_id'] != before['step']['id']):
         before['retelling'] = {'step_id': before['step']['id'], 'phase': 'awaiting_retelling', 'last_observation_id': None}
+    exercise = before.get('exercise')
+    if exercise:
+        references = {exercise['id'], exercise['question']['answer_id']}
+        if exercise.get('last_observation_id'):
+            references.add(exercise['last_observation_id'])
+        if (not references <= allowed_answers or before['mode'] != previous_mode
+                or not before.get('practice') and (not before['step'] or before['step']['id'] != exercise['id'])):
+            before.pop('exercise', None)
     if before['mode'] == 'socratic' and not before.get('guidance'):
         before['guidance'] = _new_guidance(path[-1]['id'] if path else None)
     observations = []
@@ -178,7 +193,7 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
     instructions = SYSTEM_PROMPT
     if output == 'json':
         instructions = instructions.replace(LEGACY_OUTPUT_RULE, JSON_OUTPUT_RULE).replace('JSON 格式固定为', 'teaching 字段格式固定为')
-    messages[0]['content'] += '\n' + instructions + '\n' + SOCRATIC_PROMPT + '\n' + FEYNMAN_PROMPT
+    messages[0]['content'] += '\n' + instructions + '\n' + SOCRATIC_PROMPT + '\n' + FEYNMAN_PROMPT + '\n' + PRACTICE_FIRST_PROMPT
     if frozen.get('action') == 'practice':
         messages[0]['content'] += '\n' + PRACTICE_PROMPT
     opening, closing = markers(frozen)
@@ -194,8 +209,14 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
         reference = practice['question']
         original = (answer_texts or {}).get(reference['answer_id'], '')
         practice_context = {'question': original[reference['start']:reference['end']]}
+    exercise_context = None
+    exercise = frozen['before'].get('exercise')
+    if exercise:
+        reference = exercise['question']
+        original = (answer_texts or {}).get(reference['answer_id'], '')
+        exercise_context = {'question': original[reference['start']:reference['end']]}
     context = {'before': frozen['before'], 'attempt_context': observations, 'help_kind': frozen.get('help_kind'),
-               'action': frozen.get('action'), 'practice_context': practice_context,
+               'action': frozen.get('action'), 'practice_context': practice_context, 'exercise_context': exercise_context,
                'opening': opening, 'closing': closing}
     if output == 'json':
         context.pop('opening'); context.pop('closing')
@@ -209,14 +230,23 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
         if action in {'practice', 'retell'}:
             constraints.update(attempt='必须为null，点击不是作答。', step='必须为null。',
                 practice='必须填question为本轮reply中的完整题目或复述邀请原文；feedback必须为null。')
+        elif action == 'next_question':
+            constraints.update(attempt='必须为null，点击不是作答。', step='必须为null。',
+                practice='必须填question为本轮reply中的完整下一题原文；feedback必须为null。')
         elif action == 'continue':
             constraints.update(attempt='必须为null，点击不是作答。', practice='必须为null。',
                 step='单次活动返回原小点必须为null；持续费曼继续后续小点可摘取新主题。')
         elif practice:
             constraints.update(step='必须为null，留在当前活动。',
                 practice='只有真实作答/复述才填question:null与反馈逐字原文feedback；没有真实作答时必须为null。')
+        elif exercise:
+            constraints.update(step='必须为null，反馈或帮助不能换题。',
+                practice='实际作答必须填question:null和完整反馈原文feedback；没有实际作答时为null。只有action=next_question才出下一题。')
+        elif frozen['before']['mode'] == 'practice_first':
+            constraints.update(step='必须为null，由应用绑定题目。', attempt='必须为null，首题前没有作答。',
+                practice='主题明确时填question为完整首题原文、feedback:null；澄清主题或用户要求帮助/直接讲解时为null。')
         else:
-            constraints['practice'] = '必须为null，本轮没有单次活动。持续费曼的实际复述只写attempt，应用会将本轮reply作为反馈关联。'
+            constraints['practice'] = '通常为null。本轮用户明确要求练习优先且mode.value为practice_first时，可按首题规则填question与feedback:null，step/attempt为null；除此之外不得出题。持续费曼的实际复述只写attempt，应用关联本轮reply作为反馈。'
         context['teaching_constraints'] = constraints
     elif (frozen.get('action') == 'retell' or frozen['before']['mode'] == 'feynman'
             or (practice or {}).get('kind') == 'retelling'):
@@ -544,6 +574,63 @@ def _retelling_transition(frozen, after, observed, effective_mode, body):
     return observation
 
 
+def _exercise_transition(frozen, proposal, after, observed, effective_mode, help_kind, body):
+    """One source-linked question at a time; feedback cannot start the next one."""
+    before = frozen['before']
+    active = before.get('exercise')
+    action = frozen.get('action')
+    proposed = proposal.get('practice')
+    if proposed is not None and (not isinstance(proposed, dict) or set(proposed) != {'question', 'feedback'}):
+        raise _InvalidProposal('proposal_invalid_schema')
+    if action not in {None, 'next_question'}:
+        raise _InvalidProposal('exercise_action_invalid')
+    if action and observed:
+        raise _InvalidProposal('action_is_not_attempt')
+    if action == 'next_question' and (not active or before['mode'] != 'practice_first'
+                                     or effective_mode != 'practice_first'):
+        raise _InvalidProposal('exercise_unavailable')
+    question = proposed.get('question') if proposed else None
+    if question is not None or action == 'next_question':
+        if (not proposed or question is None or proposed['feedback'] is not None
+                or effective_mode != 'practice_first' or observed or help_kind
+                or active and action != 'next_question'):
+            raise _InvalidProposal('exercise_question_not_allowed')
+        if proposal['step'] is not None:
+            raise _InvalidProposal('exercise_step_changed')
+        span = _span(question, body, 4000)
+        frame = {'id': frozen['answer_id'],
+                 'question': {'answer_id': frozen['answer_id'], **span},
+                 'phase': 'awaiting_attempt', 'last_observation_id': None}
+        after['exercise'] = frame
+        after['step'] = {'id': frozen['answer_id'], 'source_answer_id': frozen['answer_id'],
+                         'text': question[:240], 'start': span['start'],
+                         'end': span['start'] + min(240, span['end'] - span['start']), 'origin': frozen['origin']}
+        return copy.deepcopy(frame), None
+    if proposal['step'] is not None:
+        # Leaving this mode explicitly may establish the new mode's own point.
+        # A one-turn practice-first request similarly restores the base method.
+        if after['mode'] == 'practice_first' or observed or proposed is not None:
+            raise _InvalidProposal('exercise_step_changed')
+        after.pop('exercise', None)
+        return None, None
+    if active and observed:
+        if not proposed or proposed['feedback'] is None:
+            raise _InvalidProposal('exercise_feedback_required')
+        span = _span(proposed['feedback'], body, 4000)
+        observation = {'question_id': active['id'], 'message_id': frozen['message_id'],
+                       'start': observed['start'], 'end': observed['end'], 'answer_id': frozen['answer_id'],
+                       'feedback_start': span['start'], 'feedback_end': span['end'],
+                       'help_context': copy.deepcopy(frozen.get('help_context', []))}
+        after['exercise'] = {**copy.deepcopy(active), 'phase': 'feedback_available',
+                             'last_observation_id': frozen['answer_id']}
+        if after['mode'] != 'practice_first':
+            after.pop('exercise', None)
+        return None, observation
+    if proposed is not None:
+        raise _InvalidProposal('exercise_without_attempt')
+    return None, None
+
+
 def evaluate(frozen, proposal, *, body, user_text, at):
     """Validate before adopting any model change; return a private reason enum."""
     if ((frozen or {}).get('output') or {}).get('format') == 'plain':
@@ -603,8 +690,19 @@ def evaluate(frozen, proposal, *, body, user_text, at):
             observed = {'message_id': frozen['message_id'], 'step_id': before['step']['id'],
                         'source': 'ai', **_span(attempt['quote'], user_text, 4000), 'origin': frozen['origin'],
                         'needs_help': attempt.get('needs_help')}
-        practice_question, practice_observation, guidance_frozen = _practice_transition(
-            frozen, proposal, after, observed, body)
+        exercise_question = exercise_observation = None
+        if (not before.get('practice') and frozen.get('action') not in {'practice', 'retell', 'continue'}
+                and (effective_mode == 'practice_first' or before.get('exercise')
+                     or frozen.get('action') == 'next_question')):
+            exercise_question, exercise_observation = _exercise_transition(
+                frozen, proposal, after, observed, effective_mode, help_kind, body)
+            practice_question = practice_observation = None
+            guidance_frozen = frozen
+        else:
+            practice_question, practice_observation, guidance_frozen = _practice_transition(
+                frozen, proposal, after, observed, body)
+        if after['mode'] != before['mode'] and after['mode'] != 'practice_first':
+            after.pop('exercise', None)
         if (not frozen.get('action') and before['step'] and before['step'] != after['step']
                 and (effective_mode == 'socratic' and (help_kind in HELP_KINDS or observed and observed['needs_help'] is True)
                      or effective_mode == 'feynman' and (help_kind in HELP_KINDS or observed))):
@@ -614,7 +712,8 @@ def evaluate(frozen, proposal, *, body, user_text, at):
         return {'after': after, 'effective_mode': effective_mode, 'mode_request': mode_request,
                 'attempt': observed, 'guidance': guidance, 'help_request': help_request, 'at': at,
                 'practice_question': practice_question, 'practice_observation': practice_observation,
-                'retelling_observation': retelling_observation}, None
+                'retelling_observation': retelling_observation,
+                'exercise_question': exercise_question, 'exercise_observation': exercise_observation}, None
     except _InvalidProposal as error:
         return None, str(error)
     except ValueError:
@@ -648,7 +747,9 @@ def adopt(frozen, proposal, *, body, user_text, at, not_applied_reason=None, rep
             shift_step(result['after'].get('step'))
             shift_frame(result['after'].get('practice'))
             shift_frame(result.get('practice_question'))
-            for key in ('practice_observation', 'retelling_observation'):
+            shift_frame(result['after'].get('exercise'))
+            shift_frame(result.get('exercise_question'))
+            for key in ('practice_observation', 'retelling_observation', 'exercise_observation'):
                 if result.get(key):
                     result[key]['feedback_start'] += reply_start
                     result[key]['feedback_end'] += reply_start
@@ -708,7 +809,9 @@ def public(snapshot, status):
             'default_mode': frozen.get('default_mode', 'stepwise'),
             'practice_question': visible_practice(result.get('practice_question')) if result else None,
             'practice_observation': visible_observation('practice_observation'),
-            'retelling_observation': visible_observation('retelling_observation')}
+            'retelling_observation': visible_observation('retelling_observation'),
+            'exercise_question': copy.deepcopy(result.get('exercise_question')) if result else None,
+            'exercise_observation': visible_observation('exercise_observation')}
 
 
 _UNSET = object()
@@ -756,6 +859,12 @@ def remap(snapshot, ids):
             map_guidance(practice.get('return_guidance'))
             if practice.get('last_observation_id'):
                 practice['last_observation_id'] = mapped(practice['last_observation_id'])
+    def map_exercise(exercise):
+        if exercise:
+            exercise['id'] = mapped(exercise['id'])
+            exercise['question']['answer_id'] = mapped(exercise['question']['answer_id'])
+            if exercise.get('last_observation_id'):
+                exercise['last_observation_id'] = mapped(exercise['last_observation_id'])
     frozen['answer_id'] = mapped(frozen['answer_id'])
     frozen['message_id'] = mapped(frozen['message_id'])
     if frozen.get('parent_answer_id'):
@@ -765,13 +874,15 @@ def remap(snapshot, ids):
             map_step(state.get('step'))
             map_guidance(state.get('guidance'))
             map_practice(state.get('practice'))
+            map_exercise(state.get('exercise'))
             if state.get('retelling'):
                 state['retelling']['step_id'] = mapped(state['retelling']['step_id'])
                 if state['retelling'].get('last_observation_id'):
                     state['retelling']['last_observation_id'] = mapped(state['retelling']['last_observation_id'])
     result = frozen.get('result') or {}
     map_practice(result.get('practice_question'))
-    observations = [result.get('practice_observation'), result.get('retelling_observation')]
+    map_exercise(result.get('exercise_question'))
+    observations = [result.get('practice_observation'), result.get('retelling_observation'), result.get('exercise_observation')]
     for observation in observations:
         if observation:
             for key in ('question_id', 'message_id', 'answer_id'):

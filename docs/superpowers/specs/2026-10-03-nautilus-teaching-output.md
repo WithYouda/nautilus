@@ -12,7 +12,7 @@
 
 ## 同次输出与流式呈现
 
-教学协议`teaching-v5`兼容v1–v4历史记录。受支持请求的最终输出为一个对象：`{reply, teaching, token}`。`reply`是用户可见的Markdown正文；`teaching`保持`step / attempt / mode / help / practice`语义；`token`与本轮服务端冻结值一致。仍只用原教学调用，不增加每轮识别、修复或分类调用；原有标题和已授权工具续答沿原流程。
+结构化传输自教学协议v5引入；当前v6兼容v1–v5，新增教学语义见[练习优先契约](2026-10-03-nautilus-practice-first-runtime.md)。受支持请求的最终输出为一个对象：`{reply, teaching, token}`。`reply`是用户可见的Markdown正文；`teaching`保持`step / attempt / mode / help / practice`语义；`token`与本轮服务端冻结值一致。仍只用原教学调用，不增加每轮识别、修复或分类调用；原有标题和已授权工具续答沿原流程。
 
 四协议使用各自原生请求参数：Chat的`response_format`、Responses的`text.format`、Google的`responseMimeType`、Anthropic的`output_config.format`。请求约束不等于语义正确，完成信号、逐字原文引用、活动与步骤转换仍由应用校验。
 
@@ -31,3 +31,5 @@
 接口依据：[DeepSeek JSON模式](https://api-docs.deepseek.com/guides/json_mode/)与[Anthropic结构化输出](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)。原生约束仍可能截断、返回空结果或产生语义无效内容，沿现有失败边界处理。
 
 更新记录：2026-10-03 作者确认能力门槛及普通聊天回退，实施同次原生JSON、流式正文分离、能力绑定与工具最终轮来源校验；实际结果统一记录于开发状态。
+
+更新记录：2026-10-03 练习优先扩展至v6，复用本传输及能力检查，新题与反馈继续受最终轮原文范围约束。

@@ -310,8 +310,8 @@ class ConversationUpdateRequest(BaseModel):
 
 
 class MessageSendRequest(BaseModel):
-    teaching_mode: Literal['default', 'stepwise', 'socratic', 'feynman'] | None = None
-    teaching_action: Literal['practice', 'retell', 'continue'] | None = None
+    teaching_mode: Literal['default', 'stepwise', 'socratic', 'feynman', 'practice_first'] | None = None
+    teaching_action: Literal['practice', 'retell', 'continue', 'next_question'] | None = None
     public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
@@ -646,8 +646,8 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 
 class QuestionDiscussionMessageRequest(BaseModel):
-    teaching_mode: Literal['default', 'stepwise', 'socratic', 'feynman'] | None = None
-    teaching_action: Literal['practice', 'retell', 'continue'] | None = None
+    teaching_mode: Literal['default', 'stepwise', 'socratic', 'feynman', 'practice_first'] | None = None
+    teaching_action: Literal['practice', 'retell', 'continue', 'next_question'] | None = None
     public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None

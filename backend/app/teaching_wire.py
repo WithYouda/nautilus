@@ -27,7 +27,7 @@ ENVELOPE_SCHEMA = _object({
             "needs_help": {"type": ["boolean", "null"]},
         }),
         "mode": _nullable_object({
-            "value": {"type": "string", "enum": ["stepwise", "socratic", "feynman",
+            "value": {"type": "string", "enum": ["stepwise", "socratic", "feynman", "practice_first",
                                                       "direct_answer", "full_explanation"]},
             "scope": {"type": "string", "enum": ["turn", "conversation"]},
             "quote": {"type": "string"},
