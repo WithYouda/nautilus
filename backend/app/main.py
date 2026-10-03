@@ -161,6 +161,7 @@ def create_app(
         app.state.obsidian = obsidian_service
         diagnostic_service = DiagnosticService(app_settings.data_dir / 'runtime' / 'diagnostics')
         app.state.diagnostics = diagnostic_service
+        conversation_service.diagnostics = diagnostic_service
         runtime_handler = RuntimeDiagnosticHandler(diagnostic_service, identity['id'])
         logging.getLogger('nautilus').addHandler(runtime_handler)
         diagnostic_service.record(identity['id'], module='system', event='service.started')
@@ -173,12 +174,12 @@ def create_app(
         try:
             yield
         finally:
-            diagnostic_service.record(identity['id'], module='system', event='service.stopped')
-            logging.getLogger('nautilus').removeHandler(runtime_handler)
-            diagnostic_service.close()
             outbound_approvals.close()
             await discussion_service.shutdown()
             await ai_run_manager.shutdown()
+            diagnostic_service.record(identity['id'], module='system', event='service.stopped')
+            logging.getLogger('nautilus').removeHandler(runtime_handler)
+            diagnostic_service.close()
             learning_service.close()
             try:
                 app_settings.runtime_token_path.unlink()

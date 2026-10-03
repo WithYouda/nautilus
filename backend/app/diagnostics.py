@@ -60,6 +60,9 @@ class DiagnosticService:
             row.update({key: value for key, value in fields.items() if key in {
                 'method', 'route', 'status', 'duration_ms', 'code', 'result', 'failed_count', 'cleared_count',
                 'source', 'line',
+                'run_id', 'scope_kind', 'phase', 'provider_kind', 'target_host',
+                'request_seq', 'attempt', 'max_attempts', 'retry_delay_ms',
+                'error_stage', 'error_type', 'cause_type', 'errno',
             }})
             try:
                 writer = self.writers.get(owner)

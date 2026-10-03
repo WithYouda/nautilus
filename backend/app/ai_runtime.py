@@ -16,6 +16,7 @@ from .learning_domain import DomainError
 from .search_runtime import external_stream, apply_native_event
 from .generation_trace import GenerationRecorder, interrupt_trace
 from .outbound import OutboundApprovals, RunOutbound, ProviderLease
+from .provider_network import ProviderDiagnostics
 
 logger = logging.getLogger("nautilus.ai")
 
@@ -176,9 +177,13 @@ class AiRunManager:
         frozen_scope=None,
     ) -> None:
         stream: AsyncIterator[ProviderChunk] | None = None
+        diagnostic = ProviderDiagnostics(getattr(self.conversations, 'diagnostics', None),
+            state.identity_id, state.run_id, 'conversation', config.provider_kind)
+        failure = None
         try:
             search_enabled = search_run is not None and search_run.selection["mode"] == "native"
             provider = build_provider(replace(config, web_search=search_enabled), transport=self.transport)
+            provider.diagnostics = diagnostic
             async with ProviderLease(self._provider_slots) as lease:
                 if not self.conversations.mark_run_running(state.run_id):
                     run = self.conversations.owned_run(state.identity_id, state.run_id)
@@ -206,6 +211,12 @@ class AiRunManager:
                             'conversation', state.conversation_id, frozen_scope, active=active,
                             register=lambda version, reference: self.conversations.register_knowledge_reference(
                                 state.run_id, version, reference))
+                    def check_request():
+                        if not active():
+                            raise asyncio.CancelledError()
+                        if knowledge:
+                            knowledge.check()
+                    diagnostic.check = check_request
                     if knowledge or (search_run is not None and search_run.selection["mode"] == "external"):
                         stream = external_stream(self.conversations.search_service, search_run, messages, provider,
                             lambda trace: self._publish_search(state, trace), outbound=outbound, knowledge=knowledge,
@@ -249,23 +260,30 @@ class AiRunManager:
             self._finish(state, "canceled" if state.cancel_requested else "succeeded")
             if state.status == "succeeded":
                 self._schedule_automatic_title(state, config)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
+            failure = error
             self._finish(state, "canceled")
             raise
-        except TimeoutError:
+        except TimeoutError as error:
+            failure = error
             self._finish(state, "failed", kind="timeout", message="提供方响应超时")
         except ProviderError as error:
+            failure = error
             self._finish(state, "failed", kind=error.kind, message=str(error))
         except DomainError as error:
+            failure = error
             self._finish(state, 'failed', kind=error.code,
                          message='本轮知识库选择已失效，请读取最新状态并重新选择后重试。')
-        except Exception:  # noqa: BLE001 - 兜底，错误详情不外泄
+        except Exception as error:  # noqa: BLE001 - 兜底，错误详情不外泄
+            failure = error
             logger.exception("AI 运行失败：%s", state.run_id)
             self._finish(state, "failed", kind="internal_error", message="AI 运行内部错误")
         finally:
             if stream is not None:
                 with suppress(Exception, asyncio.CancelledError):
                     await stream.aclose()
+            if state.status in {'succeeded', 'failed', 'canceled'}:
+                diagnostic.finish(state.status, failure, state.error_kind)
 
     def _publish_generation(self, state, trace):
         if state.finished or (state.cancel_requested and trace['status'] == 'running'):
@@ -331,9 +349,21 @@ class AiRunManager:
         inputs: list[dict[str, str]],
         config: ProviderConfig,
     ) -> None:
+        diagnostic = None
+        failure = None
         try:
             if not self.conversations.mark_title_run_running(title_run_id):
                 return
+            row = self.conversations.database.fetchone('SELECT identity_id FROM conversation_title_run WHERE id=?', (title_run_id,))
+            diagnostic = ProviderDiagnostics(getattr(self.conversations, 'diagnostics', None),
+                row['identity_id'], title_run_id, 'conversation', config.provider_kind, phase='title')
+            def check_title():
+                active = self.conversations.database.fetchone('''SELECT 1 FROM conversation_title_run r
+                    JOIN conversation c ON c.id=r.conversation_id
+                    WHERE r.id=? AND r.status='running' AND c.deleted_at IS NULL''', (title_run_id,))
+                if not active:
+                    raise asyncio.CancelledError()
+            diagnostic.check = check_title
             title_config = ProviderConfig(
                 base_url=config.base_url,
                 model=config.model,
@@ -342,6 +372,7 @@ class AiRunManager:
                 provider_kind=config.provider_kind,
             )
             provider = build_provider(title_config, transport=self.transport)
+            provider.diagnostics = diagnostic
             prompt = self.conversations.build_title_prompt(inputs)
             async with self._provider_slots:
                 async with asyncio.timeout(float(title_config.timeout_seconds)):
@@ -354,7 +385,8 @@ class AiRunManager:
                 "succeeded",
                 generated_title=title,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
+            failure = error
             self.conversations.finalize_title_run(
                 title_run_id,
                 "failed",
@@ -362,7 +394,8 @@ class AiRunManager:
                 error_message="服务正在关闭，标题生成被中断",
             )
             raise
-        except TimeoutError:
+        except TimeoutError as error:
+            failure = error
             self.conversations.finalize_title_run(
                 title_run_id,
                 "failed",
@@ -370,6 +403,7 @@ class AiRunManager:
                 error_message="标题生成超时",
             )
         except ProviderError as error:
+            failure = error
             self.conversations.finalize_title_run(
                 title_run_id,
                 "failed",
@@ -377,13 +411,15 @@ class AiRunManager:
                 error_message=str(error),
             )
         except ConversationError as error:
+            failure = error
             self.conversations.finalize_title_run(
                 title_run_id,
                 "failed",
                 error_kind="invalid_title",
                 error_message=str(error),
             )
-        except Exception:  # noqa: BLE001 - 独立后台任务不得影响正常对话
+        except Exception as error:  # noqa: BLE001 - 独立后台任务不得影响正常对话
+            failure = error
             logger.exception("标题运行失败：%s", title_run_id)
             self.conversations.finalize_title_run(
                 title_run_id,
@@ -391,6 +427,12 @@ class AiRunManager:
                 error_kind="internal_error",
                 error_message="标题生成内部错误",
             )
+        finally:
+            if diagnostic:
+                row = self.conversations.database.fetchone('SELECT status,error_kind FROM conversation_title_run WHERE id=?', (title_run_id,))
+                result = ('canceled' if isinstance(failure, asyncio.CancelledError) or not row or row['status'] == 'superseded' else row['status'])
+                if result in {'succeeded', 'failed', 'canceled'}:
+                    diagnostic.finish(result, failure, row['error_kind'] if row else None)
 
     def _finish(
         self,

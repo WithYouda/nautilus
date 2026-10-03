@@ -17,6 +17,7 @@ from .generation_trace import GenerationRecorder, interrupt_trace
 from .outbound import OutboundApprovals, RunOutbound, OutboundCanceled
 from .help_records import HELP_PROMPTS, public_help, record_display
 from .source_runtime import material_guard, scope_key, public_scope, compatible_scope
+from .provider_network import ProviderDiagnostics
 
 
 class QuestionDiscussionService:
@@ -462,16 +463,27 @@ class QuestionDiscussionService:
         recorder = GenerationRecorder(lambda value: publish_value('generation_trace', value))
         self.recorders[turn_id] = recorder
         stream = None
+        diagnostic = ProviderDiagnostics(getattr(self.chats, 'diagnostics', None), owner,
+                                         attempt_id, 'discussion', '', phase='initial_response')
+        failure = None
+        def check_running():
+            with self.db._lock:
+                if not self._active(self.db.connection, discussion_id, turn_id, attempt_id):
+                    raise asyncio.CancelledError()
+        diagnostic.check = check_running
         try:
             if preparation_error:
                 raise preparation_error
             profile, config = prepared_runtime or self.verification._runtime(owner, discussion['session_id'])
             native = search_run is not None and search_run.selection['mode'] == 'native'
             provider = build_provider(replace(config, web_search=native), transport=self.verification.transport)
+            diagnostic.provider_kind = config.provider_kind
+            provider.diagnostics = diagnostic
             publish_search(trace)
             async with asyncio.timeout(config.timeout_seconds) as deadline:
                 selection = {'history_query': None}
                 if not frozen or frozen['mode'] == 'unspecified':
+                    diagnostic.phase = 'history_selection'
                     plan = await provider.generate_text([
                         {'role': 'system', 'content': '为题目讨论决定是否查阅当前委托的历史。只输出 JSON {"history_query":null} 或 {"history_query":"用于原文子串检索的简短关键词"}。无需要时为 null；不能调用网络或任意工具。'},
                         {'role': 'user', 'content': json.dumps(dict(question=source['question'], request=content), ensure_ascii=False)},
@@ -479,6 +491,7 @@ class QuestionDiscussionService:
                     selection = json.loads(_clean_json(plan))
                     if not isinstance(selection, dict) or set(selection) != {'history_query'} or (selection['history_query'] is not None and (not isinstance(selection['history_query'], str) or len(selection['history_query']) > 80)):
                         raise ValueError('invalid search decision')
+                diagnostic.phase = 'initial_response'
                 snapshot = json.loads(self.db.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (turn_id,))[0])
                 history_ids = snapshot.get('reply', {}).get('history_turn_ids', [])
                 hits = self.search(owner, discussion, selection['history_query']) if selection['history_query'] else []
@@ -539,6 +552,12 @@ class QuestionDiscussionService:
                     from .knowledge import KnowledgeRun
                     knowledge = KnowledgeRun(self.chats.materials, identity, 'discussion', discussion_id,
                                              frozen, active=active, register=register_knowledge)
+                def check_request():
+                    if not active():
+                        raise asyncio.CancelledError()
+                    if knowledge:
+                        knowledge.check()
+                diagnostic.check = check_request
                 if knowledge or (search_run is not None and search_run.selection['mode'] == 'external'):
                     outbound = RunOutbound(self.outbound, owner=owner, kind='discussion', scope_id=discussion_id,
                         run_id=attempt_id, active=active, public_query=public_search_query, timeout=deadline)
@@ -586,6 +605,7 @@ class QuestionDiscussionService:
                 from .branch_maps import name_new_discussion_turn
                 name_new_discussion_turn(c, discussion_id, turn_id)
         except BaseException as error:
+            failure = error
             try:
                 recorder.finish('canceled' if isinstance(error, OutboundCanceled) else 'interrupted' if isinstance(error, asyncio.CancelledError) else 'failed')
             except DomainError:
@@ -608,4 +628,9 @@ class QuestionDiscussionService:
                     await stream.aclose()
             if self.recorders.get(turn_id) is recorder:
                 self.recorders.pop(turn_id, None)
+            row = self.db.fetchone('SELECT status FROM learning_discussion_turn WHERE id=?', (turn_id,))
+            result = ('canceled' if isinstance(failure, (asyncio.CancelledError, OutboundCanceled))
+                      or not row or row['status'] == 'purged' else row['status'])
+            if result in {'succeeded', 'failed', 'canceled'}:
+                diagnostic.finish(result, failure, getattr(failure, 'kind', None) or getattr(failure, 'code', None))
         return self.get(identity, discussion_id)

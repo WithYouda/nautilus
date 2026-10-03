@@ -15,6 +15,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from .providers import ProviderChunk, ProviderConfig, ProviderError, normalize_base_url
+from .provider_network import ProviderHTTPClient
 
 MAX_EVENT_BYTES = 512 * 1024
 MAX_EVENTS = 10000
@@ -70,9 +71,10 @@ class _NativeProvider:
             raise ProviderError(str(error), kind="config_error") from error
 
     def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
+        return ProviderHTTPClient(
             timeout=httpx.Timeout(float(self.config.timeout_seconds), connect=10.0),
             transport=self._transport,
+            diagnostics=getattr(self, 'diagnostics', None),
         )
 
     def _headers(self) -> dict[str, str]:

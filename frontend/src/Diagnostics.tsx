@@ -31,8 +31,63 @@ export function DiagnosticSettings({ onOpen }: { onOpen: () => void }) {
 }
 
 const levels = { info: '信息', warning: '警告', error: '错误' };
-const modules: Record<string, string> = { system: '系统', runtime: '运行时', materials: '资料', ai: 'AI', learning: '学习', search: '搜索', settings: '设置' };
-const events: Record<string, string> = { 'request.finished': '请求结束', 'material.purge': '资料清除', 'service.started': '服务启动', 'service.stopped': '服务停止', 'runtime.error': '运行异常', 'runtime.warning': '运行警告' };
+const modules: Record<string, string> = { system: '系统', runtime: '运行时', materials: '资料', ai: 'AI', provider: '模型服务', learning: '学习', search: '搜索', settings: '设置' };
+const events: Record<string, string> = {
+  'request.finished': '请求结束', 'material.purge': '资料清除', 'service.started': '服务启动', 'service.stopped': '服务停止',
+  'runtime.error': '运行异常', 'runtime.warning': '运行警告',
+  'provider.retry': '模型服务连接失败，准备重试', 'provider.recovered': '模型服务连接已恢复',
+  'provider.failed': '模型请求失败，不再重试', 'ai.run_finished': 'AI 运行结束',
+};
+const results: Record<string, string> = { complete: '完成', partial: '未全部完成', pending: '待处理', succeeded: '成功完成', failed: '失败', canceled: '已取消', connected: '连接成功' };
+const phases: Record<string, string> = { initial_response: '首次模型请求', tool_continuation: '工具结果续接', history_selection: '历史记录筛选', title: '生成标题', provider_request: '模型请求' };
+const scopes = { conversation: '普通对话', discussion: '题目讨论' };
+const providerKinds: Record<string, string> = { openai_compatible: 'OpenAI 兼容接口', openai_responses: 'OpenAI Responses', anthropic: 'Anthropic', google: 'Google' };
+const errorStages: Record<string, string> = { dns: '域名解析', connect: '建立连接', tls: '安全连接', proxy: '代理连接', write: '发送请求', read: '读取响应', pool: '等待可用连接', protocol: '响应协议', http: 'HTTP 响应', overall: '整体请求', canceled: '取消请求', unknown: '未知' };
+const errorCodes: Record<string, string> = {
+  dns_temporary: '域名解析暂时失败', dns_not_found: '域名不存在或无法解析',
+  connection_refused: '连接被拒绝', connection_reset: '连接被重置', network_unreachable: '网络不可达',
+  connect_timeout: '建立连接超时', connect_error: '建立连接失败',
+  tls_certificate: '安全证书验证失败', tls_error: '安全连接失败', proxy_error: '代理连接失败',
+  write_timeout: '发送请求超时', write_error: '发送请求失败', read_timeout: '读取响应超时', read_error: '读取响应失败',
+  pool_timeout: '等待可用连接超时', protocol_error: '响应格式或协议异常',
+  http_auth: '模型服务拒绝认证', http_rate_limited: '模型服务限流', http_client_error: '模型服务拒绝请求', http_server_error: '模型服务异常',
+  timeout: '模型请求超时', canceled: '请求已取消', unknown_error: '未知错误',
+  auth_error: '模型服务拒绝认证', rate_limited: '模型服务限流', endpoint_not_found: '模型接口不存在',
+  upstream_error: '模型服务异常', request_error: '模型服务拒绝请求', network_error: '网络连接失败',
+  config_error: '模型配置无效', unsupported_provider: '不支持此模型服务类型', provider_error: '模型服务调用失败',
+  output_truncated: '模型输出未完整结束', content_filtered: '模型服务未提供可用内容', reasoning_only: '模型仅返回思考内容，没有正文',
+};
+
+function EntryContent({ entry }: { entry: DiagnosticEntry }) {
+  const technicalDetails = entry.error_type || entry.cause_type || entry.errno !== undefined;
+  return <>
+    <span className="diagnostic-entry-summary">{events[entry.event] ?? entry.event}{entry.method ? ` · ${entry.method} ${entry.route}` : ''}{entry.status !== undefined ? ` · ${entry.status}` : ''}{entry.duration_ms !== undefined ? ` · ${entry.duration_ms} ms` : ''}{entry.result ? ` · ${results[entry.result] ?? entry.result}` : ''}</span>
+    {(entry.scope_kind || entry.phase || entry.request_seq !== undefined) && <span className="diagnostic-entry-context">
+      {entry.scope_kind && <span>{scopes[entry.scope_kind]}</span>}
+      {entry.phase && <span>阶段：{phases[entry.phase] ?? entry.phase}</span>}
+      {entry.request_seq !== undefined && <span>模型请求第{entry.request_seq}轮</span>}
+    </span>}
+    {(entry.provider_kind || entry.target_host) && <span className="diagnostic-entry-context">
+      {entry.provider_kind && <span>接口：{providerKinds[entry.provider_kind] ?? entry.provider_kind}</span>}
+      {entry.target_host && <span>目标：{entry.target_host}</span>}
+    </span>}
+    {(entry.attempt !== undefined || entry.retry_delay_ms !== undefined) && <span className="diagnostic-entry-context">
+      {entry.attempt !== undefined && <span>第{entry.attempt}{entry.max_attempts !== undefined ? `/${entry.max_attempts}` : ''}次</span>}
+      {entry.retry_delay_ms !== undefined && <span>下次等待{entry.retry_delay_ms}ms</span>}
+    </span>}
+    {entry.code && <span>{errorCodes[entry.code] && `${errorCodes[entry.code]} · `}<code>{entry.code}</code></span>}
+    {entry.error_stage && <span>失败阶段：{errorStages[entry.error_stage] ?? entry.error_stage}</span>}
+    {technicalDetails && <details className="diagnostic-error-details"><summary>技术详情</summary><div>
+      {entry.error_type && <span>异常类型：<code>{entry.error_type}</code></span>}
+      {entry.cause_type && <span>底层异常：<code>{entry.cause_type}</code></span>}
+      {entry.errno !== undefined && <span>系统错误号 errno：<code>{entry.errno}</code></span>}
+    </div></details>}
+    {entry.source && <code>{entry.source}:{entry.line}</code>}
+    {entry.failed_count !== undefined && <span>完成 {entry.cleared_count} 项，失败 {entry.failed_count} 项</span>}
+    {entry.run_id && <small>AI 运行编号：{entry.run_id}</small>}
+    {entry.request_id && <small>HTTP 请求编号：{entry.request_id}</small>}
+  </>;
+}
 
 type WindowBounds = { x: number; y: number; width: number; height: number };
 function fitWindow(bounds: WindowBounds): WindowBounds {
@@ -174,10 +229,7 @@ export default function Diagnostics() {
       <div ref={list} className="diagnostic-entries" onScroll={event => { const node = event.currentTarget; following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40; }}>
         {!visible.length && <p>暂无符合条件的日志。操作应用后可在这里查看。</p>}
         {visible.map(entry => <article key={entry.id} className={`diagnostic-entry diagnostic-entry--${entry.level}`}><time>{new Date(entry.at).toLocaleTimeString()}</time><strong>{levels[entry.level]}</strong><span>{modules[entry.module] ?? entry.module}</span><div>
-          <span>{events[entry.event] ?? entry.event}{entry.method ? ` · ${entry.method} ${entry.route}` : ''}{entry.status !== undefined ? ` · ${entry.status}` : ''}{entry.duration_ms !== undefined ? ` · ${entry.duration_ms} ms` : ''}{entry.result ? ` · ${entry.result === 'complete' ? '完成' : '未全部完成'}` : ''}</span>
-          {entry.code && <code>{entry.code}</code>}{entry.source && <code>{entry.source}:{entry.line}</code>}
-          {entry.failed_count !== undefined && <span>完成 {entry.cleared_count} 项，失败 {entry.failed_count} 项</span>}
-          {entry.request_id && <small>关联编号：{entry.request_id}</small>}
+          <EntryContent entry={entry} />
         </div></article>)}
       </div>
       {!maximized && <div className="diagnostic-resize" role="slider" aria-label="调整日志窗口大小" aria-valuetext={`${Math.round(bounds.width)} × ${Math.round(bounds.height)}`} aria-valuenow={Math.round(bounds.width)} aria-valuemin={Math.min(300, window.innerWidth)} aria-valuemax={window.innerWidth} tabIndex={0} title="拖动调整大小；方向键微调" onPointerDown={event => startGesture(event, true)} onPointerMove={moveGesture} onPointerUp={stopGesture} onPointerCancel={stopGesture} onLostPointerCapture={stopGesture} onKeyDown={event => {

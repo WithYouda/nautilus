@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .provider_network import ProviderHTTPClient
+
 logger = logging.getLogger("nautilus.providers")
 
 MAX_ERROR_DETAIL = 300
@@ -185,9 +187,10 @@ class OpenAICompatibleProvider:
         }
 
     def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
+        return ProviderHTTPClient(
             timeout=httpx.Timeout(float(self.config.timeout_seconds), connect=10.0),
             transport=self._transport,
+            diagnostics=getattr(self, 'diagnostics', None),
         )
 
     # ------------------------------------------------------------------

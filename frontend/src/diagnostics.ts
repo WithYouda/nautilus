@@ -1,5 +1,35 @@
 export type DiagnosticStatus = { enabled: boolean; storage_error: boolean; retention_bytes: number };
-export type DiagnosticEntry = { id: string; at: string; level: 'info' | 'warning' | 'error'; module: string; event: string; request_id?: string; method?: string; route?: string; status?: number; duration_ms?: number; code?: string; result?: string; failed_count?: number; cleared_count?: number; source?: string; line?: number };
+export type DiagnosticEntry = {
+  id: string;
+  at: string;
+  level: 'info' | 'warning' | 'error';
+  module: string;
+  event: string;
+  request_id?: string;
+  method?: string;
+  route?: string;
+  status?: number;
+  duration_ms?: number;
+  code?: string;
+  result?: string;
+  failed_count?: number;
+  cleared_count?: number;
+  source?: string;
+  line?: number;
+  run_id?: string;
+  scope_kind?: 'conversation' | 'discussion';
+  phase?: 'initial_response' | 'tool_continuation' | 'history_selection' | 'title' | 'provider_request';
+  provider_kind?: string;
+  target_host?: string;
+  request_seq?: number;
+  attempt?: number;
+  max_attempts?: number;
+  retry_delay_ms?: number;
+  error_stage?: string;
+  error_type?: string;
+  cause_type?: string;
+  errno?: number;
+};
 export type DiagnosticPage = DiagnosticStatus & { entries: DiagnosticEntry[] };
 async function diagnosticRequest<T>(path = '', init?: RequestInit): Promise<T> {
   let response: Response;
