@@ -9,7 +9,7 @@ from uuid import uuid4
 from .auth import utc_now
 from .providers import ProviderError, build_provider
 
-VERSION = 2
+VERSION = 3
 MODES = ('plain', 'tools')
 
 
@@ -63,7 +63,7 @@ async def _check(provider, mode):
     from .teaching_json import JsonTeachingDecoder
     token = uuid4().hex
     text = '检查通过 <think> 🍊\n第二行'
-    proposal = dict(step=None, attempt=None, mode=None, help=None, practice=None, project=None)
+    proposal = dict(step=None, attempt=None, mode=None, help=None, practice=None, project=None, adaptation=None)
     expected = {'reply': text, 'teaching': proposal, 'token': token}
     messages = [
         {'role': 'system', 'content': '这是一次应用能力检查。只输出用户给出的完整JSON对象，不添加解释，不调用工具。'},

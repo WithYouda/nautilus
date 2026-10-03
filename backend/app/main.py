@@ -23,6 +23,8 @@ from .search_service import SearchService
 from .outbound import OutboundApprovals
 from .routers import outbound
 from .preferences import PreferencesService
+from .adaptive_preferences import AdaptivePreferencesService
+from .routers import adaptive_preferences
 from .routers import preferences
 from .evidence import EvidenceService, ProviderSemanticAnalyzer
 from .evidence_provider import EvidenceProviderService
@@ -95,6 +97,8 @@ def create_app(
         conversation_service.search_service = search_service
         preferences_service = PreferencesService(credential_store, search_service)
         conversation_service.preferences = preferences_service
+        adaptive_service = AdaptivePreferencesService(conversation_service, learning_database, credential_store)
+        conversation_service.adaptive_preferences = adaptive_service
         material_service = MaterialService(learning_service, conversation_service, preferences_service)
         conversation_service.materials = material_service
         ocr_service = MaterialOCR(material_service, credential_store, transport=provider_transport)
@@ -167,6 +171,7 @@ def create_app(
         app.state.search = search_service
         app.state.outbound = outbound_approvals
         app.state.preferences = preferences_service
+        app.state.adaptive_preferences = adaptive_service
         app.state.materials = material_service
         app.state.material_ocr = ocr_service
         app.state.obsidian = obsidian_service
@@ -252,6 +257,7 @@ def create_app(
     app.include_router(material_ocr.router)
     app.include_router(obsidian.router)
     app.include_router(preferences.router)
+    app.include_router(adaptive_preferences.router)
     return app
 
 

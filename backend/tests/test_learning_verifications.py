@@ -86,6 +86,8 @@ MATERIAL_FAIL = for_material(FAIL)
 
 class FakeConversations:
     default_teaching_mode = ConversationService.default_teaching_mode
+    adaptive_profile = ConversationService.adaptive_profile
+    adaptive_preferences = None
     def teaching_output(self, *_args, **_kwargs):
         return {'format': 'legacy', 'version': 1}
     preferences = None

@@ -242,15 +242,15 @@ def test_schema_requires_exact_envelope_and_current_teaching_fields():
     assert ENVELOPE_SCHEMA["properties"]["reply"] == {"type": "string"}
     assert ENVELOPE_SCHEMA["properties"]["token"] == {"type": "string"}
     teaching = ENVELOPE_SCHEMA["properties"]["teaching"]
-    assert teaching["required"] == ["step", "attempt", "mode", "help", "practice", "project"]
+    assert teaching["required"] == ["step", "attempt", "mode", "help", "practice", "project", "adaptation"]
     assert teaching["properties"]["step"] == {"type": ["string", "null"]}
     expected = {"attempt": ["quote", "needs_help"], "mode": ["value", "scope", "quote", "persistence_quote"],
-                "help": ["kind", "quote"], "practice": ["question", "feedback"], "project": ["goal", "instruction", "feedback", "change_quote"]}
+                "help": ["kind", "quote"], "practice": ["question", "feedback"], "project": ["goal", "instruction", "feedback", "change_quote"], "adaptation": ["method", "reason", "rule_id", "draft"]}
     for field, required in expected.items():
         options = teaching["properties"][field]["anyOf"]
         assert options[1] == {"type": "null"} and options[0]["required"] == required
     mode = teaching["properties"]["mode"]["anyOf"][0]["properties"]
-    assert set(mode["value"]["enum"]) == {"stepwise", "socratic", "feynman", "practice_first", "project", "direct_answer", "full_explanation"}
+    assert set(mode["value"]["enum"]) == {"stepwise", "socratic", "feynman", "practice_first", "project", "adaptive", "direct_answer", "full_explanation"}
     assert mode["scope"]["enum"] == ["turn", "conversation"]
     def check_objects(schema):
         if isinstance(schema, dict):

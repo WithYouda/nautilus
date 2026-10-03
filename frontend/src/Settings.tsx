@@ -8,6 +8,7 @@ import { DiagnosticSettings } from './Diagnostics';
 import ObsidianSettings from './ObsidianSettings';
 import ImageModelSettings from './ImageModelSettings';
 import TeachingRecordSettings from './TeachingRecordSettings';
+import AdaptiveLearningSettings from './AdaptiveLearningSettings';
 
 export type SettingsSection = 'general' | 'search' | 'provider';
 const initial: UserPreferences = { teaching_mode: 'stepwise', conflict_policy: 'ask', search: { mode: 'off' } };
@@ -47,12 +48,14 @@ export default function Settings({ open, section, provider, onClose, onOpenSearc
         <div className="unified-settings-body">
           <section><h3>学习方式</h3>
             <label className="field"><span>默认学习方式</span><select value={draft.teaching_mode} onChange={event => setDraft(current => ({ ...current, teaching_mode: event.target.value as TeachingMethod }))}>
-              <option value="stepwise">分步讲解</option><option value="socratic">提问引导</option><option value="feynman">费曼复述</option><option value="practice_first">练习优先</option><option value="project">项目实践</option>
+              <option value="stepwise">分步讲解</option><option value="socratic">提问引导</option><option value="feynman">费曼复述</option><option value="practice_first">练习优先</option><option value="project">项目实践</option><option value="adaptive">个人自适应</option>
             </select></label>
             {draft.teaching_mode === 'feynman' && <p>先用自己的话解释，再根据反馈补充。</p>}
             {draft.teaching_mode === 'practice_first' && <p>先做一道题，根据反馈补充；点“下一题”才继续。</p>}
             {draft.teaching_mode === 'project' && <p>围绕一个小作品实践，根据反馈修改；点“下一步”才继续。</p>}
+            {draft.teaching_mode === 'adaptive' && <p>按当前任务和已确认偏好选择教法，新的偏好建议会在这里等待确认。</p>}
             <small className="form-hint">用于之后未单独调整的对话请求；已保存的回答保持原样。</small>
+            <AdaptiveLearningSettings />
             <TeachingRecordSettings provider={provider} />
           </section>
           <section className={section === 'general' ? 'is-target' : ''}><h3>资料与回答</h3><p>新上传且读取成功的资料会成为当前对话可参考来源。遇到影响答案的实质冲突时，默认怎样处理？</p>

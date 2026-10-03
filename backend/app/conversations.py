@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sqlite3
@@ -102,6 +103,7 @@ class ConversationService:
         self.materials = None
         self.current_state = None
         self.preferences = None
+        self.adaptive_preferences = None
         self._teaching_checks = set()
 
     def teaching_output(self, owner, profile, config, *, search=None, scope=None):
@@ -119,6 +121,26 @@ class ConversationService:
             return self.preferences.get(owner)['teaching_mode'] if self.preferences else 'stepwise'
         except (PreferencesError, CredentialError) as error:
             raise ConversationError('默认学习方式无法读取，请先检查设置') from error
+
+    def adaptive_profile(self, owner, original_snapshot=None):
+        from .adaptive_preferences import AdaptivePreferencesError
+        try:
+            if original_snapshot is not None:
+                profile = copy.deepcopy((original_snapshot.get('teaching') or {}).get('adaptive_profile') or
+                                        {'revision': 0, 'rules': [], 'suppressed': []})
+                if profile['rules'] and self.adaptive_preferences is not None:
+                    current = self.adaptive_preferences.get(owner)
+                    versions = [current['rules'], *(item['rules'] for item in current['history'])]
+                    accessible = {rule['id'] for rules in versions for rule in rules if rule['source'] is not None}
+                    # Regeneration keeps the old preference version, but cannot
+                    # revive a rule whose actual source has since disappeared.
+                    profile['rules'] = [rule for rule in profile['rules'] if rule['id'] in accessible]
+                return profile
+            if self.adaptive_preferences is None:
+                return {'revision': 0, 'rules': [], 'suppressed': []}
+            return self.adaptive_preferences.freeze(owner)
+        except (AdaptivePreferencesError, CredentialError) as error:
+            raise ConversationError('个人学习偏好无法读取，请先检查设置') from error
 
     def _protocol(self, profile, model_id=None):
         if profile is None:
@@ -1717,6 +1739,7 @@ class ConversationService:
                 raise ConversationConflict(error.code) from error
 
         teaching_default = self.default_teaching_mode(identity_id, original_snapshot)
+        adaptive_profile = self.adaptive_profile(identity_id, original_snapshot)
 
         # 冻结本次运行使用的配置；提交后不再二次读取可变的 provider 状态。
         profile, config, config_snapshot = self.runtime_for_conversation(
@@ -1869,7 +1892,7 @@ class ConversationService:
                 config_snapshot['teaching'] = freeze_teaching(
                     [item for item in teaching_path if item['role'] == 'assistant'],
                     answer_id=assistant_message_id, message_id=user_message_id,
-                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output)
+                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output, adaptive_profile=adaptive_profile)
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,

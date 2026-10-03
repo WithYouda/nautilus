@@ -27,7 +27,7 @@ ENVELOPE_SCHEMA = _object({
             "needs_help": {"type": ["boolean", "null"]},
         }),
         "mode": _nullable_object({
-            "value": {"type": "string", "enum": ["stepwise", "socratic", "feynman", "practice_first", "project",
+            "value": {"type": "string", "enum": ["stepwise", "socratic", "feynman", "practice_first", "project", "adaptive",
                                                       "direct_answer", "full_explanation"]},
             "scope": {"type": "string", "enum": ["turn", "conversation"]},
             "quote": {"type": "string"},
@@ -46,6 +46,19 @@ ENVELOPE_SCHEMA = _object({
             "instruction": {"type": ["string", "null"]},
             "feedback": {"type": ["string", "null"]},
             "change_quote": {"type": ["string", "null"]},
+        }),
+        "adaptation": _nullable_object({
+            "method": {"type": ["string", "null"], "enum": ["stepwise", "socratic", "feynman", "practice_first", "project", "direct_answer", "full_explanation", None]},
+            "reason": {"type": ["string", "null"]},
+            "rule_id": {"type": ["string", "null"]},
+            "draft": _nullable_object({
+                "scenario": {"type": "string", "enum": ["general", "concepts", "problem_solving", "coding", "project"]},
+                "method": {"type": "string", "enum": ["stepwise", "socratic", "feynman", "practice_first", "project", "direct_answer", "full_explanation"]},
+                "start": {"type": "string", "enum": ["auto", "example_first", "try_first", "explain_first"]},
+                "help": {"type": "string", "enum": ["auto", "one_hint", "explain_when_stuck"]},
+                "quote": {"type": "string"},
+                "reason": {"type": "string"},
+            }),
         }),
     }),
     "token": {"type": "string"},

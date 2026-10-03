@@ -387,12 +387,14 @@ export type HelpRecord = {
 };
 export type ReferenceHelpDisplay = { kind: 'reference_answer'; at: string; basis: 'client_report' };
 
-export type TeachingMethod = 'stepwise' | 'socratic' | 'feynman' | 'practice_first' | 'project';
+export type ConcreteTeachingMethod = 'stepwise' | 'socratic' | 'feynman' | 'practice_first' | 'project';
+export type TeachingMethod = ConcreteTeachingMethod | 'adaptive';
 export type TeachingSelection = TeachingMethod | 'default';
 export type TeachingAction = 'practice' | 'retell' | 'continue' | 'next_question' | 'next_step';
-export type TeachingMode = TeachingMethod | 'direct_answer' | 'full_explanation';
+export type TeachingMode = ConcreteTeachingMethod | 'direct_answer' | 'full_explanation';
 export type TeachingCheckpoint = {
   mode: TeachingMode | null;
+  policy?: 'adaptive';
   mode_source?: 'default' | 'conversation';
   retelling?: { step_id: string; phase: 'awaiting_retelling' | 'feedback_available'; last_observation_id: string | null } | null;
   step: { id: string; source_answer_id: string; text: string; start: number; end: number } | null;
@@ -442,6 +444,10 @@ export type TeachingRecord = {
   after: TeachingCheckpoint | null;
   current: TeachingCheckpoint;
   effective_mode: TeachingMode | null;
+  adaptation?: {
+    method: TeachingMode; reason: string | null; rule_id: string | null; profile_revision: number;
+    draft: { configuration: AdaptiveLearningConfiguration; source: { message_id: string; start: number; end: number }; reason: string } | null;
+  } | null;
   requested_mode?: TeachingSelection | null;
   default_mode?: TeachingMethod;
   requested_action?: TeachingAction | null;
@@ -453,7 +459,7 @@ export type TeachingRecord = {
   project_step?: TeachingProject | null;
   project_observation?: (TeachingPracticeObservation & { project_id: string }) | null;
   guidance?: { level: 0 | 1 | 2 | 3 | 4; reason: string } | null;
-  mode_request: { mode: TeachingMode; scope: 'turn' | 'conversation'; start: number; end: number } | null;
+  mode_request: { mode: TeachingMode | 'adaptive'; scope: 'turn' | 'conversation'; start: number; end: number } | null;
   attempt: {
     message_id: string; step_id: string; source: 'ai'; start: number; end: number;
     is_attempt: boolean; revision: number; needs_help?: boolean | null;
@@ -461,6 +467,41 @@ export type TeachingRecord = {
   } | null;
 };
 export type TeachingAttemptCorrection = { expected_revision: number; is_attempt: boolean; request_key: string; needs_help?: boolean | null };
+
+export type AdaptiveLearningConfiguration = {
+  scenario: 'general' | 'concepts' | 'problem_solving' | 'coding' | 'project';
+  method: TeachingMode;
+  start: 'auto' | 'example_first' | 'try_first' | 'explain_first';
+  help: 'auto' | 'one_hint' | 'explain_when_stuck';
+};
+export type AdaptiveLearningSource = {
+  kind: 'conversation' | 'discussion'; scope_id: string; answer_id: string;
+  message_id: string; start: number; end: number;
+};
+export type AdaptiveLearningRule = {
+  id: string; configuration: AdaptiveLearningConfiguration; enabled: boolean;
+  source: AdaptiveLearningSource | null; original_text: string | null;
+};
+export type AdaptiveLearningDraft = {
+  id: string; configuration: AdaptiveLearningConfiguration; reason: string;
+  source: AdaptiveLearningSource; original_text: string | null;
+};
+export type AdaptiveLearningVersion = { revision: number; created_at: string; rules: AdaptiveLearningRule[] };
+export type AdaptiveLearningProfile = {
+  revision: number; rules: AdaptiveLearningRule[]; drafts: AdaptiveLearningDraft[]; ignored: AdaptiveLearningDraft[]; history: AdaptiveLearningVersion[];
+};
+export type AdaptiveLearningChange = { expected_revision: number; request_key: string } & (
+  { action: 'accept' | 'dismiss' | 'reconsider'; candidate_id: string }
+  | { action: 'edit'; rule_id: string; configuration: AdaptiveLearningConfiguration; enabled: boolean }
+  | { action: 'remove'; rule_id: string }
+  | { action: 'restore'; version: number }
+);
+export function getAdaptiveLearning(signal?: AbortSignal): Promise<AdaptiveLearningProfile> {
+  return request('/api/adaptive-learning', { signal });
+}
+export function changeAdaptiveLearning(payload: AdaptiveLearningChange, signal?: AbortSignal): Promise<AdaptiveLearningProfile> {
+  return request('/api/adaptive-learning/changes', { method: 'POST', body: JSON.stringify(payload), signal });
+}
 
 export type AiMessage = {
   id: string;

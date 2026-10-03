@@ -31,13 +31,54 @@ MATH_TEXT = (
 
 
 def teaching_chunks(body: list[str], proposal: dict[str, Any], context: dict[str, Any]) -> list[str]:
-    proposal = {**proposal, 'project': proposal.get('project')}
+    proposal = {key: proposal.get(key) for key in ('step', 'attempt', 'mode', 'help', 'practice', 'project', 'adaptation')}
+    proposal['adaptation'] = context.get('_mock_adaptation', proposal['adaptation'])
     if context.get('output_format') == 'json':
         chunks = ['{"reply":"', *(json.dumps(piece, ensure_ascii=False)[1:-1] for piece in body)]
         metadata = ',"teaching":' + json.dumps(proposal, ensure_ascii=False) + ',"token":' + json.dumps(context['token']) + '}'
         return [*chunks, '"', *(metadata[index:index + 17] for index in range(0, len(metadata), 17))]
     trailer = '\n' + context['opening'] + json.dumps(proposal, ensure_ascii=False) + context['closing']
     return [*body, *(trailer[index:index + 17] for index in range(0, len(trailer), 17))]
+
+
+def adaptive_proposal(context: dict[str, Any], user_text: str, requested_mode: dict[str, Any] | None,
+                      requested_help: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Synthetic teaching choice and traced preference, within the same streamed reply."""
+    before = context['before']
+    if before.get('policy') != 'adaptive':
+        return None
+    profile = context.get('adaptive_profile', {'rules': [], 'suppressed': []})
+    scenario = ('project' if '[ADAPT项目]' in user_text or '[C2项目' in user_text
+                else 'problem_solving' if '[ADAPT练习]' in user_text or '[C2练习' in user_text
+                else 'coding' if '写代码' in user_text else 'concepts')
+    rules = profile.get('rules', [])
+    rule = next((item for item in rules if item['configuration']['scenario'] == scenario), None)
+    rule = rule or next((item for item in rules if item['configuration']['scenario'] == 'general'), None)
+    locked = bool(context.get('action') or context.get('help_kind') or requested_help
+                  or any(before.get(key) for key in ('exercise', 'project', 'practice', 'retelling'))
+                  or any(marker in user_text for marker in ('[C2尝试]', '[C2卡住]', '[C2复述作答]')))
+    explicit = (requested_mode or {}).get('value')
+    method = (explicit if explicit and explicit != 'adaptive' else before['mode'] if locked
+              else rule['configuration']['method'] if rule
+              else 'project' if scenario == 'project' else 'practice_first' if scenario == 'problem_solving'
+              else 'stepwise')
+    draft = None
+    if '[ADAPT偏好]' in user_text:
+        one_hint = '一次给一个提示' in user_text
+        draft = dict(scenario='concepts', method='socratic', start='try_first',
+                     help='one_hint' if one_hint else 'explain_when_stuck', quote=user_text,
+                     reason='你明确希望理解概念时先自己试、一次接收一个提示。' if one_hint
+                     else '你明确希望理解概念时先自己试、卡住时再听讲解。')
+    elif '[ADAPT忽略]' in user_text:
+        draft = dict(scenario='coding', method='stepwise', start='example_first', help='one_hint',
+                     quote=user_text, reason='你明确提出写代码时先看例子、一次只接收一个提示。')
+    if draft and {key: draft[key] for key in ('scenario', 'method', 'start', 'help')} in profile.get('suppressed', []):
+        draft = None
+    # The mock dispatch needs the chosen method to generate its real activity;
+    # this local context is not the server's saved checkpoint.
+    before['mode'] = method if not explicit or explicit == 'adaptive' else before['mode']
+    return dict(method=method, reason='继续当前活动。' if locked else '参考已确认的个人偏好。' if rule else '按当前任务安排学习方式。',
+                rule_id=rule['id'] if rule and not explicit and (not locked or rule['configuration']['method'] == method) else None, draft=draft)
 
 
 class MockState:
@@ -324,7 +365,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             requested_mode = None
             for phrase, value in [('完整讲解', 'full_explanation'), ('直接给答案', 'direct_answer'),
                                   ('提问引导', 'socratic'), ('分步讲解', 'stepwise'), ('费曼复述', 'feynman'),
-                                  ('练习优先', 'practice_first'), ('项目实践', 'project')]:
+                                  ('练习优先', 'practice_first'), ('项目实践', 'project'), ('个人自适应', 'adaptive')]:
                 if phrase in c1_request:
                     persistent = any(word in c1_request for word in ['以后', '今后', '接下来都'])
                     requested_mode = {'value': value, 'scope': 'conversation' if persistent else 'turn',
@@ -336,6 +377,8 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 if phrase in c1_request:
                     requested_help = {'kind': kind, 'quote': c1_request}
                     break
+            if practice_context:
+                practice_context['_mock_adaptation'] = adaptive_proposal(practice_context, c1_request, requested_mode, requested_help)
             if practice_context and practice_context.get('action') == 'retell':
                 invitation = '请用自己的话说说，为什么要先检查输入边界；也可以举一个简单例子。'
                 practice_reply = (invitation, {'step': None, 'attempt': None, 'mode': None, 'help': None,
@@ -452,7 +495,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 runtime = next((str(m.get('content', '')) for m in reversed(messages)
                     if str(m.get('content', '')).startswith('Nautilus 本轮执行上下文')), None)
                 if runtime:
-                    context = json.loads(runtime.split('\n', 1)[1])
+                    context = practice_context or json.loads(runtime.split('\n', 1)[1])
                     sequence = STATE.snapshot()['requests'].get(scenario, 1)
                     point = f'输入边界检查（合成{sequence}）。'
                     proposal = {'step': point, 'attempt': {'quote': c1_request}
@@ -465,7 +508,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 runtime = next((str(message.get('content', '')) for message in reversed(messages)
                     if str(message.get('content', '')).startswith('Nautilus 本轮执行上下文')), None)
                 if runtime:
-                    context = json.loads(runtime.split('\n', 1)[1])
+                    context = practice_context or json.loads(runtime.split('\n', 1)[1])
                     before = context['before']
                     mode = requested_mode
                     help_request = requested_help

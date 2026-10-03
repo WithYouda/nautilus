@@ -7,7 +7,7 @@ import {
 import './TeachingState.css';
 
 type TeachingEntry = { id: string; teaching: TeachingRecord | null; userContent: string | null; answerContent: string | null; helpRecord: HelpRecord | null };
-const modeLabels: Record<TeachingMode, string> = { stepwise: '分步讲解', socratic: '提问引导', feynman: '费曼复述', practice_first: '练习优先', project: '项目实践', direct_answer: '直接给答案', full_explanation: '完整讲解' };
+const modeLabels: Record<TeachingMode | 'adaptive', string> = { stepwise: '分步讲解', socratic: '提问引导', feynman: '费曼复述', practice_first: '练习优先', project: '项目实践', direct_answer: '直接给答案', full_explanation: '完整讲解', adaptive: '个人自适应' };
 const helpLabels = { hint: '给个提示', explain_step: '只解释这一步', example: '换个例子', try_first: '让我先试试' };
 const guidanceLabels = ['开放提问', '相关概念', '缩小范围', '局部示例', '直接解释'];
 const progressLabel = (needsHelp: boolean | null | undefined) => needsHelp === true ? '仍需帮助' : needsHelp === false ? '已推进' : '未判断';
@@ -76,8 +76,9 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
   const projectSteps = entries.filter(entry => entry.teaching?.status === 'applied' && entry.teaching.project_step);
   const currentMode = checkpoint?.mode ?? 'stepwise';
   const followsDefault = !checkpoint || checkpoint.mode_source === 'default';
-  const method = selectedMode ?? (followsDefault ? 'default' : currentMode === 'stepwise' || currentMode === 'socratic' || currentMode === 'feynman' || currentMode === 'practice_first' || currentMode === 'project' ? currentMode : '');
+  const method = selectedMode ?? (followsDefault ? 'default' : checkpoint?.policy === 'adaptive' ? 'adaptive' : currentMode === 'stepwise' || currentMode === 'socratic' || currentMode === 'feynman' || currentMode === 'practice_first' || currentMode === 'project' ? currentMode : '');
   const nextMode = method === 'default' ? defaultMode : method;
+  const adaptive = nextMode === 'adaptive' || checkpoint?.policy === 'adaptive';
   const guidance = last?.status === 'applied' ? last.guidance ?? checkpoint?.guidance : checkpoint?.guidance;
   const continuousExercise = checkpoint?.exercise && !checkpoint.practice ? checkpoint.exercise : null;
   const project = checkpoint?.project;
@@ -231,13 +232,15 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
         {method === 'feynman' && <option value="feynman" disabled>费曼复述（当前方式）</option>}
         {method === 'practice_first' && <option value="practice_first" disabled>练习优先（当前方式）</option>}
         {method === 'project' && <option value="project" disabled>项目实践（当前方式）</option>}
+        {method === 'adaptive' && <option value="adaptive" disabled>个人自适应（当前方式）</option>}
       </select>
     </label>
     {selectedMode && <p className="form-hint" role="status">下次发送时使用{modeLabels[selectedMode === 'default' ? defaultMode : selectedMode]}。</p>}
-    {!selectedMode && followsDefault && last && currentMode !== nextMode && <p className="teaching-state__mode">当前方式 · {modeLabels[currentMode]} · 下次使用{modeLabels[defaultMode]}</p>}
+    {!selectedMode && followsDefault && last && currentMode !== nextMode && <p className="teaching-state__mode">当前方式 · {modeLabels[currentMode]}{nextMode !== 'adaptive' && <> · 下次使用{modeLabels[defaultMode]}</>}</p>}
     {last?.status === 'applied' && last.mode_request?.scope === 'turn' && last.effective_mode && last.effective_mode !== checkpoint?.mode
       ? <p className="teaching-state__mode">本轮：{modeLabels[last.effective_mode]} · 下轮：{checkpoint?.mode ? modeLabels[checkpoint.mode] : '原方式'}</p>
-      : currentMode !== 'stepwise' && currentMode !== 'socratic' && !(followsDefault && last && currentMode !== nextMode) && <p className="teaching-state__mode">当前方式 · {modeLabels[currentMode]}</p>}
+      : (adaptive || currentMode !== 'stepwise' && currentMode !== 'socratic') && !(followsDefault && last && currentMode !== nextMode) && last && <p className="teaching-state__mode">当前方式 · {modeLabels[currentMode]}</p>}
+    {last?.status === 'applied' && last.adaptation?.reason && <details className="teaching-attempt__original"><summary>选择原因</summary><p className="form-hint">{last.adaptation.reason}</p></details>}
     {(last?.effective_mode ?? checkpoint?.mode) === 'socratic' && guidance && <p className="teaching-state__mode">提示安排 · {guidanceLabels[guidance.level]}</p>}
     {project && <div className="teaching-state__step teaching-state__project">
       <b>当前目标</b><p>{answerExcerpt(project.goal.answer_id, project.goal.start, project.goal.end) || '对应目标原文已不可用。'}</p>
@@ -251,7 +254,7 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
         onClick={() => onAction('practice', '换一道试试。')}>换一道试试</button>}
       <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
         onClick={() => onAction('retell', '用自己的话说说。')}>用自己的话说说</button>
-      {continuousExercise && nextMode === 'practice_first' && <>
+      {continuousExercise && (nextMode === 'practice_first' || nextMode === 'adaptive' && currentMode === 'practice_first') && <>
         <span className="teaching-state__practice-phase">{continuousExercise.phase === 'awaiting_attempt' ? '等待作答' : '已有反馈'}</span>
         <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
           onClick={() => onAction('next_question', '下一题。')}>下一题</button>
@@ -264,7 +267,7 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
           onClick={() => onAction('continue', checkpoint.practice && checkpoint.practice.kind !== 'retelling' ? '这道先不练了，继续学习。' : '继续学习。')}>继续学习</button>
       </>}
     </div>}
-    {continuousProject && nextMode === 'project' && <div className="teaching-state__practice-actions">
+    {continuousProject && (nextMode === 'project' || nextMode === 'adaptive' && currentMode === 'project') && <div className="teaching-state__practice-actions">
       <span className="teaching-state__practice-phase">{continuousProject.step.phase === 'awaiting_work' ? '等待实践内容' : '已有反馈'}</span>
       <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
         onClick={() => onAction('next_step', '下一步。')}>下一步</button>
