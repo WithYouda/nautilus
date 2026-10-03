@@ -5,7 +5,7 @@ import ImageModelSettings from './ImageModelSettings';
 import { attachmentChanged, attachmentError, attachmentName } from './AttachmentSupport';
 import './styles/composer-attachments.css';
 
-export function AttachmentDialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function AttachmentDialog({ title, onClose, children, className = '', closeLabel = '关闭附件预览' }: { title: string; onClose: () => void; children: ReactNode; className?: string; closeLabel?: string }) {
   const dialog = useRef<HTMLElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const closeRef = useRef(onClose); closeRef.current = onClose;
@@ -26,8 +26,8 @@ export function AttachmentDialog({ title, onClose, children }: { title: string; 
     return () => { document.removeEventListener('keydown', handle, true); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
   }, []);
   return <DialogPortal><div className="dialog-backdrop attachment-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="attachment-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby={heading}>
-      <header><h2 id={heading}>{title}</h2><button ref={close} type="button" className="icon-button" aria-label="关闭附件预览" onClick={onClose}>×</button></header>{children}
+    <section className={`attachment-dialog ${className}`} ref={dialog} role="dialog" aria-modal="true" aria-labelledby={heading}>
+      <header><h2 id={heading}>{title}</h2><button ref={close} type="button" className="icon-button" aria-label={closeLabel} onClick={onClose}>×</button></header>{children}
     </section>
   </div></DialogPortal>;
 }

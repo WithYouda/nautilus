@@ -25,7 +25,7 @@
 .task-material-library-status { color: var(--muted, #53615a); }
 .task-material-upload { padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
 .task-material-upload input { font: inherit; }
-.task-material-use { margin: .5rem 0; font-size: .9em; }
+.task-material-use { display: inline-flex; margin: 0; }
 .task-material-purge-backdrop { align-items: center; padding: 16px; }
 .task-material-purge-dialog { box-sizing: border-box; width: min(30rem, 100%); max-height: calc(100dvh - 32px); overflow: auto; padding: 1.25rem; border: 1px solid var(--line, #ccc); border-radius: .75rem; background: var(--paper, #fff); color: var(--ink, inherit); box-shadow: 0 20px 50px #0004; }
 .task-material-purge-dialog h2 { margin: 0 0 .75rem; font-size: 1.25rem; }
@@ -51,3 +51,18 @@
 .task-material-obsidian-source p { margin: .3rem 0; overflow-wrap: anywhere; }
 .task-material-obsidian-source-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: .35rem 0; }
 .task-material-obsidian-source small { display: block; color: var(--muted, #53615a); }
+
+.answer-sources-menu { position: fixed; z-index: 60; width: 180px; padding: 5px; box-sizing: border-box; border: 1px solid var(--line, #ccc); border-radius: 9px; background: var(--paper, #fff); color: var(--ink, inherit); box-shadow: 0 6px 20px #0002; }
+.answer-sources-menu button { display: block; width: 100%; border: 0; border-radius: 5px; padding: 10px 12px; text-align: left; font: inherit; font-size: .85rem; color: inherit; background: transparent; cursor: pointer; }
+.answer-sources-menu button:hover, .answer-sources-menu button:focus-visible { background: var(--paper-soft, #f6f7f4); }
+.answer-sources-dialog { width: min(600px, calc(100vw - 24px)); }
+.answer-sources-summary { margin: 12px 0 18px; font-size: .85rem; color: var(--muted); }
+.answer-sources-list { list-style: none; margin: 0; padding: 0; }
+.answer-sources-list li { padding: 12px 0; border-top: 1px solid var(--line, #ccc); }
+.answer-sources-list strong { display: block; font-size: .9rem; overflow-wrap: anywhere; }
+.answer-source-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 8px; font-size: .85rem; }
+.answer-source-actions .text-button { padding: 0; font: inherit; }
+.answer-source-content pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: .9rem; line-height: 1.6; }
+.answer-source-content section > p { font-size: .8rem; color: var(--muted); }
+
+.answer-source-actions a, .answer-sources-dialog > a { color: var(--accent-dark); text-underline-offset: 2px; }

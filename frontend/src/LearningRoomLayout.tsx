@@ -72,14 +72,15 @@ function CopyMessageButton({ content }: { content: string }) {
   </>;
 }
 
-export function LearningReplyActions({ content, onRetry, retryDisabled, onBranch, branchDisabled, version }: {
-  content: string; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; version?: MessageVersion;
+export function LearningReplyActions({ content, onRetry, retryDisabled, onBranch, branchDisabled, version, more }: {
+  content: string; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; version?: MessageVersion; more?: ReactNode;
 }) {
   return <div className="ai-reply-actions" role="group" aria-label="回复操作">
     <MessageVersions version={version} label="回答" />
     <CopyMessageButton content={content} />
     <button className="icon-button" type="button" aria-label="重新生成" disabled={retryDisabled || !onRetry} onClick={onRetry} title="重新生成"><RefreshCw size={15} /></button>
     <button className="icon-button" type="button" aria-label={onBranch ? '从这里创建独立对话' : '分支（尚未实现）'} disabled={branchDisabled || !onBranch} title={onBranch ? '从这里创建独立对话' : '分支（尚未实现）'} onClick={onBranch}><GitBranch size={15} /></button>
+    {more}
   </div>;
 }
 

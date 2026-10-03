@@ -1,3 +1,4 @@
+import { openAnswerSources } from './answer-source-helpers';
 import { expect, test, type Page } from '@playwright/test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -105,17 +106,19 @@ test('当前对话明确选择知识库，严格范围检索并保留旧回答�
     expect(saved.versions.find((version: { id: string }) => version.id === versionId).library).toBe(false);
     expect((await (await page.request.get('/api/materials/library')).json()).versions.some((version: { id: string }) => version.id === versionId)).toBe(false);
 
-    const firstUse = page.locator('.task-material-use').first();
-    await firstUse.locator('summary').first().click();
-    await expect(firstUse).toContainText('本次知识库读取：第');
-    await firstUse.getByText('查看保存的版本', { exact: true }).click();
-    await expect(firstUse).toContainText('第一版证据只说明合成输入。');
-    await expect(firstUse.getByRole('link', { name: '在 Obsidian 打开' })).toHaveAttribute('href', `obsidian://open?vault=${encodeURIComponent(basename(vault))}&file=${encodeURIComponent('合成笔记')}`);
-    const retrievedEvidence = firstUse.locator('.task-material-knowledge-reference').first();
-    await retrievedEvidence.getByText('查看本次保存证据', { exact: true }).click();
-    await retrievedEvidence.screenshot({ path: '/tmp/nautilus-b2-knowledge-evidence-desktop.png' });
+    const firstUse = await openAnswerSources(page, page.locator('.task-material-use').first());
+    await expect(firstUse).not.toContainText('本次知识库读取');
+    await firstUse.getByRole('button', { name: '查看内容', exact: true }).click();
+    const evidence = page.getByRole('dialog', { name: '合成笔记', exact: true });
+    await expect(evidence).toContainText('第一版证据只说明合成输入。');
+    await expect(evidence.getByRole('link', { name: '在 Obsidian 打开' })).toHaveAttribute('href', `obsidian://open?vault=${encodeURIComponent(basename(vault))}&file=${encodeURIComponent('合成笔记')}`);
+    await evidence.screenshot({ path: '/tmp/nautilus-answer-sources-evidence-desktop.png' });
     await page.setViewportSize({ width: 390, height: 720 });
-    await retrievedEvidence.screenshot({ path: '/tmp/nautilus-b2-knowledge-evidence-mobile.png' });
+    await evidence.screenshot({ path: '/tmp/nautilus-answer-sources-evidence-mobile.png' });
+    await page.keyboard.press('Escape');
+    await expect(firstUse).toBeVisible();
+    await firstUse.getByRole('button', { name: '关闭回答资料范围', exact: true }).click();
+    await expect(firstUse).toHaveCount(0);
     await page.setViewportSize({ width: 1280, height: 720 });
     await expect(page.getByRole('button', { name: /^检索本地知识库/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^读取知识库笔记/ })).toBeVisible();
@@ -144,10 +147,9 @@ test('当前对话明确选择知识库，严格范围检索并保留旧回答�
     await expect(knowledge.getByRole('alert')).toContainText('原来选择的知识库连接已断开或更改');
     await expect(page.getByLabel('输入学习问题')).toBeDisabled();
     await materials.click();
-    const review = page.locator('.task-material-use').first();
-    await review.locator('summary').first().click();
-    await review.getByText('查看保存的版本', { exact: true }).click();
-    await expect(review).toContainText('第一版证据只说明合成输入。');
+    const review = await openAnswerSources(page, page.locator('.task-material-use').first());
+    await review.getByRole('button', { name: '查看内容', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '合成笔记', exact: true })).toContainText('第一版证据只说明合成输入。');
     expect(readFileSync(note, 'utf8')).toBe(UPDATED);
   } finally { rmSync(vault, { recursive: true, force: true }); }
 });
@@ -195,11 +197,10 @@ test('题目讨论可以只选知识库，并在本次回答回看实际保存�
     expect(request.postDataJSON().source_scope).toEqual({ mode: 'only', version_ids: [], knowledge_base: { kind: 'obsidian_local', connection_id: connection.connection_id, connection_revision: connection.revision } });
     const id = new URL(page.url()).searchParams.get('discussion');
     await expect.poll(async () => (await (await page.request.get(`/api/learning/discussions/${id}`)).json()).turns.at(-1)?.status).toBe('succeeded');
-    const use = discussion.locator('.task-material-use').last();
-    await use.locator('summary').first().click();
-    await expect(use).toContainText('本次知识库读取：第');
-    await use.getByText('查看保存的版本', { exact: true }).click();
-    await expect(use).toContainText('第一版证据只说明合成输入。');
+    const use = await openAnswerSources(page, discussion.locator('.task-material-use').last());
+    await expect(use).not.toContainText('本次知识库读取');
+    await use.getByRole('button', { name: '查看内容', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '合成笔记', exact: true })).toContainText('第一版证据只说明合成输入。');
     const state = await (await page.request.get(`/api/conversation-state/discussion/${id}`)).json();
     expect(state.source_scope.version_ids).toEqual([]);
     expect(state.source_scope.knowledge_base.connection_id).toBe(connection.connection_id);

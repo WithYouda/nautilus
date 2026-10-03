@@ -1,3 +1,4 @@
+import { openAnswerSources } from './answer-source-helpers';
 import { expect, test } from '@playwright/test';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -136,10 +137,9 @@ test('本地 Obsidian：连接、检索、显式保存快照并用于回答', as
     const download = page.waitForEvent('download');
     await panel.getByRole('link', { name: '下载原件：矩阵 笔记.md' }).click();
     expect((await download).suggestedFilename()).toBe('矩阵 笔记.md');
-    const answerSource = page.locator('.task-material-use').first();
-    await answerSource.locator('summary').first().click();
-    await expect(answerSource).toContainText('Obsidian 保存快照');
-    await expect(answerSource).toContainText('矩阵 笔记.md');
+    const answerSource = await openAnswerSources(page, page.locator('.task-material-use').first());
+    await expect(answerSource).not.toContainText('Obsidian 保存快照');
+    await expect(answerSource).toContainText('矩阵 笔记');
     expect(tree(vault)).toEqual(before);
   } finally {
     rmSync(vault, { recursive: true, force: true });

@@ -1,3 +1,4 @@
+import { openAnswerSources } from './answer-source-helpers';
 import { expect, test, type Page } from '@playwright/test';
 import { authorize } from './fact-helpers';
 
@@ -98,6 +99,29 @@ test('compact pending attachments, persistent reference, clean composer and uplo
   expect(firstResponse.request().postDataJSON().attachment_version_ids).toEqual([saved.id]);
   await expect(composerCards(page)).toHaveCount(0);
   await expect.poll(async () => (await (await page.request.get(`/api/ai/conversations/${scopeId}`)).json()).active_run).toBeNull();
+  const answer = page.locator('.ai-message--assistant').last();
+  const more = answer.getByRole('button', { name: '更多回答操作', exact: true });
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  await expect(answer).not.toContainText('本回答资料范围');
+  const branchBox = (await answer.getByRole('button', { name: '从这里创建独立对话' }).boundingBox())!;
+  const moreBox = (await more.boundingBox())!;
+  expect(moreBox.x).toBeGreaterThanOrEqual(branchBox.x + branchBox.width);
+  await more.click(); await expect(page.getByRole('menuitem', { name: '回答资料范围' })).toBeFocused();
+  await page.keyboard.press('Escape'); await expect(more).toBeFocused();
+  const sources = await openAnswerSources(page, answer.locator('.task-material-use'));
+  await expect(sources).toContainText('【资料1】合成图片.png');
+  for (const removed of ['这里记录回答', '本次范围包含', '第 1 版', '本次输入', '正文出现引用标记', '冲突时']) await expect(sources).not.toContainText(removed);
+  await sources.screenshot({ path: '/tmp/nautilus-answer-sources-desktop.png' });
+  const sourceDownload = page.waitForEvent('download'); await sources.getByRole('link', { name: '下载', exact: true }).click();
+  expect((await sourceDownload).suggestedFilename()).toBe('合成图片.png');
+  await sources.getByRole('button', { name: '查看图片', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '附件详情 · 合成图片.png' }).locator('img')).toHaveAttribute('src', new RegExp(`/versions/${saved.id}/preview/1$`));
+  await page.keyboard.press('Escape'); await expect(sources).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 720 });
+  await sources.screenshot({ path: '/tmp/nautilus-answer-sources-mobile.png' });
+  const sourcesBox = (await sources.boundingBox())!; expect(sourcesBox.x).toBeGreaterThanOrEqual(0); expect(sourcesBox.x + sourcesBox.width).toBeLessThanOrEqual(390);
+  await page.keyboard.press('Escape'); await expect(more).toBeFocused();
+  await page.setViewportSize({ width: 1280, height: 720 });
   const historyAttachment = page.locator('.message-attachments').getByRole('button', { name: '查看附件：合成图片.png' });
   await expect(historyAttachment).toHaveCount(1); await historyAttachment.click();
   const preview = page.getByRole('dialog', { name: '附件详情 · 合成图片.png' });
@@ -224,6 +248,10 @@ test('question discussion uses the same left picker and direct image reference',
   await expect(composerCards(page)).toHaveCount(0);
   await expect(discussion.locator('.message-attachments').getByRole('button', { name: '查看附件：讨论图片.png' })).toHaveCount(1);
   await expect(discussion.locator('.discussion-turn .ai-message--assistant').last().getByRole('button', { name: '重新生成' })).toBeEnabled({ timeout: 20_000 });
+  const discussionSources = await openAnswerSources(page, discussion.locator('.task-material-use').last());
+  await expect(discussionSources).toContainText('【资料1】讨论图片.png');
+  await expect(discussionSources.getByRole('button', { name: '查看图片', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
   await discussion.locator('.discussion-turn .ai-message--assistant').last().getByRole('button', { name: '重新生成' }).click();
   await expect(discussion.locator('.message-attachments').getByRole('button', { name: '查看附件：讨论图片.png' })).toHaveCount(1);
 });

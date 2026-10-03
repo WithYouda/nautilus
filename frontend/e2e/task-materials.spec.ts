@@ -1,3 +1,4 @@
+import { openAnswerSources } from './answer-source-helpers';
 import { expect, test } from '@playwright/test';
 import { authorize } from './fact-helpers';
 
@@ -45,7 +46,10 @@ test('settings, automatic upload references, independent network, versions and p
   expect(first.postDataJSON().search.mode).toBe('external');
   const { run } = await (await first.response())!.json();
   await expect.poll(async () => (await (await page.request.get(`/api/ai/conversations/${run.conversation_id}`)).json()).active_run).toBeNull();
-  await expect(page.locator('.task-material-use').first()).toContainText('由 AI 综合判断');
+  const firstSources = await openAnswerSources(page, page.locator('.task-material-use').first());
+  await expect(firstSources).toContainText('参考所选资料');
+  await expect(firstSources).not.toContainText('由 AI 综合判断');
+  await page.keyboard.press('Escape');
 
   await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
   await panel.getByText('查看当前版本和历史', { exact: true }).click();
@@ -77,7 +81,10 @@ test('settings, automatic upload references, independent network, versions and p
   expect(second.postDataJSON().source_scope.version_ids).not.toEqual(first.postDataJSON().source_scope.version_ids);
   await expect.poll(async () => (await (await page.request.get(`/api/ai/conversations/${run.conversation_id}`)).json()).active_run).toBeNull();
   await page.reload();
-  await expect(page.locator('.task-material-use').last()).toContainText('以所选资料为准');
+  const lastSources = await openAnswerSources(page, page.locator('.task-material-use').last());
+  await expect(lastSources).toContainText('只依据所选资料');
+  await expect(lastSources).not.toContainText('以所选资料为准');
+  await page.keyboard.press('Escape');
   await expect(page.locator('.ai-composer').getByRole('button', { name: /联网搜索：Bing/ })).toBeEnabled();
   await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
   await expect(panel.getByLabel('资料冲突时')).toHaveValue('materials');

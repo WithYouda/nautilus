@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SearchTrace } from './SearchResults';
-import { getMaterialLibrary, getMaterialPurge, getMaterials, purgeLibraryMaterial, purgeMaterial, removeMaterialFromLibrary, saveMaterial, storeMaterialInLibrary, uploadMaterial, useMaterialFromLibrary, type AppliedSourceScope, type MaterialKind, type MaterialVersion, type PurgeReport, type SourceScope } from './api';
+import { getMaterialLibrary, getMaterialPurge, getMaterials, purgeLibraryMaterial, purgeMaterial, removeMaterialFromLibrary, saveMaterial, storeMaterialInLibrary, uploadMaterial, useMaterialFromLibrary, type MaterialKind, type MaterialVersion, type PurgeReport, type SourceScope } from './api';
 import { getPreferences, type ConflictPolicy } from './preferences';
 import DialogPortal from './DialogPortal';
 import ObsidianMaterials, { ObsidianSourceReview, obsidianSource } from './ObsidianMaterials';
@@ -23,38 +23,7 @@ function MaterialOriginal({ version, kind, scopeId }: { version: MaterialVersion
     : <small>此版本未保存原件</small>;
 }
 
-function MaterialSavedView({ version, kind, scopeId, inputMode, pageNumbers }: { version: MaterialVersion; kind: MaterialKind; scopeId: string; inputMode?: 'image' | 'text'; pageNumbers?: number[] }) {
-  const [preview, setPreview] = useState(false);
-  return <>
-    {inputMode && <p>本次输入：{inputMode === 'image' ? '原页图片' : '保存的文字'}{pageNumbers?.length ? ` · 第 ${pageNumbers.join('、')} 页` : ''}。</p>}
-    {version.attachment?.origin === 'ocr' && <p>已核对的 OCR 文字（派生版本）；核对不代表内容已核实。</p>}
-    <pre>{version.content}</pre><MaterialOriginal version={version} kind={kind} scopeId={scopeId} />
-    {version.attachment && ['image', 'pdf'].includes(version.attachment.kind) && <button type="button" className="text-button" onClick={() => setPreview(true)}>查看本次保存的原件与页面</button>}
-    {preview && <AttachmentPreview kind={kind} id={scopeId} version={version} pageNumbers={pageNumbers} onClose={() => setPreview(false)} />}
-  </>;
-}
-
-export function MaterialUse({ scope, versions, kind, scopeId }: { scope?: AppliedSourceScope | null; versions?: MaterialVersion[]; kind: MaterialKind; scopeId: string }) {
-  if (scope?.purged) return <p className="task-material-use">资料及关联内容已清除。</p>;
-  if (!scope || scope.mode === 'unspecified') return null;
-  return <details className="task-material-use"><summary>本回答资料范围：{scope.mode === 'only' ? '只依据所选资料' : '参考所选资料'} · {scope.materials.length} 个版本{scope.knowledge_base_name ? ` · 知识库 ${scope.knowledge_base_name}` : ''}{scope.conflict_policy ? ` · 冲突时${policyLabel(scope.conflict_policy)}` : ''}</summary>
-    <p>这里记录回答中出现的【资料1】等标记；标记不证明引用准确，选入资料也不代表内容已核实或学会。</p>
-    {scope.knowledge_base && <p>本次范围包含明确选用的笔记与知识库；下方列出本次实际读取的保存版本。{scope.mode === 'only' ? '范围外的旧对话和联网内容不作为答案依据。' : ''}</p>}
-    <ol>{scope.materials.map((item, index) => {
-      const saved = versions?.find(version => version.id === item.id);
-      const source = obsidianSource(saved);
-      const references = scope.knowledge_references?.filter(reference => reference.version_id === item.id) ?? [];
-      return <li key={item.id}><strong>【资料{index + 1}】{item.title}</strong> · 第 {item.version} 版 · {saved ? materialVersionKindLabel(saved) : materialKindLabel(item.content_kind)} · {item.cited ? '正文出现引用标记' : '正文未出现引用标记'}
-      {safeSourceUrl(item.url) && <> · <a href={safeSourceUrl(item.url)!} target="_blank" rel="noopener noreferrer">来源网页</a></>}
-      {source && <> · Obsidian 保存快照（{source.vault_name} · {source.relative_path}）</>}
-      {references.map((reference, referenceIndex) => <div key={`${reference.start_line}:${reference.end_line}:${referenceIndex}`} className="task-material-knowledge-reference">
-        <p>本次知识库读取：第 {reference.start_line}–{reference.end_line} 行 · 内容指纹 {reference.sha256.slice(0, 12)}… · 取得于 {reference.retrieved_at}</p>
-        {saved?.content && !saved.purged_at && <details><summary>查看本次保存证据</summary><pre>{saved.content.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/).slice(reference.start_line - 1, reference.end_line).join('\n')}</pre></details>}
-      </div>)}
-      {saved && !saved.purged_at && <details><summary>查看保存的版本</summary><MaterialSavedView version={saved} kind={kind} scopeId={scopeId} inputMode={item.input_mode} pageNumbers={item.page_numbers} />{source && <ObsidianSourceReview kind={kind} id={scopeId} version={saved} />}</details>}
-    </li>; })}</ol>
-  </details>;
-}
+export { default as MaterialUse } from './AnswerSources';
 const materialKindLabel = (kind: MaterialVersion['content_kind']) => ({ text: '文本资料', excerpt: '搜索摘录', page: '网页读取片段' })[kind];
 const materialVersionKindLabel = (version: MaterialVersion) => version.attachment?.origin === 'ocr' || version.attachment?.mode === 'image' ? attachmentLabel(version) : materialKindLabel(version.content_kind);
 function safeSourceUrl(value: string | null) {
