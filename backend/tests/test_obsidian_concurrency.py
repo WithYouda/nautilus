@@ -243,9 +243,10 @@ def test_source_status_revocation_is_not_published_as_success(obsidian, monkeypa
 class PausedScan:
     """Iterate a real scandir result, running a hook after the first entry."""
 
-    def __init__(self, iterator, hook):
+    def __init__(self, iterator, hook, wrap=lambda entry: entry):
         self.iterator = iterator
         self.hook = hook
+        self.wrap = wrap
         self.index = -1
 
     def __iter__(self):
@@ -256,7 +257,7 @@ class PausedScan:
         self.index += 1
         if self.index == 0:
             self.hook()
-        return entry
+        return self.wrap(entry)
 
     def __enter__(self):
         return self
@@ -328,6 +329,51 @@ def test_revocation_before_root_open_rejects_the_operation(obsidian, monkeypatch
     assert service._candidates == {}
 
 
+def test_revocation_mid_root_walk_closes_open_descriptors(obsidian, monkeypatch):
+    service, _materials, _vault, connection, _outside = obsidian
+    entered, release = threading.Event(), threading.Event()
+    original = service._check
+    checks = 0
+
+    def paused(*args):
+        nonlocal checks
+        checks += 1
+        if checks == 3:  # '/' and the first ancestor have already been opened.
+            entered.set()
+            assert release.wait(TIMEOUT), 'root walk was never released'
+        return original(*args)
+
+    def live_descriptors():
+        descriptors = set()
+        for name in os.listdir('/proc/self/fd'):
+            descriptor = int(name)
+            try:
+                os.fstat(descriptor)
+            except OSError:
+                continue  # exclude the already-closed /proc enumeration descriptor
+            descriptors.add(descriptor)
+        return descriptors
+
+    monkeypatch.setattr(service, '_check', paused)
+    before = live_descriptors()
+    thread, outcome = run_in_thread(lambda: page_for(service, connection))
+    try:
+        assert entered.wait(TIMEOUT), 'search never entered the root walk'
+        service.disconnect('owner', connection['revision'])
+    finally:
+        release.set()
+        finish(thread)
+    leaked = live_descriptors() - before
+    try:
+        error = outcome.get('error')
+        assert isinstance(error, DomainError) and error.code in CONFLICT_CODES, outcome
+        assert not leaked, f'{len(leaked)} descriptors leaked after revocation'
+        assert service._candidates == {}
+    finally:
+        for descriptor in leaked:
+            os.close(descriptor)
+
+
 def test_revocation_after_first_entry_stops_flat_enumeration(obsidian, monkeypatch):
     service, _materials, _vault, connection, _outside = obsidian
     flat = flatten_vault(tmp_path=obsidian[2].parent)
@@ -336,13 +382,37 @@ def test_revocation_after_first_entry_stops_flat_enumeration(obsidian, monkeypat
     reads = count_reads(monkeypatch)
     real_scandir = os.scandir
     armed = {'wrapped': False}
+    scans, metadata_reads = [], []
+
+    class ObservedEntry:
+        def __init__(self, entry):
+            self.entry = entry
+            self.name = entry.name
+
+        def is_symlink(self):
+            metadata_reads.append('is_symlink')
+            return self.entry.is_symlink()
+
+        def is_dir(self, *, follow_symlinks):
+            metadata_reads.append('is_dir')
+            return self.entry.is_dir(follow_symlinks=follow_symlinks)
+
+        def is_file(self, *, follow_symlinks):
+            metadata_reads.append('is_file')
+            return self.entry.is_file(follow_symlinks=follow_symlinks)
+
+    def pause():
+        entered.set()
+        assert release.wait(TIMEOUT), 'enumeration was never released'
 
     def pausing_scandir(*args, **kwargs):
         iterator = real_scandir(*args, **kwargs)
         if armed['wrapped']:
             return iterator
         armed['wrapped'] = True
-        return PausedScan(iterator, lambda: (entered.set(), release.wait(TIMEOUT)))
+        scan = PausedScan(iterator, pause, ObservedEntry)
+        scans.append(scan)
+        return scan
 
     monkeypatch.setattr(os, 'scandir', pausing_scandir)
     thread, outcome = run_in_thread(lambda: page_for(service, flat_connection, 'no-such-text-in-vault'))
@@ -353,7 +423,9 @@ def test_revocation_after_first_entry_stops_flat_enumeration(obsidian, monkeypat
     finish(thread)
     error = outcome.get('error')
     assert isinstance(error, DomainError) and error.code in CONFLICT_CODES, outcome
-    assert reads == [], reads  # the remaining flat entries were never carried into file reads
+    assert scans[0].index == 0  # no next directory entry was obtained after revocation
+    assert metadata_reads == []  # not even the pending entry's attributes were read
+    assert reads == [], reads
     assert service._candidates == {}
 
 

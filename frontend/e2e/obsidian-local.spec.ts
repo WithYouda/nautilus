@@ -630,3 +630,198 @@ test('Obsidian：外层面板关闭后等待中的刷新不再发起选用', asy
     rmSync(vault, { recursive: true, force: true });
   }
 });
+
+test('Obsidian：编辑查询后重新检索不沿用旧分页游标', async ({ page }) => {
+  test.setTimeout(120_000);
+  const vault = mkdtempSync(join(tmpdir(), 'nautilus-obsidian-query.'));
+  writeFileSync(join(vault, '00-target.md'), '# 查询起点\nQUERY_BEFORE_OLD_CURSOR_3117\n');
+  for (let index = 1; index <= 50; index += 1) {
+    writeFileSync(join(vault, `${String(index).padStart(2, '0')}-filler.md`), '# 合成占位笔记\n');
+  }
+  try {
+    await authorize(page);
+    await page.request.put('/api/ai/provider', { data: {
+      display_name: 'Obsidian mock provider', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL ?? 'http://127.0.0.1:8013/v1',
+      model: 'mock-success', api_key: 'synthetic-obsidian-key', enabled: true, request_timeout_seconds: 15, api_protocol: 'openai_compatible',
+    } });
+    await page.reload();
+    await connectVault(page, vault);
+    await openRoom(page);
+    await page.getByRole('button', { name: '新建对话', exact: true }).click();
+    await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
+    const obsidian = page.locator('.task-materials-panel').getByRole('region', { name: '从 Obsidian 选用' });
+    await obsidian.getByRole('button', { name: '从 Obsidian 选用' }).click();
+    const requests: { query: string; after?: string | null }[] = [];
+    page.on('request', request => {
+      if (request.method() === 'POST' && /\/api\/obsidian\/conversation\/[^/]+\/search$/.test(request.url())) {
+        requests.push(request.postDataJSON());
+      }
+    });
+    await obsidian.getByRole('button', { name: '检索', exact: true }).click();
+    await expect(obsidian.getByRole('button', { name: '下一页' })).toBeVisible();
+    await expect(obsidian.getByRole('button', { name: '保存快照并选用' })).toHaveCount(50);
+
+    // This match sorts before the old cursor and would be skipped by a mixed request.
+    await obsidian.getByLabel('检索笔记').fill('QUERY_BEFORE_OLD_CURSOR_3117');
+    await expect(obsidian.getByRole('button', { name: '下一页' })).toHaveCount(0);
+    await expect(obsidian.getByRole('button', { name: '保存快照并选用' })).toHaveCount(0);
+    await obsidian.getByLabel('检索笔记').press('Enter');
+    await expect(obsidian.getByText(/00-target · 00-target\.md/)).toBeVisible();
+    await expect(obsidian.getByRole('button', { name: '保存快照并选用' })).toHaveCount(1);
+    expect(requests).toHaveLength(2);
+    expect(requests[1].query).toBe('QUERY_BEFORE_OLD_CURSOR_3117');
+    expect(requests[1].after ?? null).toBeNull();
+  } finally {
+    rmSync(vault, { recursive: true, force: true });
+  }
+});
+
+test('Obsidian：连接读取与检索互斥，关闭前的连接响应不能覆盖重开状态', async ({ page }) => {
+  test.setTimeout(120_000);
+  const vault = buildVault();
+  let releaseSearch = () => {};
+  let releaseConnection = () => {};
+  try {
+    await authorize(page);
+    await page.request.put('/api/ai/provider', { data: {
+      display_name: 'Obsidian mock provider', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL ?? 'http://127.0.0.1:8013/v1',
+      model: 'mock-success', api_key: 'synthetic-obsidian-key', enabled: true, request_timeout_seconds: 15, api_protocol: 'openai_compatible',
+    } });
+    await page.reload();
+    await connectVault(page, vault);
+    const { connection } = await (await page.request.get('/api/obsidian/connection')).json();
+    await openRoom(page);
+    await page.getByRole('button', { name: '新建对话', exact: true }).click();
+    await page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ }).click();
+    const obsidian = page.locator('.task-materials-panel').getByRole('region', { name: '从 Obsidian 选用' });
+    const entry = obsidian.getByRole('button', { name: '从 Obsidian 选用' });
+    await entry.click();
+    await expect(obsidian.getByRole('button', { name: '检索', exact: true })).toBeEnabled();
+
+    let searchEntered!: () => void;
+    const searchStarted = new Promise<void>(resolve => { searchEntered = resolve; });
+    const searchGate = new Promise<void>(resolve => { releaseSearch = resolve; });
+    await page.route('**/api/obsidian/conversation/*/search', async route => {
+      searchEntered(); await searchGate; await route.continue();
+    });
+    let connectionRequests = 0;
+    let searchRequests = 0;
+    page.on('request', request => {
+      if (request.method() === 'GET' && request.url().endsWith('/api/obsidian/connection')) connectionRequests++;
+      if (request.method() === 'POST' && /\/api\/obsidian\/conversation\/[^/]+\/search$/.test(request.url())) searchRequests++;
+    });
+    await obsidian.getByLabel('检索笔记').fill('matrix');
+    await obsidian.getByRole('button', { name: '检索', exact: true }).click();
+    await searchStarted;
+    const reload = obsidian.getByRole('button', { name: '重新读取连接状态' });
+    await expect(reload).toBeDisabled();
+    await reload.evaluate(button => (button as HTMLButtonElement).click());
+    expect(connectionRequests).toBe(0);
+    releaseSearch();
+    await expect(obsidian.getByText(/矩阵 笔记 · 矩阵 笔记\.md/)).toBeVisible();
+    await expect(obsidian.getByRole('button', { name: '检索', exact: true })).toBeEnabled();
+    await expect(obsidian.getByLabel('检索笔记')).toBeEnabled();
+    await expect(reload).toBeEnabled();
+    await page.unroute('**/api/obsidian/conversation/*/search');
+
+    let connectionEntered!: () => void;
+    const connectionStarted = new Promise<void>(resolve => { connectionEntered = resolve; });
+    const connectionGate = new Promise<void>(resolve => { releaseConnection = resolve; });
+    let holdFirstConnection = true;
+    await page.route('**/api/obsidian/connection', async route => {
+      if (!holdFirstConnection) return route.continue();
+      holdFirstConnection = false;
+      connectionEntered(); await connectionGate;
+      // An older disconnected view must not replace the next open's connected view.
+      await route.fulfill({ json: { connection: { ...connection, enabled: false } } });
+    });
+    await reload.click();
+    await connectionStarted;
+    await expect(obsidian.getByRole('button', { name: '检索', exact: true })).toBeDisabled();
+    await expect(obsidian.getByLabel('检索笔记')).toBeDisabled();
+    await expect(obsidian.getByRole('button', { name: '保存快照并选用' })).toHaveCount(0);
+    await obsidian.getByRole('button', { name: '检索', exact: true }).evaluate(button => (button as HTMLButtonElement).click());
+    expect(searchRequests).toBe(1);
+    await entry.click();
+    await entry.click();
+    await expect(reload).toBeEnabled();
+    const oldResponse = page.waitForResponse(response => response.url().endsWith('/api/obsidian/connection'));
+    releaseConnection();
+    await (await oldResponse).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    await expect(obsidian.getByText(/Obsidian 连接已断开/)).toHaveCount(0);
+    await expect(obsidian.getByRole('button', { name: '检索', exact: true })).toBeEnabled();
+    await obsidian.getByRole('button', { name: '检索', exact: true }).click();
+    await expect(obsidian.getByText(/矩阵 笔记 · 矩阵 笔记\.md/)).toBeVisible();
+    expect(searchRequests).toBe(2);
+    await page.unroute('**/api/obsidian/connection');
+  } finally {
+    releaseSearch(); releaseConnection();
+    rmSync(vault, { recursive: true, force: true });
+  }
+});
+
+test('Obsidian：另一对话仅从资料库清除时仍说明原文边界，包括手工新版', async ({ page }) => {
+  test.setTimeout(120_000);
+  const vault = buildVault();
+  writeFileSync(join(vault, '独立快照清除说明.md'), '# 独立清除说明\nLIBRARY_PURGE_WARNING_3187\n');
+  const before = tree(vault);
+  try {
+    await authorize(page);
+    await page.request.put('/api/ai/provider', { data: {
+      display_name: 'Obsidian mock provider', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL ?? 'http://127.0.0.1:8013/v1',
+      model: 'mock-success', api_key: 'synthetic-obsidian-key', enabled: true, request_timeout_seconds: 15, api_protocol: 'openai_compatible',
+    } });
+    await page.reload();
+    await connectVault(page, vault);
+    await openRoom(page);
+    await page.getByRole('button', { name: '新建对话', exact: true }).click();
+    const materialsButton = page.locator('.ai-composer').getByRole('button', { name: /^资料(?: · \d+)?$/ });
+    const panel = page.locator('.task-materials-panel');
+    await materialsButton.click();
+    const obsidian = panel.getByRole('region', { name: '从 Obsidian 选用' });
+    await obsidian.getByRole('button', { name: '从 Obsidian 选用' }).click();
+    await obsidian.getByLabel('检索笔记').fill('LIBRARY_PURGE_WARNING_3187');
+    await obsidian.getByRole('button', { name: '检索', exact: true }).click();
+    const captured = page.waitForResponse(response => response.url().endsWith('/capture') && response.request().method() === 'POST');
+    await obsidian.getByRole('button', { name: '保存快照并选用' }).click();
+    const response = await captured;
+    const saved = await response.json();
+    const sourceId = new URL(response.url()).pathname.split('/')[4];
+    await expect(obsidian.getByRole('status')).toContainText('已保存');
+    await page.getByRole('button', { name: '新建对话', exact: true }).click();
+    await materialsButton.click();
+    await expect(panel.locator('.task-material-list > li')).toHaveCount(0);
+    const libraryButton = panel.getByRole('button', { name: '从资料库选用' });
+    await libraryButton.click();
+    const dialog = page.getByRole('dialog', { name: '清除这份资料？' });
+    let purgeRequests = 0;
+    page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith(`/${saved.material_id}/purge`)) purgeRequests++; });
+
+    async function checkLibraryWarning(title: string, versionCount: number) {
+      const row = panel.locator('.task-material-library-list > li').filter({ has: page.getByText(title, { exact: true }) });
+      await expect(row).toContainText(`${versionCount} 个版本`);
+      await row.getByText('更多操作', { exact: true }).click();
+      await row.getByRole('button', { name: '彻底清除资料' }).click();
+      await expect(dialog).toContainText('不会删除 Obsidian 原文或其云端备份');
+      await dialog.getByRole('button', { name: '取消' }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(panel.locator('.task-material-list > li')).toHaveCount(0);
+    }
+    await checkLibraryWarning('独立快照清除说明', 1);
+    const editedResponse = await page.request.post(`/api/materials/conversation/${sourceId}`, { data: {
+      material_id: saved.material_id, title: '手工编辑后的独立快照', content: '合成手工新版，保留原快照历史。',
+    } });
+    expect(editedResponse.ok()).toBeTruthy();
+    const edited = await editedResponse.json();
+    expect(edited.version).toBe(2);
+    expect(edited.provenance_json ?? '').not.toContain('obsidian_local');
+    await libraryButton.click();
+    await libraryButton.click();
+    await checkLibraryWarning('手工编辑后的独立快照', 2);
+    expect(purgeRequests).toBe(0);
+    expect(tree(vault)).toEqual(before);
+  } finally {
+    rmSync(vault, { recursive: true, force: true });
+  }
+});

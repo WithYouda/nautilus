@@ -123,6 +123,10 @@ def _open_root_descriptor(path: Path, guard=None) -> int:
     except OSError:
         os.close(descriptor)
         raise _failure('obsidian_vault_unavailable', 503) from None
+    except BaseException:
+        # A revoked guard raises DomainError before Vault can own this descriptor.
+        os.close(descriptor)
+        raise
 
 
 class Vault:
@@ -162,7 +166,15 @@ class Vault:
             if guard is not None:
                 guard()
             with os.scandir(directory_fd) as iterator:
-                for entry in iterator:
+                while True:
+                    if guard is not None:
+                        guard()
+                    try:
+                        entry = next(iterator)
+                    except StopIteration:
+                        break
+                    if guard is not None:
+                        guard()  # revocation may have completed during enumeration
                     try:
                         entries.append((entry.name, entry.is_symlink(),
                                         entry.is_dir(follow_symlinks=False),

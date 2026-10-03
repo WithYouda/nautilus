@@ -125,17 +125,18 @@ export default function ObsidianMaterials({ kind, id, disabled, onCaptured }: {
   const operation = useRef(0);
   useEffect(() => {
     const context = ++session.current;
-    page.current++;
+    const current = ++page.current;
     operation.current++;
     setResult(null); setQuery(''); setError(''); setNotice(''); setSavingToken(''); setBusy(false); setLoading(false); setOpen(false); setLoaded(false);
-    void getObsidianConnection().then(data => { if (session.current === context) setConnection(data.connection); })
-      .catch(() => { if (session.current === context) setConnection(null); });
+    void getObsidianConnection().then(data => { if (session.current === context && page.current === current) setConnection(data.connection); })
+      .catch(() => { if (session.current === context && page.current === current) setConnection(null); });
     return () => { session.current++; };
   }, [kind, id]);
   async function load() {
+    if (busy || loading) return;
     const context = session.current;
     const current = ++page.current;
-    setLoading(true); setError('');
+    setLoading(true); setResult(null); setError('');
     try {
       const data = await getObsidianConnection();
       if (session.current === context && page.current === current) { setConnection(data.connection); setLoaded(true); }
@@ -144,7 +145,7 @@ export default function ObsidianMaterials({ kind, id, disabled, onCaptured }: {
     } finally { if (session.current === context && page.current === current) setLoading(false); }
   }
   async function runSearch(after?: string) {
-    if (!id || !connection?.enabled) return;
+    if (!id || !connection?.enabled || busy || loading) return;
     const context = session.current;
     const current = ++page.current;
     setBusy(true); setError(''); setNotice('');
@@ -193,8 +194,8 @@ export default function ObsidianMaterials({ kind, id, disabled, onCaptured }: {
       {loaded && connection?.enabled && <>
         <p>当前 Vault：<strong>{connection.vault_name}</strong>。检索只读取 .md 文件，不会修改 Obsidian 原文。</p>
         <div className="task-material-obsidian-search">
-          <label>检索笔记<input value={query} disabled={busy} placeholder="留空列出笔记" onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void runSearch(); } }} /></label>
-          <button type="button" className="button button--quiet" disabled={busy} onClick={() => void runSearch()}>{busy ? '检索中…' : '检索'}</button>
+          <label>检索笔记<input value={query} disabled={busy || loading} placeholder="留空列出笔记" onChange={event => { setQuery(event.target.value); setResult(null); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void runSearch(); } }} /></label>
+          <button type="button" className="button button--quiet" disabled={busy || loading} onClick={() => void runSearch()}>{busy ? '检索中…' : '检索'}</button>
         </div>
         <p className="form-hint">按相对路径或正文文字匹配（不区分大小写）；一次检索最多显示 50 份，可翻页。检索不会自动导入或入库。</p>
         {result && result.unreadable_count > 0 && <p role="alert">有 {result.unreadable_count} 个文件或目录未能读取，结果可能不完整，不能当作“完整检索没有结果”。</p>}
@@ -203,12 +204,12 @@ export default function ObsidianMaterials({ kind, id, disabled, onCaptured }: {
           <p><strong>{item.title}</strong> · {item.relative_path} · 第 {item.excerpt_start_line}–{item.excerpt_end_line} 行 · 内容指纹 {item.sha256.slice(0, 12)}…</p>
           {item.excerpt && <p className="task-material-obsidian-excerpt">{item.excerpt}</p>}
           <p className="form-hint">摘要只帮助选择文档，不代表模型实际引用过这一句。</p>
-          <button type="button" className="button button--quiet" disabled={disabled || busy || Boolean(savingToken)} onClick={() => void saveSnapshot(item)}>{savingToken === item.selection_token ? '正在保存…' : '保存快照并选用'}</button>
+          <button type="button" className="button button--quiet" disabled={disabled || busy || loading || Boolean(savingToken)} onClick={() => void saveSnapshot(item)}>{savingToken === item.selection_token ? '正在保存…' : '保存快照并选用'}</button>
         </li>)}</ul>}
         {result && <p className="task-material-obsidian-hint">“保存快照并选用”会把这份笔记快照存入 Nautilus 资料库并用于当前对话；不会导入整个 Vault，也不会修改 Obsidian 原文。保存的正文会作为当前对话的教学模型输入。</p>}
-        {result?.has_more && result.next_after && <button type="button" className="button button--quiet" disabled={busy} onClick={() => void runSearch(result.next_after ?? undefined)}>下一页</button>}
+        {result?.has_more && result.next_after && <button type="button" className="button button--quiet" disabled={busy || loading} onClick={() => void runSearch(result.next_after ?? undefined)}>下一页</button>}
         {result?.has_more && !result.next_after && <p role="alert">还有更多候选，但服务端没有返回可用的翻页位置。请重新检索，不要把它当作已看完。</p>}
-        <button type="button" className="text-button" disabled={loading} onClick={() => void load()}>{loading ? '正在读取…' : '重新读取连接状态'}</button>
+        <button type="button" className="text-button" disabled={busy || loading} onClick={() => void load()}>{loading ? '正在读取…' : '重新读取连接状态'}</button>
       </>}
       {notice && <p role="status">{notice}</p>}
       {error && <p role="alert">{error}</p>}
