@@ -138,7 +138,7 @@ Obsidian Sync/云端 API/插件；自动后台扫描、watcher、定时刷新、
 
 ## 11. 实施状态
 
-**代码与隔离检查已完成，10-03审查整改后已在既有trial038启用；真实Vault使用验收待完成：** 实现位置为 `backend/app/obsidian.py`、`backend/app/routers/obsidian.py`、`frontend/src/ObsidianMaterials.tsx`、`frontend/src/ObsidianSettings.tsx`，并在 `backend/app/materials.py` 提供同事务的 `capture_obsidian` 与清除时的候选失效接入。实际测试结果、未完成项与下一评审动作只在[开发状态](../../progress/nautilus-development-status.md)维护，不在本文件重复。
+**代码与隔离检查已完成，10-03审查整改后已在既有trial038启用，作者随后反馈实际试用无问题；不等于完整B2验收：** 实现位置为 `backend/app/obsidian.py`、`backend/app/routers/obsidian.py`、`frontend/src/ObsidianMaterials.tsx`、`frontend/src/ObsidianSettings.tsx`，并在 `backend/app/materials.py` 提供同事务的 `capture_obsidian` 与清除时的候选失效接入。实际测试结果、未完成项与下一评审动作只在[开发状态](../../progress/nautilus-development-status.md)维护，不在本文件重复。
 
 R2 补修（2026-10-02，C1/C2）：关闭内层入口或外层资料面板后，未发出的捕获后选用不再启动（`onCaptured(version, isOperationCurrent)`、面板关闭同步失效、三处检查）；根描述符打开、目录枚举与每个目录项处理接入与正文读取相同的单次许可（`_permit`），`search`/`capture`/`source_status` 共用同一 guard。
 
