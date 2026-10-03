@@ -256,7 +256,7 @@ class QuestionDiscussionService:
     @material_guard
     def start(self, identity, discussion_id, content, request_key, retry=False,
               regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None, help_request=None, source_scope=None,
-              current_state_revision=None, public_search_query=None, attachment_version_ids=None, teaching_mode=None):
+              current_state_revision=None, public_search_query=None, attachment_version_ids=None, teaching_mode=None, teaching_action=None):
         if retry:
             raise DomainError('discussion_regeneration_required', 422)
         if edit_turn_id and (regenerate_turn_id or parent_turn_id):
@@ -287,7 +287,7 @@ class QuestionDiscussionService:
             image_runtime = self.verification._runtime(owner, discussion['session_id'])
             require_image_capability(self.chats, owner, image_runtime[0]['id'], image_runtime[1].model, frozen)
         material_bound = bool(frozen and frozen['mode'] != 'unspecified')
-        if regenerate_turn_id and (help_request is None or teaching_mode is None):
+        if regenerate_turn_id and (help_request is None or teaching_mode is None or teaching_action is None):
             original = self.db.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE discussion_id=? AND id=?',
                 (discussion_id, regenerate_turn_id))
             if original:
@@ -296,6 +296,8 @@ class QuestionDiscussionService:
                     help_request = (original_snapshot.get('help_request') or {}).get('kind')
                 if teaching_mode is None:
                     teaching_mode = original_snapshot.get('teaching_mode')
+                if teaching_action is None:
+                    teaching_action = original_snapshot.get('teaching_action')
         # Resolve once before accepting a new turn. The same immutable config
         # drives both model calls; later settings and duplicate requests cannot
         # replace the saved execution configuration.
@@ -336,6 +338,7 @@ class QuestionDiscussionService:
                         or saved_snapshot.get('attachment_version_ids', []) != attached
                         or saved_snapshot.get('search_request', {'mode': 'off'}) != (search or {'mode': 'off'})
                         or saved_snapshot.get('teaching_mode') != teaching_mode
+                        or saved_snapshot.get('teaching_action') != teaching_action
                         or (saved_snapshot.get('help_request') or {}).get('kind') != help_request):
                     raise DomainError('idempotency_conflict', 409)
                 turn_id = None
@@ -388,10 +391,10 @@ class QuestionDiscussionService:
                                        'attempt_id': attempt_id, 'reply': reply, 'search_request': search or {'mode': 'off'},
                                        'source_request': source_scope or {'mode': 'unspecified', 'version_ids': []},
                                        'source_scope': public_scope(frozen),
-                                       'teaching_mode': teaching_mode,
+                                       'teaching_mode': teaching_mode, 'teaching_action': teaching_action,
                                        'teaching': teaching.freeze([by_id[item] for item in history_path],
                                            answer_id=turn_id, message_id=turn_id, kind='discussion', scope_id=discussion_id,
-                                           requested_mode=teaching_mode, help_kind=help_request),
+                                           requested_mode=teaching_mode, help_kind=help_request, action=teaching_action),
                                        'attachment_version_ids': attached,
                                        **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
                 if self.current_state is not None:
@@ -605,7 +608,14 @@ class QuestionDiscussionService:
                             (discussion_id, observation['message_id'], 'purged'))
                         if original:
                             attempt_texts[observation['message_id']] = original['user_content'] or ''
-                    messages = teaching.add_prompt(messages, snapshot['teaching'], attempt_texts)
+                    answer_texts = {}
+                    practice = snapshot['teaching']['before'].get('practice')
+                    if practice:
+                        original = self.db.fetchone('SELECT assistant_content FROM learning_discussion_turn WHERE discussion_id=? AND id=? AND status<>?',
+                            (discussion_id, practice['question']['answer_id'], 'purged'))
+                        if original:
+                            answer_texts[practice['question']['answer_id']] = original['assistant_content'] or ''
+                    messages = teaching.add_prompt(messages, snapshot['teaching'], attempt_texts, answer_texts)
                     teaching_stream = teaching.TeachingStream(snapshot['teaching'])
                 def active():
                     # Also used inside KnowledgeRun's learning DB transaction:

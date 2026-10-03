@@ -18,7 +18,7 @@ import ComposerAttachments from './ComposerAttachments';
 import MessageAttachments from './MessageAttachments';
 import { attachmentError } from './AttachmentSupport';
 import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
-import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type TeachingMethod, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
+import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type TeachingMethod, type TeachingAction, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
 
 const requestId = (): string => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: string; onBack: () => void; onNavigate: (id: string) => void }) {
@@ -38,7 +38,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [busy, setBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const [error, setError] = useState('');
-  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; teachingMode: TeachingMethod | null; sourceScope: SourceScope; attachmentVersionIds: string[] } | null>(null);
+  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; teachingMode: TeachingMethod | null; teachingAction: TeachingAction | null; sourceScope: SourceScope; attachmentVersionIds: string[] } | null>(null);
   const [selectedTeachingMode, setSelectedTeachingMode] = useState<TeachingMethod | null>(null);
   const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
   const [attachmentDraftIds, setAttachmentDraftIds] = useState<string[]>([]);
@@ -50,7 +50,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editRequest = useRef<{ turnId: string; content: string; key: string } | null>(null);
   const key = useRef(requestId());
-  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; teachingMode: TeachingMethod | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
+  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; teachingMode: TeachingMethod | null; teachingAction: TeachingAction | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
   const sending = useRef(false);
   const branching = useRef(false);
   const branchKeys = useRef(new Map<string, string>());
@@ -136,7 +136,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     return () => controller.abort();
   }, [id, runningTurn?.id, reconnect]);
 
-  async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false, regenerateTurnId?: string, editTurnId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
+  async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false, regenerateTurnId?: string, editTurnId?: string, requestedHelp?: HelpRequestKind | null, requestedAction?: TeachingAction | null): Promise<boolean> {
     if (attachmentBusy || !text.trim() || sending.current || branching.current || running) return false;
     if (sharedState.blocked) { setError("请先确认或修复当前学习状态，再发送消息。"); return false; }
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !sourceScope.knowledge_base && !searchByRequestKey.current.has(requestKey)) { setError('请先选择至少一个资料版本或知识库，或改为未指定资料。'); return false; }
@@ -148,14 +148,15 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     sending.current = true; setBusy(true); setError('');
     const frozenHelp = searchByRequestKey.current.has(requestKey) ? searchByRequestKey.current.get(requestKey)!.helpRequest : (requestedHelp !== undefined ? requestedHelp : regenerateTurnId ? discussion?.turns.find(turn => turn.id === regenerateTurnId)?.help_record?.request?.kind ?? null : null);
     const frozenTeachingMode = searchByRequestKey.current.has(requestKey) ? searchByRequestKey.current.get(requestKey)!.teachingMode : regenerateTurnId ? discussion?.turns.find(turn => turn.id === regenerateTurnId)?.teaching?.requested_mode ?? null : selectedTeachingMode;
+    const frozenTeachingAction = searchByRequestKey.current.has(requestKey) ? searchByRequestKey.current.get(requestKey)!.teachingAction : regenerateTurnId ? discussion?.turns.find(turn => turn.id === regenerateTurnId)?.teaching?.requested_action ?? null : requestedAction ?? null;
     const frozenScope = searchByRequestKey.current.get(requestKey)?.sourceScope ?? sourceScope;
     const frozenAttachments = searchByRequestKey.current.get(requestKey)?.attachmentVersionIds ?? (regenerateTurnId || editTurnId ? [] : attachmentDraftIds.filter(id => frozenScope.version_ids.includes(id)));
-    if (!retry && !regenerateTurnId && !editTurnId) { setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: false, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, sourceScope: frozenScope }); if (!preserveDraft) { setContent(''); drafts.current.set(id, ''); } }
+    if (!retry && !regenerateTurnId && !editTurnId) { setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: false, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, teachingAction: frozenTeachingAction, sourceScope: frozenScope }); if (!preserveDraft) { setContent(''); drafts.current.set(id, ''); } }
     try {
       const frozenSearch = searchByRequestKey.current.get(requestKey)?.search ?? structuredClone(searchSelection);
       const frozenPublicQuery = searchByRequestKey.current.get(requestKey)?.publicQuery ?? (!regenerateTurnId && !editTurnId && frozenSearch.mode === 'external' ? publicQuery.trim() : '');
-      searchByRequestKey.current.set(requestKey, { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, content: text, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, sourceScope: frozenScope });
-      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, teaching_mode: frozenTeachingMode, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
+      searchByRequestKey.current.set(requestKey, { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, content: text, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, teachingAction: frozenTeachingAction, sourceScope: frozenScope });
+      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, teaching_mode: frozenTeachingMode, teaching_action: frozenTeachingAction, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (generation.current !== currentGeneration) return false;
       if (!regenerateTurnId && !editTurnId) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
@@ -172,7 +173,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         if (editRequest.current?.key === requestKey) editRequest.current = null;
         if (key.current === requestKey) key.current = requestId();
         if (!retry && !regenerateTurnId && !editTurnId) { setPending(null); if (!preserveDraft) { setContent(text); drafts.current.set(id, text); } }
-      } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: true, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, sourceScope: frozenScope });
+      } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: true, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, teachingAction: frozenTeachingAction, sourceScope: frozenScope });
       setError(stateRejected ? '消息未发送，请核对最新状态后重新发送。' : attachmentError(reason));
       return false;
     } finally {
@@ -223,7 +224,8 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     {discussion?.id === id && !discussion.purged && <TeachingState key={id} kind="discussion" scopeId={id} pathKey={teachingPath}
       entries={discussionTeachingEntries(visibleTurns)} standalone
       selectedMode={pending ? pending.teachingMode : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
-      disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
+      onAction={(action, label) => void send(label, key.current, false, true, undefined, undefined, undefined, action)}
+      disabled={attachmentBusy || sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
       onUpdated={(answerId, record) => setDiscussion(previous => previous?.id === id
         ? { ...previous, turns: previous.turns.map(turn => turn.id === answerId ? { ...turn, teaching: record } : turn) } : previous)} />}
     <div className="ai-chat-with-map">
@@ -299,7 +301,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         </div>; })}
         {pending && <>
           <LearningMessage role="user" state={pending.failed ? 'failed' : undefined} status={pending.failed ? '发送未确认' : '发送中'}><div className="ai-message-content">{pending.content}</div></LearningMessage>
-          {pending.failed ? <button className="button button--quiet ai-retry-button" type="button" disabled={branchBusy} onClick={() => void send(pending.content, pending.key, false, true, undefined, undefined, pending.helpRequest)}>重试发送</button> : <LearningMessage role="assistant" status="生成中"><div className="ai-message-content">…</div></LearningMessage>}
+          {pending.failed ? <button className="button button--quiet ai-retry-button" type="button" disabled={branchBusy} onClick={() => void send(pending.content, pending.key, false, true, undefined, undefined, pending.helpRequest, pending.teachingAction)}>重试发送</button> : <LearningMessage role="assistant" status="生成中"><div className="ai-message-content">…</div></LearningMessage>}
         </>}
       </>}
     </LearningChatPanel>

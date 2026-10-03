@@ -46,6 +46,7 @@ import {
   type AiMessage,
   type HelpRequestKind,
   type TeachingMethod,
+  type TeachingAction,
   type AiProvider,
   type AiProviderModel,
   type AiConversationConfig,
@@ -83,6 +84,7 @@ type PendingSubmission = {
   attachmentVersionIds?: string[];
   helpRequest?: HelpRequestKind | null;
   teachingMode?: TeachingMethod | null;
+  teachingAction?: TeachingAction | null;
   regenerateMessageId?: string;
   editMessageId?: string;
   parentMessageId?: string;
@@ -143,6 +145,7 @@ function readSession(): RoomSession | null {
             sourceScope: parsed.pending.sourceScope && ['unspecified', 'reference', 'only'].includes(parsed.pending.sourceScope.mode) && Array.isArray(parsed.pending.sourceScope.version_ids) ? parsed.pending.sourceScope : undefined,
             helpRequest: ["hint", "explain_step", "example", "try_first"].includes(parsed.pending.helpRequest ?? "") ? parsed.pending.helpRequest : null,
             teachingMode: ['stepwise', 'socratic'].includes(parsed.pending.teachingMode ?? '') ? parsed.pending.teachingMode : null,
+            teachingAction: ['practice', 'continue'].includes(parsed.pending.teachingAction ?? '') ? parsed.pending.teachingAction : null,
           }
         : undefined,
       learningBrief: parsed.learningBrief,
@@ -820,7 +823,7 @@ export default function AiLearningRoom({
     await submitMessage(draft.trim());
   }
 
-  async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
+  async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string, requestedHelp?: HelpRequestKind | null, requestedAction?: TeachingAction | null): Promise<boolean> {
     if (attachmentBusy || !entryReady || !content || branchBusyRef.current || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
     if (sharedState.blocked) { setError("请先确认或修复当前学习状态，再发送消息。"); return false; }
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !sourceScope.knowledge_base && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本或知识库，或改为未指定资料。'); return false; }
@@ -865,14 +868,16 @@ export default function AiLearningRoom({
       const frozenPublicQuery = canReusePending ? savedPending!.publicQuery ?? publicQuery.trim() : !automatic && !regenerateMessageId && !editMessageId && frozenSearch.mode === 'external' ? publicQuery.trim() : '';
       const frozenHelp = canReusePending ? savedPending!.helpRequest ?? null : requestedHelp !== undefined ? requestedHelp : regenerateMessageId ? detail?.messages.find(message => message.id === regenerateMessageId)?.help_record?.request?.kind ?? null : null;
       const frozenTeachingMode = canReusePending ? savedPending!.teachingMode ?? null : requestedTeachingMode;
+      const frozenTeachingAction = canReusePending ? savedPending!.teachingAction ?? null : regenerateMessageId
+        ? detail?.messages.find(message => message.id === regenerateMessageId)?.teaching?.requested_action ?? null : requestedAction ?? null;
       const frozenScope = canReusePending ? savedPending!.sourceScope ?? emptySourceScope() : sourceScope;
       const frozenAttachments = canReusePending ? savedPending!.attachmentVersionIds ?? [] : regenerateMessageId || editMessageId || automatic ? [] : attachmentDraftIds.filter(id => frozenScope.version_ids.includes(id));
-      const pending: PendingSubmission = { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, sourceScope: frozenScope, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
+      const pending: PendingSubmission = { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, sourceScope: frozenScope, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, teachingAction: frozenTeachingAction, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, teaching_mode: frozenTeachingMode, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, teaching_mode: frozenTeachingMode, teaching_action: frozenTeachingAction, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (!stillCurrent() || conversationIdRef.current !== conversation.conversation.id) return false;
       if (!regenerateMessageId && !editMessageId && !automatic) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
@@ -1131,7 +1136,8 @@ export default function AiLearningRoom({
     key={conversationId ?? 'new'} kind="conversation" scopeId={conversationId ?? ''} pathKey={teachingPath}
     entries={conversationTeachingEntries(visibleMessages)} standalone={!learningBrief}
     selectedMode={pendingSubmissionRef.current ? pendingSubmissionRef.current.teachingMode ?? null : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
-    disabled={!entryReady || sharedState.blocked || branchBusy || Boolean(currentRun) || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
+    onAction={(action, label) => void submitMessage(label, true, undefined, undefined, undefined, action)}
+    disabled={!entryReady || attachmentBusy || sharedState.blocked || branchBusy || Boolean(currentRun) || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
     onUpdated={(answerId, record) => setDetail(previous => previous?.conversation.id === conversationId
       ? { ...previous, messages: previous.messages.map(message => message.id === answerId ? { ...message, teaching: record } : message) } : previous)} />;
 
@@ -1312,6 +1318,7 @@ export default function AiLearningRoom({
           {searchChoice.error && <p role="status">{searchChoice.error}</p>}
           {error && <div className="ai-room-error" role="alert"><CircleAlert size={15} /><span>{error}</span></div>}
           {status === "failed" && pendingSubmissionRef.current?.helpRequest && pendingContentRef.current && <button className="button button--quiet ai-retry-button button--with-icon" type="button" onClick={() => void submitMessage(pendingContentRef.current!, true, undefined, undefined, pendingSubmissionRef.current!.helpRequest)}><RefreshCw size={15} />重试发送帮助请求</button>}
+          {status === "failed" && pendingSubmissionRef.current?.teachingAction && pendingContentRef.current && <button className="button button--quiet ai-retry-button button--with-icon" type="button" onClick={() => void submitMessage(pendingContentRef.current!, true, undefined, undefined, undefined, pendingSubmissionRef.current!.teachingAction)}><RefreshCw size={15} />重试发送</button>}
           {status === "failed" && !pendingSubmissionRef.current && !editingMessageId && detail?.messages.some((message) => message.role === "user") && (
             <button className="button button--quiet ai-retry-button button--with-icon" onClick={() => void handleRetry()}><RefreshCw size={15} />重新生成</button>
           )}

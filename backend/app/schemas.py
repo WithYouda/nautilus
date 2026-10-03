@@ -311,6 +311,7 @@ class ConversationUpdateRequest(BaseModel):
 
 class MessageSendRequest(BaseModel):
     teaching_mode: Literal['stepwise', 'socratic'] | None = None
+    teaching_action: Literal['practice', 'continue'] | None = None
     public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
@@ -646,6 +647,7 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 class QuestionDiscussionMessageRequest(BaseModel):
     teaching_mode: Literal['stepwise', 'socratic'] | None = None
+    teaching_action: Literal['practice', 'continue'] | None = None
     public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None

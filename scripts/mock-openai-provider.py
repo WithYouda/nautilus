@@ -272,7 +272,31 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
                 return
             c1_request = str(messages[last_user].get('content', '')) if last_user >= 0 else ''
-            if '[C1' in c1_request:
+            runtime = next((str(message.get('content', '')) for message in reversed(messages)
+                if str(message.get('content', '')).startswith('Nautilus 本轮执行上下文')), None)
+            practice_context = json.loads(runtime.split('\n', 1)[1]) if runtime else None
+            practice_reply = None
+            if practice_context and practice_context.get('action') == 'practice':
+                sequence = STATE.snapshot()['requests'].get(scenario, 1)
+                question = f'🧩合成变式{sequence}：输入换成两个编号，其中一个缺失。你会怎样检查输入边界，并说明理由？'
+                practice_reply = (question, {'step': None, 'attempt': None, 'mode': None, 'help': None,
+                    'practice': {'question': question, 'feedback': None}})
+            elif practice_context and practice_context.get('action') == 'continue':
+                practice_reply = ('先继续原来的小点。你会先检查哪一种输入？',
+                    {'step': None, 'attempt': None, 'mode': None, 'help': None, 'practice': None})
+            elif practice_context and practice_context['before'].get('practice') and '[C2作答]' in c1_request:
+                needs_help = '[C2卡住]' in c1_request
+                feedback = ('💡合成练习反馈：你已经检查了缺失编号；还可以单独说明缺失时返回什么。' if needs_help
+                            else '💡合成练习反馈：你先检查了缺失编号，并说明了边界处理的理由；可以继续比较两个编号都存在时的情况。')
+                practice_reply = (feedback, {'step': None, 'attempt': {'quote': c1_request, 'needs_help': needs_help},
+                    'mode': None, 'help': None, 'practice': {'question': None, 'feedback': feedback}})
+            if practice_reply:
+                body, proposal = practice_reply
+                trailer = '\n' + practice_context['opening'] + json.dumps(proposal, ensure_ascii=False) + practice_context['closing']
+                chunks = ([body] if '[C2慢流]' not in c1_request else ['正在分析新的情境。', *SLOW_CHUNKS, body])
+                chunks += [trailer[index:index + 17] for index in range(0, len(trailer), 17)]
+                delay = .08 if '[C2慢流]' in c1_request else .005
+            elif '[C1' in c1_request:
                 runtime = next((str(m.get('content', '')) for m in reversed(messages)
                     if str(m.get('content', '')).startswith('Nautilus 本轮执行上下文')), None)
                 if runtime:
@@ -280,7 +304,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     sequence = STATE.snapshot()['requests'].get(scenario, 1)
                     point = f'输入边界检查（合成{sequence}）。'
                     proposal = {'step': point, 'attempt': {'quote': c1_request}
-                        if '[C1尝试]' in c1_request and context['before']['step'] else None, 'mode': None}
+                        if '[C1尝试]' in c1_request and context['before']['step'] else None, 'mode': None, 'practice': None}
                     trailer = '\n' + context['opening'] + json.dumps(proposal, ensure_ascii=False) + context['closing']
                     chunks = ([point, '请说明你的判断。'] if '[C1慢流]' not in c1_request
                               else ['正在分析输入边界。', *SLOW_CHUNKS, point])
@@ -327,7 +351,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     body = ('合成完整讲解：先检查空输入，再逐个检查正常输入。' if effective_mode in {'full_explanation', 'direct_answer'}
                             else ['你会先检查哪一种输入？', '想想空输入和输入边界。', '先只考虑空输入时应返回什么。',
                                   '局部例子：输入为空时，先走空输入分支。', '直接解释：先判断输入是否为空，再检查正常输入。'][level])
-                    proposal = {'step': new_step, 'attempt': attempt, 'mode': mode, 'help': help_request}
+                    proposal = {'step': new_step, 'attempt': attempt, 'mode': mode, 'help': help_request, 'practice': None}
                     trailer = '\n' + context['opening'] + json.dumps(proposal, ensure_ascii=False) + context['closing']
                     chunks = ([point, body] if '[C2慢流]' not in c1_request
                               else ['正在分析输入边界。', *SLOW_CHUNKS, point, body])

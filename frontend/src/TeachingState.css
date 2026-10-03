@@ -7,12 +7,15 @@
 .teaching-state select { max-width: 100%; min-width: 8rem; padding: .35rem .5rem; border: 1px solid var(--line); border-radius: .4rem; background: var(--surface); color: inherit; font: inherit; }
 .teaching-state select:disabled { opacity: .6; }
 .teaching-state__step p { margin: .35rem 0 .7rem; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.teaching-state__practice-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-bottom: .7rem; }
+.teaching-state__practice-phase { color: var(--muted); font-size: .78rem; }
 .teaching-state summary { cursor: pointer; }
-.teaching-state__attempts { margin-top: .8rem; }
-.teaching-attempt { padding: .85rem 0; border-top: 1px solid var(--line); }
-.teaching-attempt:first-of-type { margin-top: .6rem; }
+.teaching-state__attempts, .teaching-state__practices { margin-top: .8rem; }
+.teaching-attempt, .teaching-practice { padding: .85rem 0; border-top: 1px solid var(--line); }
+.teaching-attempt:first-of-type, .teaching-practice:first-of-type { margin-top: .6rem; }
+.teaching-practice__observation { padding: .75rem 0 0; }
 .teaching-attempt__label { margin: 0 0 .45rem; color: var(--muted); font-size: .78rem; }
-.teaching-attempt blockquote { margin: .4rem 0 .65rem; padding: .45rem .7rem; border-left: 2px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.teaching-attempt blockquote, .teaching-practice blockquote { margin: .4rem 0 .65rem; padding: .45rem .7rem; border-left: 2px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
 .teaching-attempt__step { margin: .6rem 0; line-height: 1.65; overflow-wrap: anywhere; }
 .teaching-attempt__step b { display: block; font-size: .78rem; }
 .teaching-attempt__original, .teaching-attempt__history { margin-top: .6rem; font-size: .78rem; }

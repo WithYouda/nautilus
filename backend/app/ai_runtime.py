@@ -104,6 +104,7 @@ class AiRunManager:
         public_search_query: str | None = None,
         help_request: str | None = None,
         teaching_mode: str | None = None,
+        teaching_action: str | None = None,
         source_scope: dict | None = None,
         attachment_version_ids: list[str] | None = None,
         current_state_revision: int | None = None,
@@ -116,7 +117,7 @@ class AiRunManager:
             search=search,
             public_search_query=public_search_query,
             help_request=help_request,
-            teaching_mode=teaching_mode,
+            teaching_mode=teaching_mode, teaching_action=teaching_action,
             **({"source_scope": source_scope} if source_scope is not None else {}),
             attachment_version_ids=attachment_version_ids,
             current_state_revision=current_state_revision,
@@ -153,7 +154,7 @@ class AiRunManager:
             teaching = json.loads(run.get('config_snapshot_json') or '{}').get('teaching')
             if teaching:
                 from .teaching_runtime import add_prompt, TeachingStream
-                messages = add_prompt(messages, teaching, prepared.get('teaching_attempt_texts'))
+                messages = add_prompt(messages, teaching, prepared.get('teaching_attempt_texts'), prepared.get('teaching_answer_texts'))
                 state.teaching_stream = TeachingStream(teaching)
             state.task = asyncio.create_task(
                 self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"), public_search_query,

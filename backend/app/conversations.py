@@ -1607,7 +1607,7 @@ class ConversationService:
     def _existing_submission(
         self, conversation_id, client_message_id, content, *, connection=None,
         regenerate_message_id=None, parent_message_id=None, edit_message_id=None, search=None, help_request=None, source_scope=None,
-        attachment_version_ids=None, teaching_mode=None,
+        attachment_version_ids=None, teaching_mode=None, teaching_action=None,
     ):
         query = connection.execute if connection is not None else self.database.connection.execute
         existing = query("SELECT * FROM message WHERE conversation_id=? AND client_message_id=?",
@@ -1629,6 +1629,8 @@ class ConversationService:
             raise ConversationConflict("同一 client_message_id 已用于不同的帮助请求")
         if snapshot.get('teaching_mode') != teaching_mode:
             raise ConversationConflict("同一 client_message_id 已用于不同的教学方式")
+        if snapshot.get('teaching_action') != teaching_action:
+            raise ConversationConflict("同一 client_message_id 已用于不同的练习动作")
         reply = snapshot.get("reply", {})
         question = query("SELECT content FROM message WHERE id=? AND conversation_id=?",
                          (reply.get("question_id", run["request_message_id"]), conversation_id)).fetchone()
@@ -1654,6 +1656,7 @@ class ConversationService:
         public_search_query: str | None = None,
         help_request: str | None = None,
         teaching_mode: str | None = None,
+        teaching_action: str | None = None,
         source_scope: dict | None = None,
         attachment_version_ids: list[str] | None = None,
         current_state_revision: int | None = None,
@@ -1670,7 +1673,7 @@ class ConversationService:
         if edit_message_id and (regenerate_message_id or parent_message_id):
             raise ConversationError("编辑消息不能同时指定重新生成或回答上下文")
 
-        if regenerate_message_id and (help_request is None or teaching_mode is None):
+        if regenerate_message_id and (help_request is None or teaching_mode is None or teaching_action is None):
             original = self.database.fetchone("""SELECT r.config_snapshot_json FROM ai_run r
                 WHERE r.conversation_id=? AND r.response_message_id=?""", (conversation_id, regenerate_message_id))
             if original:
@@ -1679,8 +1682,10 @@ class ConversationService:
                     help_request = (original_snapshot.get("help_request") or {}).get("kind")
                 if teaching_mode is None:
                     teaching_mode = original_snapshot.get('teaching_mode')
+                if teaching_action is None:
+                    teaching_action = original_snapshot.get('teaching_action')
 
-        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode)
+        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action)
         if replayed:
             return replayed
         if self.current_state is not None:
@@ -1733,6 +1738,7 @@ class ConversationService:
                 raise ConversationError(str(error)) from error
         config_snapshot["search_request"] = search or {"mode": "off"}
         config_snapshot['teaching_mode'] = teaching_mode
+        config_snapshot['teaching_action'] = teaching_action
         if help_request:
             config_snapshot["help_request"] = {"kind": help_request, "at": _now()}
         config_snapshot["search_trace"] = search_run.initial_trace() if search_run else {"mode": "off", "status": "off", "items": []}
@@ -1750,7 +1756,7 @@ class ConversationService:
                 replayed = self._existing_submission(
                     conversation_id, client_message_id, text, connection=connection,
                     regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id,
-                    edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode
+                    edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action
                 )
                 if replayed:
                     return replayed
@@ -1838,7 +1844,7 @@ class ConversationService:
                 config_snapshot['teaching'] = freeze_teaching(
                     [item for item in teaching_path if item['role'] == 'assistant'],
                     answer_id=assistant_message_id, message_id=user_message_id,
-                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request)
+                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action)
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,
@@ -1939,7 +1945,7 @@ class ConversationService:
         except sqlite3.IntegrityError as error:
             # 并发提交命中唯一索引：另一个协程已经写入了同一个 client_message_id。
             # 返回对方的运行记录，不重复追加消息，也不报错。
-            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode)
+            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action)
             if replayed:
                 return replayed
             active = self.active_run(identity_id, conversation_id)
@@ -1960,6 +1966,7 @@ class ConversationService:
             "search_run": search_run,
             "material_prompt": self.materials.prompt(frozen) if material_bound else None,
             "frozen_scope": frozen,
+            'teaching_answer_texts': {item['id']: item['content'] for item in teaching_path if item['role'] == 'assistant'},
             'teaching_attempt_texts': {item['id']: item['content'] for item in teaching_path if item['role'] == 'user'},
         }
 

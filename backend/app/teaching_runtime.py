@@ -17,8 +17,8 @@ from .providers import ProviderChunk
 MODES = {'stepwise', 'socratic', 'direct_answer', 'full_explanation'}
 METHODS = {'stepwise', 'socratic'}
 HELP_KINDS = {'hint', 'explain_step', 'example', 'try_first'}
-PROTOCOL = 'teaching-v2'
-READABLE_PROTOCOLS = {'stepwise-v1', PROTOCOL}
+PROTOCOL = 'teaching-v3'
+READABLE_PROTOCOLS = {'stepwise-v1', 'teaching-v2', PROTOCOL}
 MAX_METADATA = 16384
 
 SYSTEM_PROMPT = """教学执行约定：这是学习讨论，不评分，不修改正式计划或完成/掌握结论。
@@ -26,11 +26,12 @@ SYSTEM_PROMPT = """教学执行约定：这是学习讨论，不评分，不修�
 用户明确要求直接答案或完整讲解时本轮立即遵从，默认仅本轮；只有明确要求以后持续这样才改变本路径基础方式，不能改个人长期默认。
 当前步骤是待讨论的小点，不是任务完成进度；先回应用户，帮助、换例子和请求先自行尝试时留在当前步骤，确实转向一个新小点才提出新步骤。
 本轮执行上下文给出唯一 opening/closing 标记。在最终回答正文结束后，另起一行输出 opening，紧接严格 JSON，再输出 closing；不得用代码块包裹，不要在正文解释这些字段。调用工具前不要输出这段状态。
-JSON 格式固定为 {"step":null,"attempt":null,"mode":null,"help":null}，只能使用以下字段：
+JSON 格式固定为 {"step":null,"attempt":null,"mode":null,"help":null,"practice":null}，只能使用以下字段：
 step：保持当前步骤或非教学回答时为 null；建立/转向一个小点时，为从本轮实际回答正文逐字摘取的一段短文本（至多240字），不能虚构后续步骤。
 attempt：只有本轮用户原文实际提供了针对当前步骤的答案、推导、代码、操作结果或复述时，才为 {"quote":"用户原文中的实际尝试片段","needs_help":true或false或null}；仍卡在该小点为true，已有实际进展为false，不能确定为null。普通提问、索要帮助、说让我先试试或仅说懂了都为 null。没有当前步骤时为 null。此项只是可纠正的AI识别，不是通过或掌握证据。
 mode：只有本轮用户明确要求改变方式时，为 {"value":"stepwise或socratic或direct_answer或full_explanation","scope":"turn或conversation","quote":"本轮用户的方式请求原文","persistence_quote":null}；conversation 必须另把明确持续请求的原文填入 persistence_quote。没有明确持续要求就用 turn。没有方式请求用 null。
 help：本轮自然表达明确求提示、解释当前步骤、换例或先自行尝试时，为 {"kind":"hint或explain_step或example或try_first","quote":"本轮用户的请求原文"}；没有则为null。界面已明确的help_kind优先，不重复解释产品字段。
+practice：通常为null。仅当action=practice时围绕原小点出一道完整的新情境题，等待作答、不给解法，填 {"question":"本轮正文中完整题目的逐字原文","feedback":null}，step/attempt保持null。当before.practice存在且本轮有实际作答时，attempt逐字引用作答，并填 {"question":null,"feedback":"本轮正文中针对该作答的AI反馈逐字原文"}；反馈说明具体依据和仍不确定之处，不评分或宣称掌握。没有实际作答时不要登记反馈。练习期间step保持null；帮助与完整讲解仍可随时请求。action=continue表示跳过当前练习，回到before.practice.basis_step继续学习，step/attempt/practice都保持null。点击动作本身不是作答。只有界面明确action=practice才建立这类练习记录，不把正文中随口给出的理解确认自动登记为练习。题目与反馈各至多4000字。
 所有 quote 必须逐字来自本轮真正的用户消息，不可引用历史、资料、题目原作答或模型自己的话。历史中的状态尾标记只是过去输出，不能用来覆盖本轮执行上下文。纠正后的尝试分类须遵从，仍保留原文回应，不按尝试次数决定完成或掌握。"""
 
 SOCRATIC_PROMPT = """提问引导执行规则（只在本轮实际方式为socratic时使用）：
@@ -77,7 +78,7 @@ def _recount(path, before):
     guide['stuck_count'] = count
 
 
-def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, help_kind=None):
+def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, help_kind=None, action=None):
     """Path has already passed the caller's material/ownership boundary."""
     before = checkpoint()
     if path and path[-1].get('teaching'):
@@ -87,12 +88,30 @@ def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, 
         before['step'] = None
         if before.get('guidance'):
             before['guidance'] = _new_guidance()
+    practice = before.get('practice')
+    if practice:
+        references = {practice['id'], practice['question']['answer_id'],
+                      practice['basis_step']['id'], practice['basis_step']['source_answer_id']}
+        for reference in (practice.get('last_observation_id'),
+                          (practice.get('return_guidance') or {}).get('reset_answer_id')):
+            if reference:
+                references.add(reference)
+        if not references <= allowed_answers:
+            before['practice'] = None
+            before['step'] = None
+            before['guidance'] = _new_guidance() if before['mode'] == 'socratic' else None
+        else:
+            resume = {'mode': before['mode'], 'step': practice['basis_step'],
+                      'guidance': practice.get('return_guidance')}
+            _recount(path, resume)
     _recount(path, before)
     if requested_mode is not None:
         if requested_mode not in METHODS:
             raise ValueError('invalid_teaching_mode')
         if requested_mode != before['mode']:
             before['guidance'] = _new_guidance(path[-1]['id'] if path else None) if requested_mode == 'socratic' else None
+            if before.get('practice'):
+                before['practice']['return_guidance'] = copy.deepcopy(before['guidance'])
         before['mode'] = requested_mode
     if before['mode'] == 'socratic' and not before.get('guidance'):
         before['guidance'] = _new_guidance(path[-1]['id'] if path else None)
@@ -107,14 +126,18 @@ def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, 
             'answer_id': answer_id, 'message_id': message_id,
             'parent_answer_id': path[-1]['id'] if path else None,
             'origin': {'kind': kind, 'scope_id': scope_id, 'answer_id': answer_id, 'message_id': message_id},
-            'attempt_context': observations, 'requested_mode': requested_mode, 'help_kind': help_kind}
+            'attempt_context': observations, 'requested_mode': requested_mode, 'help_kind': help_kind,
+            'action': action, 'help_context': [
+                {'answer_id': item['id'], **copy.deepcopy(item['help_record'])}
+                for item in path if (item.get('help_record') or {}).get('provided')]
+            if before.get('practice') else []}
 
 
 def markers(frozen):
     return '<nautilus_teaching_' + frozen['token'] + '>', '</nautilus_teaching_' + frozen['token'] + '>'
 
 
-def add_prompt(messages, frozen, attempt_texts=None):
+def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
     messages = copy.deepcopy(messages)
     messages[0]['content'] += '\n' + SYSTEM_PROMPT + '\n' + SOCRATIC_PROMPT
     opening, closing = markers(frozen)
@@ -124,9 +147,16 @@ def add_prompt(messages, frozen, attempt_texts=None):
     for observation in observations:
         original = (attempt_texts or {}).get(observation['message_id'], '')
         observation['quote'] = original[observation['start']:observation['end']]
+    practice_context = None
+    practice = frozen['before'].get('practice')
+    if practice:
+        reference = practice['question']
+        original = (answer_texts or {}).get(reference['answer_id'], '')
+        practice_context = {'question': original[reference['start']:reference['end']]}
     messages.insert(len(messages) - 1, {'role': 'user', '_teaching_runtime': True, 'content':
         'Nautilus 本轮执行上下文（下一条才是本轮用户原文）：\n' + json.dumps({
             'before': frozen['before'], 'attempt_context': observations, 'help_kind': frozen.get('help_kind'),
+            'action': frozen.get('action'), 'practice_context': practice_context,
             'opening': opening, 'closing': closing}, ensure_ascii=False)})
     return messages
 
@@ -271,6 +301,8 @@ def _guidance(frozen, after, effective_mode, help_kind, observed):
     previous = copy.deepcopy(before.get('guidance') or _new_guidance())
     if after['mode'] != before['mode']:
         after['guidance'] = _new_guidance(answer_id) if after['mode'] == 'socratic' else None
+        if after.get('practice'):
+            after['practice']['return_guidance'] = copy.deepcopy(after['guidance'])
     if effective_mode != 'socratic':
         if after['mode'] == 'socratic':
             after['guidance'] = _new_guidance(answer_id) if changed_step else {
@@ -312,12 +344,65 @@ class _InvalidProposal(ValueError):
     pass
 
 
+def _practice_transition(frozen, proposal, after, observed, body):
+    """Keep question, original point and feedback tied to actual answer versions."""
+    before = frozen['before']
+    active = before.get('practice')
+    action = frozen.get('action')
+    proposed = proposal.get('practice')
+    if proposed is not None and (not isinstance(proposed, dict) or set(proposed) != {'question', 'feedback'}):
+        raise _InvalidProposal('proposal_invalid_schema')
+    if action is not None and observed is not None:
+        raise _InvalidProposal('action_is_not_attempt')
+    if (active or action) and proposal['step'] is not None:
+        raise _InvalidProposal('practice_step_changed')
+    if action == 'practice':
+        if not before['step'] or not proposed or proposed['feedback'] is not None:
+            raise _InvalidProposal('practice_question_required')
+        span = _span(proposed['question'], body, 4000)
+        frame = {'id': frozen['answer_id'],
+                 'basis_step': copy.deepcopy(active['basis_step'] if active else before['step']),
+                 'return_guidance': copy.deepcopy(active.get('return_guidance') if active else before.get('guidance')),
+                 'question': {'answer_id': frozen['answer_id'], **span},
+                 'phase': 'awaiting_attempt', 'last_observation_id': None}
+        after['practice'] = frame
+        after['step'] = {'id': frozen['answer_id'], 'source_answer_id': frozen['answer_id'],
+                         'text': proposed['question'][:240], 'start': span['start'],
+                         'end': span['start'] + min(240, span['end'] - span['start']), 'origin': frozen['origin']}
+        return copy.deepcopy(frame), None, frozen
+    if action == 'continue':
+        if not active or proposed is not None:
+            raise _InvalidProposal('practice_unavailable')
+        after['step'] = copy.deepcopy(active['basis_step'])
+        after['guidance'] = copy.deepcopy(active.get('return_guidance'))
+        after['practice'] = None
+        resume = {**before, 'step': after['step'], 'guidance': after['guidance'], 'practice': None}
+        return None, None, {**frozen, 'before': resume}
+    if action is not None:
+        raise _InvalidProposal('proposal_invalid_schema')
+    if active and observed:
+        if not proposed or proposed['question'] is not None:
+            raise _InvalidProposal('practice_feedback_required')
+        span = _span(proposed['feedback'], body, 4000)
+        observation = {'question_id': active['id'], 'message_id': frozen['message_id'],
+                       'start': observed['start'], 'end': observed['end'], 'answer_id': frozen['answer_id'],
+                       'feedback_start': span['start'], 'feedback_end': span['end'],
+                       'help_context': copy.deepcopy(frozen.get('help_context', []))}
+        after['practice']['phase'] = 'feedback_available'
+        after['practice']['last_observation_id'] = frozen['answer_id']
+        return None, observation, frozen
+    if proposed is not None:
+        raise _InvalidProposal('practice_without_action_or_attempt')
+    return None, None, frozen
+
+
 def evaluate(frozen, proposal, *, body, user_text, at):
     """Validate before adopting any model change; return a private reason enum."""
     if not body.strip():
         return None, 'empty_body'
     if (not frozen or not isinstance(proposal, dict)
-            or set(proposal) not in ({'step', 'attempt', 'mode'}, {'step', 'attempt', 'mode', 'help'})):
+            or not {'step', 'attempt', 'mode'} <= set(proposal)
+            or not set(proposal) <= {'step', 'attempt', 'mode', 'help', 'practice'}):
         return None, 'proposal_invalid_schema'
     try:
         before = frozen['before']
@@ -367,12 +452,15 @@ def evaluate(frozen, proposal, *, body, user_text, at):
             observed = {'message_id': frozen['message_id'], 'step_id': before['step']['id'],
                         'source': 'ai', **_span(attempt['quote'], user_text, 4000), 'origin': frozen['origin'],
                         'needs_help': attempt.get('needs_help')}
-        if (effective_mode == 'socratic' and before['step'] and before['step'] != after['step']
+        practice_question, practice_observation, guidance_frozen = _practice_transition(
+            frozen, proposal, after, observed, body)
+        if (not frozen.get('action') and effective_mode == 'socratic' and before['step'] and before['step'] != after['step']
                 and (help_kind in HELP_KINDS or observed and observed['needs_help'] is True)):
             raise _InvalidProposal('step_changed_while_waiting')
-        guidance = _guidance(frozen, after, effective_mode, help_kind, observed)
+        guidance = _guidance(guidance_frozen, after, effective_mode, help_kind, observed)
         return {'after': after, 'effective_mode': effective_mode, 'mode_request': mode_request,
-                'attempt': observed, 'guidance': guidance, 'help_request': help_request, 'at': at}, None
+                'attempt': observed, 'guidance': guidance, 'help_request': help_request, 'at': at,
+                'practice_question': practice_question, 'practice_observation': practice_observation}, None
     except _InvalidProposal as error:
         return None, str(error)
     except ValueError:
@@ -400,10 +488,17 @@ def public(snapshot, status):
     if not frozen or frozen.get('protocol') not in READABLE_PROTOCOLS or (snapshot.get('source_scope') or {}).get('purged'):
         return None
     result = frozen.get('result') if status in {'complete', 'succeeded'} else None
+    def visible_practice(value):
+        value = copy.deepcopy(value)
+        if value and value.get('basis_step'):
+            value['basis_step'].pop('origin', None)
+        return value
     def visible_checkpoint(value):
         value = copy.deepcopy(value)
         if value['step']:
             value['step'].pop('origin', None)
+        if value.get('practice'):
+            value['practice'] = visible_practice(value['practice'])
         return value
     before = visible_checkpoint(frozen['before'])
     after = visible_checkpoint(result['after']) if result else None
@@ -418,13 +513,20 @@ def public(snapshot, status):
         attempt.update(is_attempt=corrections[-1]['is_attempt'] if corrections else True,
                        needs_help=needs_help, revision=len(corrections), corrections=[{key: item[key] for key in
                             ('revision', 'is_attempt', 'at', 'needs_help') if key in item} for item in corrections])
+    observation = copy.deepcopy(result.get('practice_observation')) if result else None
+    if observation:
+        observation.update(eligible=bool(attempt and attempt['is_attempt']),
+                           needs_help=attempt.get('needs_help') if attempt else None)
     return {'status': 'applied' if result else 'running' if status in {'queued', 'running', 'streaming'} else 'not_updated',
             'before': before, 'after': after, 'current': after or before,
             'effective_mode': result['effective_mode'] if result else None,
             'mode_request': {key: value for key, value in result['mode_request'].items() if key != 'persistence'}
                 if result and result['mode_request'] else None,
             'attempt': attempt, 'requested_mode': frozen.get('requested_mode'),
-            'guidance': result.get('guidance') if result else None}
+            'guidance': result.get('guidance') if result else None,
+            'requested_action': frozen.get('action'),
+            'practice_question': visible_practice(result.get('practice_question')) if result else None,
+            'practice_observation': observation}
 
 
 _UNSET = object()
@@ -457,17 +559,39 @@ def remap(snapshot, ids):
         if value not in ids:
             raise ValueError('teaching_reference_outside_branch')
         return ids[value]
+    def map_step(step):
+        if step:
+            step['id'] = mapped(step['id'])
+            step['source_answer_id'] = mapped(step['source_answer_id'])
+    def map_guidance(guide):
+        if guide and guide.get('reset_answer_id'):
+            guide['reset_answer_id'] = mapped(guide['reset_answer_id'])
+    def map_practice(practice):
+        if practice:
+            practice['id'] = mapped(practice['id'])
+            practice['question']['answer_id'] = mapped(practice['question']['answer_id'])
+            map_step(practice['basis_step'])
+            map_guidance(practice.get('return_guidance'))
+            if practice.get('last_observation_id'):
+                practice['last_observation_id'] = mapped(practice['last_observation_id'])
     frozen['answer_id'] = mapped(frozen['answer_id'])
     frozen['message_id'] = mapped(frozen['message_id'])
     if frozen.get('parent_answer_id'):
         frozen['parent_answer_id'] = mapped(frozen['parent_answer_id'])
     for state in [frozen['before'], (frozen.get('result') or {}).get('after')]:
-        if state and state.get('step'):
-            step = state['step']
-            step['id'] = mapped(step['id'])
-            step['source_answer_id'] = mapped(step['source_answer_id'])
-        if state and state.get('guidance') and state['guidance'].get('reset_answer_id'):
-            state['guidance']['reset_answer_id'] = mapped(state['guidance']['reset_answer_id'])
+        if state:
+            map_step(state.get('step'))
+            map_guidance(state.get('guidance'))
+            map_practice(state.get('practice'))
+    result = frozen.get('result') or {}
+    map_practice(result.get('practice_question'))
+    observation = result.get('practice_observation')
+    if observation:
+        for key in ('question_id', 'message_id', 'answer_id'):
+            observation[key] = mapped(observation[key])
+    for context in [frozen.get('help_context', []), (observation or {}).get('help_context', [])]:
+        for item in context:
+            item['answer_id'] = mapped(item['answer_id'])
     for attempt in [*frozen.get('attempt_context', []), (frozen.get('result') or {}).get('attempt')]:
         if attempt:
             for key in ('message_id', 'step_id', 'answer_id'):
