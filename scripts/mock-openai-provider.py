@@ -31,6 +31,7 @@ MATH_TEXT = (
 
 
 def teaching_chunks(body: list[str], proposal: dict[str, Any], context: dict[str, Any]) -> list[str]:
+    proposal = {**proposal, 'project': proposal.get('project')}
     if context.get('output_format') == 'json':
         chunks = ['{"reply":"', *(json.dumps(piece, ensure_ascii=False)[1:-1] for piece in body)]
         metadata = ',"teaching":' + json.dumps(proposal, ensure_ascii=False) + ',"token":' + json.dumps(context['token']) + '}'
@@ -323,7 +324,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             requested_mode = None
             for phrase, value in [('完整讲解', 'full_explanation'), ('直接给答案', 'direct_answer'),
                                   ('提问引导', 'socratic'), ('分步讲解', 'stepwise'), ('费曼复述', 'feynman'),
-                                  ('练习优先', 'practice_first')]:
+                                  ('练习优先', 'practice_first'), ('项目实践', 'project')]:
                 if phrase in c1_request:
                     persistent = any(word in c1_request for word in ['以后', '今后', '接下来都'])
                     requested_mode = {'value': value, 'scope': 'conversation' if persistent else 'turn',
@@ -362,6 +363,46 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                             else '💡合成练习反馈：你先检查了缺失编号，并说明了边界处理的理由；可以继续比较两个编号都存在时的情况。')
                 practice_reply = (feedback, {'step': None, 'attempt': {'quote': c1_request, 'needs_help': needs_help},
                     'mode': None, 'help': None, 'practice': {'question': None, 'feedback': feedback}})
+            elif practice_context and not practice_context['before'].get('practice') and (
+                    practice_context.get('action') == 'next_step'
+                    or (requested_mode or {}).get('value', practice_context['before'].get('mode')) == 'project'
+                    or practice_context['before'].get('project') and (requested_mode or {}).get('value') in {'full_explanation', 'direct_answer'}):
+                project = practice_context['before'].get('project')
+                help_kind = practice_context.get('help_kind') or (requested_help or {}).get('kind')
+                direct = (requested_mode or {}).get('value') in {'full_explanation', 'direct_answer'}
+                proposal = {'step': None, 'attempt': None, 'mode': requested_mode, 'help': requested_help,
+                            'practice': None, 'project': None}
+                if practice_context.get('action') == 'next_step':
+                    sequence = STATE.snapshot()['requests'].get(scenario, 1)
+                    instruction = f'🛠️合成实践步骤{sequence}：补充第二个缺失编号的输入，运行你的小程序，并贴出这次输入和返回结果。'
+                    body = instruction
+                    proposal['project'] = {'goal': None, 'instruction': instruction, 'feedback': None, 'change_quote': None}
+                elif project and '[C2项目调整]' in c1_request:
+                    goal = '做一个检查输入边界的小程序，缺失编号时返回空列表。'
+                    instruction = '🛠️调整后的这一步：修改缺失编号的处理，让程序返回空列表；贴出修改后的代码和运行结果。'
+                    body = goal + '\n\n' + instruction
+                    proposal['project'] = {'goal': goal, 'instruction': instruction, 'feedback': None, 'change_quote': c1_request}
+                elif project and '[C2项目作品]' in c1_request:
+                    needs_help = '[C2卡住]' in c1_request
+                    body = ('💬合成实践反馈：你贴出了检查缺失编号的代码，还需要提供实际运行结果。' if needs_help
+                            else '💬合成实践反馈：这版代码检查了缺失编号，贴出的运行结果与这一版处理一致；可以补充其他输入。')
+                    proposal['attempt'] = {'quote': c1_request, 'needs_help': needs_help}
+                    proposal['project'] = {'goal': None, 'instruction': None, 'feedback': body, 'change_quote': None}
+                elif direct:
+                    body = '合成完整讲解：先检查编号是否存在，缺失时返回明确结果，再处理正常输入。'
+                elif help_kind:
+                    body = {'hint': '想想缺失编号时，程序能否继续读取。', 'explain_step': '先检查编号是否存在，再使用它。',
+                            'example': '例如第二个编号缺失时，先返回缺失提示。', 'try_first': '你可以先贴出自己写出的处理方法。'}[help_kind]
+                elif not project and '[C2澄清]' not in c1_request:
+                    goal = '做一个检查输入边界的小程序。'
+                    instruction = '🛠️开始这一步：写出检查缺失编号的代码，用一组包含缺失编号的输入运行，并贴出代码和结果。'
+                    body = goal + '\n\n' + instruction
+                    proposal['project'] = {'goal': goal, 'instruction': instruction, 'feedback': None, 'change_quote': None}
+                elif not project:
+                    body = '你想做一个什么小作品？'
+                else:
+                    body = '可以继续修改这一步的内容，或贴出你的代码和运行结果。'
+                practice_reply = (body, proposal)
             elif practice_context and not practice_context['before'].get('practice') and (
                     practice_context.get('action') == 'next_question'
                     or (requested_mode or {}).get('value', practice_context['before'].get('mode')) == 'practice_first'

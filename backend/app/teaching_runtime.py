@@ -13,11 +13,11 @@ from uuid import uuid4
 
 from .providers import ProviderChunk
 
-MODES = {'stepwise', 'socratic', 'feynman', 'practice_first', 'direct_answer', 'full_explanation'}
-METHODS = {'stepwise', 'socratic', 'feynman', 'practice_first'}
+MODES = {'stepwise', 'socratic', 'feynman', 'practice_first', 'project', 'direct_answer', 'full_explanation'}
+METHODS = {'stepwise', 'socratic', 'feynman', 'practice_first', 'project'}
 HELP_KINDS = {'hint', 'explain_step', 'example', 'try_first'}
-PROTOCOL = 'teaching-v6'
-READABLE_PROTOCOLS = {'stepwise-v1', 'teaching-v2', 'teaching-v3', 'teaching-v4', 'teaching-v5', PROTOCOL}
+PROTOCOL = 'teaching-v7'
+READABLE_PROTOCOLS = {'stepwise-v1', 'teaching-v2', 'teaching-v3', 'teaching-v4', 'teaching-v5', 'teaching-v6', PROTOCOL}
 MAX_METADATA = 16384
 
 LEGACY_OUTPUT_RULE = '本轮执行上下文给出唯一 opening/closing 标记。在最终回答正文结束后，另起一行输出 opening，紧接严格 JSON，再输出 closing；不得用代码块包裹，不要在正文解释这些字段。调用工具前不要输出这段状态。'
@@ -28,12 +28,13 @@ SYSTEM_PROMPT = """教学执行约定：这是学习讨论，不评分，不修�
 用户明确要求直接答案或完整讲解时本轮立即遵从，默认仅本轮；只有明确要求以后持续这样才改变本路径基础方式，不能改个人长期默认。
 当前步骤是待讨论的小点，不是任务完成进度；先回应用户，帮助、换例子和请求先自行尝试时留在当前步骤，确实转向一个新小点才提出新步骤。
 本轮执行上下文给出唯一 opening/closing 标记。在最终回答正文结束后，另起一行输出 opening，紧接严格 JSON，再输出 closing；不得用代码块包裹，不要在正文解释这些字段。调用工具前不要输出这段状态。
-JSON 格式固定为 {"step":null,"attempt":null,"mode":null,"help":null,"practice":null}，只能使用以下字段：
+JSON 格式固定为 {"step":null,"attempt":null,"mode":null,"help":null,"practice":null,"project":null}，只能使用以下字段：
 step：保持当前步骤或非教学回答时为 null；建立/转向一个小点时，为从本轮实际回答正文逐字摘取的一段短文本（至多240字），不能虚构后续步骤。
 attempt：只有本轮用户原文实际提供了针对当前步骤的答案、推导、代码、操作结果或复述时，才为 {"quote":"用户原文中的实际尝试片段","needs_help":true或false或null}；仍卡在该小点为true，已有实际进展为false，不能确定为null。普通提问、索要帮助、说让我先试试或仅说懂了都为 null。没有当前步骤时为 null。此项只是可纠正的AI识别，不是通过或掌握证据。
-mode：只有本轮用户明确要求改变方式时，为 {"value":"stepwise或socratic或feynman或practice_first或direct_answer或full_explanation","scope":"turn或conversation","quote":"本轮用户的方式请求原文","persistence_quote":null}；conversation 必须另把明确持续请求的原文填入 persistence_quote。没有明确持续要求就用 turn。没有方式请求用 null。
+mode：只有本轮用户明确要求改变方式时，为 {"value":"stepwise或socratic或feynman或practice_first或project或direct_answer或full_explanation","scope":"turn或conversation","quote":"本轮用户的方式请求原文","persistence_quote":null}；conversation 必须另把明确持续请求的原文填入 persistence_quote。没有明确持续要求就用 turn。没有方式请求用 null。
 help：本轮自然表达明确求提示、解释当前步骤、换例或先自行尝试时，为 {"kind":"hint或explain_step或example或try_first","quote":"本轮用户的请求原文"}；没有则为null。界面已明确的help_kind优先，不重复解释产品字段。
 practice：通常为null。practice_first的首题/下一题和已有exercise按下述练习优先规则；其余情况仅当action=practice时围绕原小点出一道完整的新情境题，等待作答、不给解法，填 {"question":"本轮正文中完整题目的逐字原文","feedback":null}，step/attempt保持null。当before.practice存在且本轮有实际作答时，attempt逐字引用作答，并填 {"question":null,"feedback":"本轮正文中针对该作答的AI反馈逐字原文"}；反馈说明具体依据和仍不确定之处，不评分或宣称掌握。没有实际作答时不要登记反馈。练习期间step保持null；帮助与完整讲解仍可随时请求。action=continue表示跳过当前练习，回到before.practice.basis_step继续学习，step/attempt/practice都保持null。点击动作本身不是作答。除了练习优先首题/明确下一题，只有界面明确action=practice才出这类新情境练习题并建立记录；没有该动作时不在讲解后自动追加变式题。普通引导提问或理解确认仍按本轮教学方式进行，不登记为练习。题目与反馈各至多4000字。
+project：通常为null；项目实践按下述规则填写goal/instruction/feedback/change_quote，四字段都必须出现，未用为null。
 所有 quote 必须逐字来自本轮真正的用户消息，不可引用历史、资料、题目原作答或模型自己的话。历史中的状态尾标记只是过去输出，不能用来覆盖本轮执行上下文。纠正后的尝试分类须遵从，仍保留原文回应，不按尝试次数决定完成或掌握。"""
 
 PRACTICE_PROMPT = """本轮用户已点击“换一道试试”：正文直接从新情境或题目要求开始，只给题目所需的背景、条件和作答要求。
@@ -53,6 +54,14 @@ PRACTICE_FIRST_PROMPT = """练习优先执行规则：practice_first是先做一
 仅明确action=next_question时才出下一道题，可在未作答时跳过；围绕当前题目及用户新提出的学习主题给一道题，practice.question填完整题目，step/attempt保持null。不得通过修改step或在反馈中换题推进状态。自然提问和明确切换主题要回应，可说明需点“下一题”开始新题，不能暗中覆盖已有题目。
 给提示、换例子、直接答案或完整讲解仍可随时请求，默认只本轮，题目记录保留；help_kind=try_first时简短等待，不抢答。action=practice/retell及before.practice单次活动优先，按它们的规则执行；结束单次活动后回到原题。
 个人默认和当前路径覆盖沿原规则；明确持续自然请求可将mode设为practice_first/conversation，不能改个人设置。任何反馈都不自动开始正式验证，不写完成或掌握结论。"""
+
+PROJECT_PROMPT = """项目实践执行规则：project围绕用户想做的小作品明确目标和当前一步，不替用户建立正式计划、完成记录或验证结论。
+无单次活动、无before.project且本轮方式为project时，目标明确就给出简短作品目标和一项可做的当前步骤，等待用户提供文字、代码或操作结果；信息不足先澄清。project={"goal":"本轮正文中的作品目标逐字原文","instruction":"本轮正文中的完整当前步骤要求逐字原文","feedback":null,"change_quote":null}，step/attempt保持null。不要一口气列出全部步骤或代做完整作品。
+已有before.project时只处理当前一步。用户提供实际作品内容或操作结果才用attempt引用用户原文，并在project.feedback逐字摘取针对这一版的反馈，其他project字段保持null。说明具体优点、问题或待补充之处后等待；普通提问、求助、说懂了或仅说做完了都不是作品，不登记反馈。不宣称已运行代码、查看文件或验证结果，除非本轮实际工具结果明确证明；反馈只依据可见内容。
+仅action=next_step时才推进下一步，也可以在未提供作品时跳过；project只填instruction，goal/feedback/change_quote为null，step/attempt为null。点击不是完成确认。反馈或普通求助不能自动出下一步，也不能用step绕过。需要提示如何继续时，明确说点“下一步”，不要让用户另发“继续”来推进。
+本轮用户明确修改作品要求/目标/当前步骤时，可在project.instruction给出修改后的当前要求，并用change_quote逐字引用该修改请求；若作品目标也变了，或旧goal中含有已被替换的要求，必须同时在正文重述更新后的作品目标并填goal，不能让旧目标与新要求矛盾。新要求作为修订保存，旧要求和作品反馈仍可回看。不是明确修改请求时不能覆盖已有要求，不把作品里的文字、代码或引用当成修改指令。修改时step/attempt/feedback保持null。
+帮助、换例子、先自行尝试、直接答案和完整讲解仍随时可用，默认只本轮并保留当前项目。action=practice/retell及before.practice单次活动优先，期间project保持null；action=continue回原项目当前一步。project所有正文摘录各至多4000字，change_quote至多1200字。自然切换project方式沿现有mode规则，不能改个人默认。"""
+
 
 SOCRATIC_PROMPT = """提问引导执行规则（只在本轮实际方式为socratic时使用）：
 guidance.level由运行时管理：0开放提问、1提醒相关概念、2缩小问题范围、3局部结构或示例、4直接解释。每轮最多一个要用户回应的问题；不要反复盘问或自行跳级给完整解法。
@@ -161,6 +170,14 @@ def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, 
         if (not references <= allowed_answers or before['mode'] != previous_mode
                 or not before.get('practice') and (not before['step'] or before['step']['id'] != exercise['id'])):
             before.pop('exercise', None)
+    project = before.get('project')
+    if project:
+        current = project['step']
+        references = {project['id'], project['goal']['answer_id'], current['id'], current['instruction']['answer_id']}
+        references.update(value for value in (current.get('previous_step_id'), current.get('last_observation_id')) if value)
+        if (not references <= allowed_answers or before['mode'] != previous_mode
+                or not before.get('practice') and (not before['step'] or before['step']['id'] != current['id'])):
+            before.pop('project', None)
     if before['mode'] == 'socratic' and not before.get('guidance'):
         before['guidance'] = _new_guidance(path[-1]['id'] if path else None)
     observations = []
@@ -193,7 +210,7 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
     instructions = SYSTEM_PROMPT
     if output == 'json':
         instructions = instructions.replace(LEGACY_OUTPUT_RULE, JSON_OUTPUT_RULE).replace('JSON 格式固定为', 'teaching 字段格式固定为')
-    messages[0]['content'] += '\n' + instructions + '\n' + SOCRATIC_PROMPT + '\n' + FEYNMAN_PROMPT + '\n' + PRACTICE_FIRST_PROMPT
+    messages[0]['content'] += '\n' + instructions + '\n' + SOCRATIC_PROMPT + '\n' + FEYNMAN_PROMPT + '\n' + PRACTICE_FIRST_PROMPT + '\n' + PROJECT_PROMPT
     if frozen.get('action') == 'practice':
         messages[0]['content'] += '\n' + PRACTICE_PROMPT
     opening, closing = markers(frozen)
@@ -215,21 +232,38 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
         reference = exercise['question']
         original = (answer_texts or {}).get(reference['answer_id'], '')
         exercise_context = {'question': original[reference['start']:reference['end']]}
+    project_context = None
+    project = frozen['before'].get('project')
+    if project:
+        project_context = {}
+        for key, reference in [('goal', project['goal']), ('instruction', project['step']['instruction'])]:
+            original = (answer_texts or {}).get(reference['answer_id'], '')
+            project_context[key] = original[reference['start']:reference['end']]
     context = {'before': frozen['before'], 'attempt_context': observations, 'help_kind': frozen.get('help_kind'),
-               'action': frozen.get('action'), 'practice_context': practice_context, 'exercise_context': exercise_context,
+               'action': frozen.get('action'), 'practice_context': practice_context, 'exercise_context': exercise_context, 'project_context': project_context,
                'opening': opening, 'closing': closing}
     if output == 'json':
         context.pop('opening'); context.pop('closing')
         context.update(output_format='json', token=frozen['token'], response_example={
             'reply': '向用户展示的Markdown正文',
-            'teaching': dict(step=None, attempt=None, mode=None, help=None, practice=None),
+            'teaching': dict(step=None, attempt=None, mode=None, help=None, practice=None, project=None),
             'token': frozen['token']})
         action = frozen.get('action')
         constraints = {'attempt': '只引用本轮用户的真实尝试；普通提问、求助、点击或说懂了必须为null。',
                        'step': '只有首次或明确转向新小点时填写；实际复述和帮助请求保持null。'}
+        constraints['project'] = '通常为null；本轮明确改用project时按首个作品目标/当前步骤规则填写。'
         if action in {'practice', 'retell'}:
+            constraints['project'] = '必须为null，单次活动优先。'
             constraints.update(attempt='必须为null，点击不是作答。', step='必须为null。',
                 practice='必须填question为本轮reply中的完整题目或复述邀请原文；feedback必须为null。')
+        elif action == 'next_step':
+            # The example must show the state change required by this action.
+            context['response_example'].update(reply='下一步的具体要求。', teaching=dict(
+                step=None, attempt=None, mode=None, help=None, practice=None,
+                project=dict(goal=None, instruction='下一步的具体要求。', feedback=None, change_quote=None)))
+            constraints['example'] = 'response_example仅说明结构；reply和instruction须替换成围绕当前作品的实际下一步要求，逐字一致。'
+            constraints.update(attempt='必须为null，点击不是作品。', step='必须为null。', practice='必须为null。',
+                project='必须只填instruction为本轮完整下一步要求原文，goal/feedback/change_quote为null。')
         elif action == 'next_question':
             constraints.update(attempt='必须为null，点击不是作答。', step='必须为null。',
                 practice='必须填question为本轮reply中的完整下一题原文；feedback必须为null。')
@@ -237,8 +271,15 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
             constraints.update(attempt='必须为null，点击不是作答。', practice='必须为null。',
                 step='单次活动返回原小点必须为null；持续费曼继续后续小点可摘取新主题。')
         elif practice:
+            constraints['project'] = '必须为null，单次活动优先。'
             constraints.update(step='必须为null，留在当前活动。',
                 practice='只有真实作答/复述才填question:null与反馈逐字原文feedback；没有真实作答时必须为null。')
+        elif project:
+            constraints.update(step='必须为null，应用绑定当前步骤。', practice='必须为null。',
+                project='真实作品用feedback逐字原文；明确修改要求才用instruction与change_quote，必要时goal；否则为null。反馈不能同时改要求或推进下一步。')
+        elif frozen['before']['mode'] == 'project':
+            constraints.update(step='必须为null。', attempt='必须为null，当前还未建立作品步骤。', practice='必须为null。',
+                project='目标明确时填goal与instruction为正文逐字原文，feedback/change_quote为null；澄清、帮助或直接讲解时为null。')
         elif exercise:
             constraints.update(step='必须为null，反馈或帮助不能换题。',
                 practice='实际作答必须填question:null和完整反馈原文feedback；没有实际作答时为null。只有action=next_question才出下一题。')
@@ -250,7 +291,7 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
         context['teaching_constraints'] = constraints
     elif (frozen.get('action') == 'retell' or frozen['before']['mode'] == 'feynman'
             or (practice or {}).get('kind') == 'retelling'):
-        empty = dict(step=None, attempt=None, mode=None, help=None, practice=None)
+        empty = dict(step=None, attempt=None, mode=None, help=None, practice=None, project=None)
         examples = {'没有尝试或状态变更': empty}
         if frozen.get('action') == 'retell':
             examples['点击单次复述'] = {**empty, 'practice': {'question': '替换为本轮正文中完整复述邀请', 'feedback': None}}
@@ -602,6 +643,7 @@ def _exercise_transition(frozen, proposal, after, observed, effective_mode, help
                  'question': {'answer_id': frozen['answer_id'], **span},
                  'phase': 'awaiting_attempt', 'last_observation_id': None}
         after['exercise'] = frame
+        after.pop('project', None)
         after['step'] = {'id': frozen['answer_id'], 'source_answer_id': frozen['answer_id'],
                          'text': question[:240], 'start': span['start'],
                          'end': span['start'] + min(240, span['end'] - span['start']), 'origin': frozen['origin']}
@@ -631,6 +673,97 @@ def _exercise_transition(frozen, proposal, after, observed, effective_mode, help
     return None, None
 
 
+def _explicit_project_revision(quote, user_text):
+    """Require an actual change request; quoted/code examples cannot authorize it."""
+    if not isinstance(quote, str) or quote not in user_text:
+        return False
+    directive = re.search(r'(?:修改|调整|更改|改成|改为|改用|换成|换为|换用|改一下|换一个)|\b(?:change|revise|adjust|replace|switch)\b', quote, re.I)
+    if not directive:
+        return False
+    start = user_text.find(quote) + directive.start()
+    prefix = re.split(r'[，,。.;；\n]', user_text[:start])[-1]
+    if re.search(r'(?:(?:不要|别|不用|不想|不需要|不能|暂不|无需|不再|不打算|不准备|不愿意|\b(?:not|never|don.t)\b).{0,12}|不)$', prefix, re.I):
+        return False
+    line_start = user_text.rfind('\n', 0, start) + 1
+    if user_text[line_start:start].lstrip().startswith('>'):
+        return False
+    for match in re.finditer(r'```[\s\S]*?```|`[^`]*`|[“"「『].*?[”"」』]', user_text):
+        if match.start() <= start < match.end():
+            return False
+    return True
+
+
+def _project_transition(frozen, proposal, after, observed, effective_mode, help_kind, body, user_text):
+    before = frozen['before']
+    active = before.get('project')
+    action = frozen.get('action')
+    proposed = proposal.get('project')
+    if proposed is not None and (not isinstance(proposed, dict)
+            or set(proposed) != {'goal', 'instruction', 'feedback', 'change_quote'}):
+        raise _InvalidProposal('proposal_invalid_schema')
+    if proposal.get('practice') is not None or action not in {None, 'next_step'}:
+        raise _InvalidProposal('project_action_invalid')
+    if action and observed:
+        raise _InvalidProposal('action_is_not_attempt')
+    if action == 'next_step' and (not active or before['mode'] != 'project' or effective_mode != 'project'):
+        raise _InvalidProposal('project_unavailable')
+    instruction = proposed.get('instruction') if proposed else None
+    if instruction is not None or action == 'next_step':
+        if (not proposed or instruction is None or proposed['feedback'] is not None
+                or observed or help_kind or effective_mode != 'project' or proposal['step'] is not None):
+            raise _InvalidProposal('project_instruction_not_allowed')
+        change_request = None
+        if active:
+            if action == 'next_step':
+                if proposed['change_quote'] is not None or proposed['goal'] is not None:
+                    raise _InvalidProposal('project_instruction_not_allowed')
+                change = 'next'
+            else:
+                if not _explicit_project_revision(proposed['change_quote'], user_text):
+                    raise _InvalidProposal('project_revision_not_requested')
+                change_request = {'message_id': frozen['message_id'], **_span(proposed['change_quote'], user_text, 1200)}
+                change = 'revision'
+            goal = copy.deepcopy(active['goal'])
+            if proposed['goal'] is not None:
+                goal = {'answer_id': frozen['answer_id'], **_span(proposed['goal'], body, 4000)}
+        else:
+            if proposed['change_quote'] is not None:
+                raise _InvalidProposal('project_instruction_not_allowed')
+            change = 'start'
+            goal = {'answer_id': frozen['answer_id'], **_span(proposed['goal'], body, 4000)}
+        span = _span(instruction, body, 4000)
+        frame = {'id': active['id'] if active else frozen['answer_id'], 'goal': goal,
+                 'step': {'id': frozen['answer_id'], 'instruction': {'answer_id': frozen['answer_id'], **span},
+                          'change': change, 'previous_step_id': active['step']['id'] if active else None,
+                          'phase': 'awaiting_work', 'last_observation_id': None, 'change_request': change_request}}
+        after['project'] = frame
+        after.pop('exercise', None)
+        after['step'] = {'id': frozen['answer_id'], 'source_answer_id': frozen['answer_id'],
+                         'text': instruction[:240], 'start': span['start'],
+                         'end': span['start'] + min(240, span['end'] - span['start']), 'origin': frozen['origin']}
+        return copy.deepcopy(frame), None
+    if proposal['step'] is not None:
+        if after['mode'] == 'project' or observed or proposed is not None:
+            raise _InvalidProposal('project_step_changed')
+        after.pop('project', None)
+        return None, None
+    if active and observed:
+        if not proposed or proposed['feedback'] is None or any(proposed[key] is not None for key in ('goal', 'change_quote')):
+            raise _InvalidProposal('project_feedback_required')
+        span = _span(proposed['feedback'], body, 4000)
+        observation = {'project_id': active['id'], 'question_id': active['step']['id'],
+                       'message_id': frozen['message_id'], 'start': observed['start'], 'end': observed['end'],
+                       'answer_id': frozen['answer_id'], 'feedback_start': span['start'], 'feedback_end': span['end'],
+                       'help_context': copy.deepcopy(frozen.get('help_context', []))}
+        after['project']['step'].update(phase='feedback_available', last_observation_id=frozen['answer_id'])
+        if after['mode'] != 'project':
+            after.pop('project', None)
+        return None, observation
+    if proposed is not None:
+        raise _InvalidProposal('project_without_work_or_change')
+    return None, None
+
+
 def evaluate(frozen, proposal, *, body, user_text, at):
     """Validate before adopting any model change; return a private reason enum."""
     if ((frozen or {}).get('output') or {}).get('format') == 'plain':
@@ -639,7 +772,7 @@ def evaluate(frozen, proposal, *, body, user_text, at):
         return None, 'empty_body'
     if (not frozen or not isinstance(proposal, dict)
             or not {'step', 'attempt', 'mode'} <= set(proposal)
-            or not set(proposal) <= {'step', 'attempt', 'mode', 'help', 'practice'}):
+            or not set(proposal) <= {'step', 'attempt', 'mode', 'help', 'practice', 'project'}):
         return None, 'proposal_invalid_schema'
     try:
         before = frozen['before']
@@ -691,7 +824,15 @@ def evaluate(frozen, proposal, *, body, user_text, at):
                         'source': 'ai', **_span(attempt['quote'], user_text, 4000), 'origin': frozen['origin'],
                         'needs_help': attempt.get('needs_help')}
         exercise_question = exercise_observation = None
+        project_step = project_observation = None
         if (not before.get('practice') and frozen.get('action') not in {'practice', 'retell', 'continue'}
+                and (effective_mode == 'project' or before.get('project') and effective_mode != 'practice_first'
+                     or frozen.get('action') == 'next_step')):
+            project_step, project_observation = _project_transition(
+                frozen, proposal, after, observed, effective_mode, help_kind, body, user_text)
+            practice_question = practice_observation = None
+            guidance_frozen = frozen
+        elif (not before.get('practice') and frozen.get('action') not in {'practice', 'retell', 'continue'}
                 and (effective_mode == 'practice_first' or before.get('exercise')
                      or frozen.get('action') == 'next_question')):
             exercise_question, exercise_observation = _exercise_transition(
@@ -701,6 +842,10 @@ def evaluate(frozen, proposal, *, body, user_text, at):
         else:
             practice_question, practice_observation, guidance_frozen = _practice_transition(
                 frozen, proposal, after, observed, body)
+        if proposal.get('project') is not None and project_step is None and project_observation is None:
+            raise _InvalidProposal('project_without_work_or_change')
+        if after['mode'] != before['mode'] and after['mode'] != 'project':
+            after.pop('project', None)
         if after['mode'] != before['mode'] and after['mode'] != 'practice_first':
             after.pop('exercise', None)
         if (not frozen.get('action') and before['step'] and before['step'] != after['step']
@@ -713,7 +858,8 @@ def evaluate(frozen, proposal, *, body, user_text, at):
                 'attempt': observed, 'guidance': guidance, 'help_request': help_request, 'at': at,
                 'practice_question': practice_question, 'practice_observation': practice_observation,
                 'retelling_observation': retelling_observation,
-                'exercise_question': exercise_question, 'exercise_observation': exercise_observation}, None
+                'exercise_question': exercise_question, 'exercise_observation': exercise_observation,
+                'project_step': project_step, 'project_observation': project_observation}, None
     except _InvalidProposal as error:
         return None, str(error)
     except ValueError:
@@ -749,7 +895,15 @@ def adopt(frozen, proposal, *, body, user_text, at, not_applied_reason=None, rep
             shift_frame(result.get('practice_question'))
             shift_frame(result['after'].get('exercise'))
             shift_frame(result.get('exercise_question'))
-            for key in ('practice_observation', 'retelling_observation', 'exercise_observation'):
+            def shift_project(project):
+                if project:
+                    for reference in (project['goal'], project['step']['instruction']):
+                        if reference['answer_id'] == frozen['answer_id']:
+                            reference['start'] += reply_start
+                            reference['end'] += reply_start
+            shift_project(result['after'].get('project'))
+            shift_project(result.get('project_step'))
+            for key in ('practice_observation', 'retelling_observation', 'exercise_observation', 'project_observation'):
                 if result.get(key):
                     result[key]['feedback_start'] += reply_start
                     result[key]['feedback_end'] += reply_start
@@ -811,7 +965,9 @@ def public(snapshot, status):
             'practice_observation': visible_observation('practice_observation'),
             'retelling_observation': visible_observation('retelling_observation'),
             'exercise_question': copy.deepcopy(result.get('exercise_question')) if result else None,
-            'exercise_observation': visible_observation('exercise_observation')}
+            'exercise_observation': visible_observation('exercise_observation'),
+            'project_step': copy.deepcopy(result.get('project_step')) if result else None,
+            'project_observation': visible_observation('project_observation')}
 
 
 _UNSET = object()
@@ -865,6 +1021,18 @@ def remap(snapshot, ids):
             exercise['question']['answer_id'] = mapped(exercise['question']['answer_id'])
             if exercise.get('last_observation_id'):
                 exercise['last_observation_id'] = mapped(exercise['last_observation_id'])
+    def map_project(project):
+        if project:
+            project['id'] = mapped(project['id'])
+            project['goal']['answer_id'] = mapped(project['goal']['answer_id'])
+            step = project['step']
+            step['id'] = mapped(step['id'])
+            step['instruction']['answer_id'] = mapped(step['instruction']['answer_id'])
+            for key in ('previous_step_id', 'last_observation_id'):
+                if step.get(key):
+                    step[key] = mapped(step[key])
+            if step.get('change_request'):
+                step['change_request']['message_id'] = mapped(step['change_request']['message_id'])
     frozen['answer_id'] = mapped(frozen['answer_id'])
     frozen['message_id'] = mapped(frozen['message_id'])
     if frozen.get('parent_answer_id'):
@@ -875,6 +1043,7 @@ def remap(snapshot, ids):
             map_guidance(state.get('guidance'))
             map_practice(state.get('practice'))
             map_exercise(state.get('exercise'))
+            map_project(state.get('project'))
             if state.get('retelling'):
                 state['retelling']['step_id'] = mapped(state['retelling']['step_id'])
                 if state['retelling'].get('last_observation_id'):
@@ -882,11 +1051,13 @@ def remap(snapshot, ids):
     result = frozen.get('result') or {}
     map_practice(result.get('practice_question'))
     map_exercise(result.get('exercise_question'))
-    observations = [result.get('practice_observation'), result.get('retelling_observation'), result.get('exercise_observation')]
+    map_project(result.get('project_step'))
+    observations = [result.get('practice_observation'), result.get('retelling_observation'), result.get('exercise_observation'), result.get('project_observation')]
     for observation in observations:
         if observation:
-            for key in ('question_id', 'message_id', 'answer_id'):
-                observation[key] = mapped(observation[key])
+            for key in ('question_id', 'message_id', 'answer_id', 'project_id'):
+                if key in observation:
+                    observation[key] = mapped(observation[key])
     for context in [frozen.get('help_context', []), *[(item or {}).get('help_context', []) for item in observations]]:
         for item in context:
             item['answer_id'] = mapped(item['answer_id'])

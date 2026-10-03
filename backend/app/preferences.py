@@ -46,7 +46,7 @@ class PreferencesService:
                 or not set(payload) <= {'conflict_policy', 'search', 'teaching_mode'}):
             raise PreferencesError("学习设置格式不正确")
         teaching_mode = payload.get('teaching_mode', 'stepwise')
-        if teaching_mode not in ('stepwise', 'socratic', 'feynman', 'practice_first'):
+        if teaching_mode not in ('stepwise', 'socratic', 'feynman', 'practice_first', 'project'):
             raise PreferencesError("默认学习方式不支持")
         policy = payload["conflict_policy"]
         if policy not in ("ask", "balanced", "materials"):

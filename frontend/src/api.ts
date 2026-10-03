@@ -387,9 +387,9 @@ export type HelpRecord = {
 };
 export type ReferenceHelpDisplay = { kind: 'reference_answer'; at: string; basis: 'client_report' };
 
-export type TeachingMethod = 'stepwise' | 'socratic' | 'feynman' | 'practice_first';
+export type TeachingMethod = 'stepwise' | 'socratic' | 'feynman' | 'practice_first' | 'project';
 export type TeachingSelection = TeachingMethod | 'default';
-export type TeachingAction = 'practice' | 'retell' | 'continue' | 'next_question';
+export type TeachingAction = 'practice' | 'retell' | 'continue' | 'next_question' | 'next_step';
 export type TeachingMode = TeachingMethod | 'direct_answer' | 'full_explanation';
 export type TeachingCheckpoint = {
   mode: TeachingMode | null;
@@ -399,6 +399,21 @@ export type TeachingCheckpoint = {
   guidance?: { level: 0 | 1 | 2 | 3 | 4; stuck_count: number; reset_answer_id: string | null } | null;
   practice?: TeachingPractice | null;
   exercise?: TeachingExercise | null;
+  project?: TeachingProject | null;
+};
+export type TeachingTextRef = { answer_id: string; start: number; end: number };
+export type TeachingProject = {
+  id: string;
+  goal: TeachingTextRef;
+  step: {
+    id: string;
+    instruction: TeachingTextRef;
+    change: 'start' | 'next' | 'revision';
+    previous_step_id: string | null;
+    phase: 'awaiting_work' | 'feedback_available';
+    last_observation_id: string | null;
+    change_request: { message_id: string; start: number; end: number } | null;
+  };
 };
 export type TeachingExercise = {
   id: string;
@@ -435,6 +450,8 @@ export type TeachingRecord = {
   retelling_observation?: TeachingPracticeObservation | null;
   exercise_question?: TeachingExercise | null;
   exercise_observation?: TeachingPracticeObservation | null;
+  project_step?: TeachingProject | null;
+  project_observation?: (TeachingPracticeObservation & { project_id: string }) | null;
   guidance?: { level: 0 | 1 | 2 | 3 | 4; reason: string } | null;
   mode_request: { mode: TeachingMode; scope: 'turn' | 'conversation'; start: number; end: number } | null;
   attempt: {

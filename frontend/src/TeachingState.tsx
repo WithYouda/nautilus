@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ApiError, correctAiTeachingAttempt, correctDiscussionTeachingAttempt,
-  getAiConversation, getQuestionDiscussion, type AiMessage, type QuestionDiscussion,
+  getAiConversation, getQuestionDiscussion, type AiMessage, type QuestionDiscussion, type HelpRecord,
   type TeachingAction, type TeachingMethod, type TeachingMode, type TeachingRecord, type TeachingSelection, type TeachingPracticeObservation,
 } from './api';
 import './TeachingState.css';
 
-type TeachingEntry = { id: string; teaching: TeachingRecord | null; userContent: string | null; answerContent: string | null };
-const modeLabels: Record<TeachingMode, string> = { stepwise: '分步讲解', socratic: '提问引导', feynman: '费曼复述', practice_first: '练习优先', direct_answer: '直接给答案', full_explanation: '完整讲解' };
+type TeachingEntry = { id: string; teaching: TeachingRecord | null; userContent: string | null; answerContent: string | null; helpRecord: HelpRecord | null };
+const modeLabels: Record<TeachingMode, string> = { stepwise: '分步讲解', socratic: '提问引导', feynman: '费曼复述', practice_first: '练习优先', project: '项目实践', direct_answer: '直接给答案', full_explanation: '完整讲解' };
+const helpLabels = { hint: '给个提示', explain_step: '只解释这一步', example: '换个例子', try_first: '让我先试试' };
 const guidanceLabels = ['开放提问', '相关概念', '缩小范围', '局部示例', '直接解释'];
 const progressLabel = (needsHelp: boolean | null | undefined) => needsHelp === true ? '仍需帮助' : needsHelp === false ? '已推进' : '未判断';
 
@@ -22,7 +23,8 @@ export function conversationTeachingEntries(messages: AiMessage[]): TeachingEntr
     id: message.id,
     teaching: message.teaching ?? null,
     answerContent: message.content,
-    userContent: messages.find(source => source.role === 'user' && source.id === (message.teaching?.exercise_observation?.message_id ?? message.teaching?.retelling_observation?.message_id ?? message.teaching?.practice_observation?.message_id ?? message.teaching?.attempt?.message_id))?.content ?? null,
+    helpRecord: message.help_record ?? null,
+    userContent: messages.find(source => source.role === 'user' && source.id === (message.teaching?.project_observation?.message_id ?? message.teaching?.exercise_observation?.message_id ?? message.teaching?.retelling_observation?.message_id ?? message.teaching?.practice_observation?.message_id ?? message.teaching?.attempt?.message_id ?? message.teaching?.project_step?.step.change_request?.message_id))?.content ?? null,
   }));
 }
 
@@ -31,7 +33,8 @@ export function discussionTeachingEntries(turns: QuestionDiscussion['turns']): T
     id: turn.id,
     teaching: turn.status === 'purged' ? null : turn.teaching ?? null,
     answerContent: turn.status === 'purged' ? null : turn.assistant_content,
-    userContent: turns.find(source => source.status !== 'purged' && source.id === (turn.teaching?.exercise_observation?.message_id ?? turn.teaching?.retelling_observation?.message_id ?? turn.teaching?.practice_observation?.message_id ?? turn.teaching?.attempt?.message_id))?.user_content ?? null,
+    helpRecord: turn.status === 'purged' ? null : turn.help_record ?? null,
+    userContent: turns.find(source => source.status !== 'purged' && source.id === (turn.teaching?.project_observation?.message_id ?? turn.teaching?.exercise_observation?.message_id ?? turn.teaching?.retelling_observation?.message_id ?? turn.teaching?.practice_observation?.message_id ?? turn.teaching?.attempt?.message_id ?? turn.teaching?.project_step?.step.change_request?.message_id))?.user_content ?? null,
   }));
 }
 
@@ -65,17 +68,20 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
       ? '当前联网方式尚不能记录教学状态，普通对话可继续。'
       : '当前模型暂不能记录教学状态，普通对话可继续。';
   const checkpoint = last?.status === 'applied' ? last.current : last?.before;
-  const attempts = entries.filter(entry => entry.teaching?.attempt && !entry.teaching.practice_observation && !entry.teaching.retelling_observation && !entry.teaching.exercise_observation);
+  const attempts = entries.filter(entry => entry.teaching?.attempt && !entry.teaching.practice_observation && !entry.teaching.retelling_observation && !entry.teaching.exercise_observation && !entry.teaching.project_observation);
   const practices = entries.filter(entry => entry.teaching?.status === 'applied' && entry.teaching.practice_question);
   const practiceRecords = entries.filter(entry => entry.teaching?.status === 'applied' && (entry.teaching.exercise_question || entry.teaching.practice_question && entry.teaching.practice_question.kind !== 'retelling'));
   const retellings = practices.filter(entry => entry.teaching!.practice_question!.kind === 'retelling');
   const continuousRetellings = entries.filter(entry => entry.teaching?.status === 'applied' && entry.teaching.retelling_observation);
+  const projectSteps = entries.filter(entry => entry.teaching?.status === 'applied' && entry.teaching.project_step);
   const currentMode = checkpoint?.mode ?? 'stepwise';
   const followsDefault = !checkpoint || checkpoint.mode_source === 'default';
-  const method = selectedMode ?? (followsDefault ? 'default' : currentMode === 'stepwise' || currentMode === 'socratic' || currentMode === 'feynman' || currentMode === 'practice_first' ? currentMode : '');
+  const method = selectedMode ?? (followsDefault ? 'default' : currentMode === 'stepwise' || currentMode === 'socratic' || currentMode === 'feynman' || currentMode === 'practice_first' || currentMode === 'project' ? currentMode : '');
   const nextMode = method === 'default' ? defaultMode : method;
   const guidance = last?.status === 'applied' ? last.guidance ?? checkpoint?.guidance : checkpoint?.guidance;
   const continuousExercise = checkpoint?.exercise && !checkpoint.practice ? checkpoint.exercise : null;
+  const project = checkpoint?.project;
+  const continuousProject = project && !checkpoint?.practice && !checkpoint?.retelling ? project : null;
 
   async function correct(entry: TeachingEntry, change: { is_attempt: boolean; needs_help?: boolean | null }) {
     const attempt = entry.teaching?.attempt;
@@ -145,12 +151,12 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
   const answerExcerpt = (answerId: string, start: number, end: number) =>
     referencedText(entries.find(entry => entry.id === answerId)?.answerContent ?? null, start, end);
 
-  function observationView(entry: TeachingEntry, observation: TeachingPracticeObservation, retelling: boolean) {
+  function observationView(entry: TeachingEntry, observation: TeachingPracticeObservation, retelling: boolean, projectWork = false) {
     const attempt = entry.teaching!.attempt;
     const excerpt = referencedText(entry.userContent, observation.start, observation.end);
     const feedback = answerExcerpt(observation.answer_id, observation.feedback_start, observation.feedback_end);
-    return <article className="teaching-practice__observation" aria-label={retelling ? '复述作答' : '练习作答'} key={entry.id}>
-      <p className="teaching-attempt__label">{retelling ? '复述（AI识别）' : '作答（AI识别）'}{!observation.eligible && <span> · 已改为非尝试</span>}</p>
+    return <article className="teaching-practice__observation" aria-label={projectWork ? '实践内容' : retelling ? '复述作答' : '练习作答'} key={entry.id}>
+      <p className="teaching-attempt__label">{projectWork ? '实践内容（AI识别）' : retelling ? '复述（AI识别）' : '作答（AI识别）'}{!observation.eligible && <span> · 已改为非尝试</span>}</p>
       {excerpt ? <blockquote>{excerpt}</blockquote> : <p className="form-hint">对应作答原文已不可用。</p>}
       {entry.userContent && entry.userContent !== excerpt && <details className="teaching-attempt__original"><summary>完整原文</summary><blockquote>{entry.userContent}</blockquote></details>}
       <p className="teaching-attempt__label">AI反馈</p>
@@ -184,6 +190,37 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
     </article>;
   }
 
+  function projectView(entry: TeachingEntry) {
+    const project = entry.teaching!.project_step!;
+    const step = project.step;
+    const goal = answerExcerpt(project.goal.answer_id, project.goal.start, project.goal.end);
+    const instruction = answerExcerpt(step.instruction.answer_id, step.instruction.start, step.instruction.end);
+    const changeRequest = step.change_request && referencedText(entry.userContent, step.change_request.start, step.change_request.end);
+    const history = entries.filter(item => item.teaching && (
+      item.teaching.status === 'applied' && item.teaching.project_observation?.project_id === project.id && item.teaching.project_observation.question_id === step.id
+      || item.teaching.before.project?.id === project.id && item.teaching.before.project.step.id === step.id
+        && !item.teaching.project_observation && !item.teaching.project_step && !item.teaching.before.practice && !item.teaching.before.retelling
+        && (item.helpRecord?.request && item.helpRecord.provided || item.teaching.status === 'applied' && (item.teaching.effective_mode === 'direct_answer' || item.teaching.effective_mode === 'full_explanation'))
+    ));
+    return <article className="teaching-practice" aria-label="实践步骤" key={step.id}>
+      <p className="teaching-attempt__label">{step.change === 'revision' ? '调整要求后' : step.change === 'next' ? '下一步' : '开始实践'}</p>
+      {step.change_request && <>
+        <p className="teaching-attempt__label">调整要求</p>
+        {changeRequest ? <blockquote>{changeRequest}</blockquote> : <p className="form-hint">对应要求原文已不可用。</p>}
+      </>}
+      <p className="teaching-attempt__step"><b>目标</b>{goal || '对应目标原文已不可用。'}</p>
+      <p className="teaching-attempt__label">这一步</p>
+      {instruction ? <blockquote>{instruction}</blockquote> : <p className="form-hint">对应步骤原文已不可用。</p>}
+      {history.map(item => item.teaching!.project_observation
+        ? observationView(item, item.teaching!.project_observation!, false, true)
+        : <article className="teaching-practice__observation" aria-label="实践帮助" key={item.id}>
+          <p className="teaching-attempt__label">{item.helpRecord?.request ? helpLabels[item.helpRecord.request.kind]
+            : item.teaching!.effective_mode === 'direct_answer' || item.teaching!.effective_mode === 'full_explanation' ? modeLabels[item.teaching!.effective_mode!] : '帮助'}{item.helpRecord?.provided?.partial && ' · 部分内容'}</p>
+          {item.answerContent ? <blockquote>{item.answerContent}</blockquote> : <p className="form-hint">对应帮助原文已不可用。</p>}
+        </article>)}
+    </article>;
+  }
+
   const body = <div className="teaching-state" aria-label="当前教学安排">
     {recordingUnavailable && <p className="form-hint" role="status">{recordingNotice}</p>}
     <label className="teaching-state__choice">讲解方式
@@ -193,6 +230,7 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
         <option value="stepwise">分步讲解</option><option value="socratic">提问引导</option>
         {method === 'feynman' && <option value="feynman" disabled>费曼复述（当前方式）</option>}
         {method === 'practice_first' && <option value="practice_first" disabled>练习优先（当前方式）</option>}
+        {method === 'project' && <option value="project" disabled>项目实践（当前方式）</option>}
       </select>
     </label>
     {selectedMode && <p className="form-hint" role="status">下次发送时使用{modeLabels[selectedMode === 'default' ? defaultMode : selectedMode]}。</p>}
@@ -201,11 +239,15 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
       ? <p className="teaching-state__mode">本轮：{modeLabels[last.effective_mode]} · 下轮：{checkpoint?.mode ? modeLabels[checkpoint.mode] : '原方式'}</p>
       : currentMode !== 'stepwise' && currentMode !== 'socratic' && !(followsDefault && last && currentMode !== nextMode) && <p className="teaching-state__mode">当前方式 · {modeLabels[currentMode]}</p>}
     {(last?.effective_mode ?? checkpoint?.mode) === 'socratic' && guidance && <p className="teaching-state__mode">提示安排 · {guidanceLabels[guidance.level]}</p>}
+    {project && <div className="teaching-state__step teaching-state__project">
+      <b>当前目标</b><p>{answerExcerpt(project.goal.answer_id, project.goal.start, project.goal.end) || '对应目标原文已不可用。'}</p>
+      <b>当前这一步</b><p>{answerExcerpt(project.step.instruction.answer_id, project.step.instruction.start, project.step.instruction.end) || '对应步骤原文已不可用。'}</p>
+    </div>}
     {continuousExercise
       ? <div className="teaching-state__step"><b>当前题目</b><p>{answerExcerpt(continuousExercise.question.answer_id, continuousExercise.question.start, continuousExercise.question.end) || '对应题目原文已不可用。'}</p></div>
-      : checkpoint?.step && <div className="teaching-state__step"><b>当前小点</b><p>{checkpoint.step.text}</p></div>}
+      : !continuousProject && checkpoint?.step && <div className="teaching-state__step"><b>当前小点</b><p>{checkpoint.step.text}</p></div>}
     {checkpoint?.step?.text.trim() && <div className="teaching-state__practice-actions">
-      {!continuousExercise && <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
+      {!continuousExercise && !continuousProject && <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
         onClick={() => onAction('practice', '换一道试试。')}>换一道试试</button>}
       <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
         onClick={() => onAction('retell', '用自己的话说说。')}>用自己的话说说</button>
@@ -222,6 +264,15 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
           onClick={() => onAction('continue', checkpoint.practice && checkpoint.practice.kind !== 'retelling' ? '这道先不练了，继续学习。' : '继续学习。')}>继续学习</button>
       </>}
     </div>}
+    {continuousProject && nextMode === 'project' && <div className="teaching-state__practice-actions">
+      <span className="teaching-state__practice-phase">{continuousProject.step.phase === 'awaiting_work' ? '等待实践内容' : '已有反馈'}</span>
+      <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
+        onClick={() => onAction('next_step', '下一步。')}>下一步</button>
+    </div>}
+    {projectSteps.length > 0 && <details className="teaching-state__projects">
+      <summary>实践记录</summary>
+      {projectSteps.map(projectView)}
+    </details>}
     {practiceRecords.length > 0 && <details className="teaching-state__practices">
       <summary>练习记录</summary>
       {practiceRecords.map(entry => entry.teaching!.exercise_question ? exerciseView(entry) : practiceView(entry, false))}

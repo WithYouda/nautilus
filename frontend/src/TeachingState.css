@@ -10,7 +10,7 @@
 .teaching-state__practice-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-bottom: .7rem; }
 .teaching-state__practice-phase { color: var(--muted); font-size: .78rem; }
 .teaching-state summary { cursor: pointer; }
-.teaching-state__attempts, .teaching-state__practices, .teaching-state__retellings { margin-top: .8rem; }
+.teaching-state__attempts, .teaching-state__practices, .teaching-state__retellings, .teaching-state__projects { margin-top: .8rem; }
 .teaching-attempt, .teaching-practice { padding: .85rem 0; border-top: 1px solid var(--line); }
 .teaching-attempt:first-of-type, .teaching-practice:first-of-type { margin-top: .6rem; }
 .teaching-practice__observation { padding: .75rem 0 0; }
