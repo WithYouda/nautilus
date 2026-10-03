@@ -45,7 +45,7 @@ import {
   type AiConversationDetail,
   type AiMessage,
   type HelpRequestKind,
-  type TeachingMethod,
+  type TeachingSelection,
   type TeachingAction,
   type AiProvider,
   type AiProviderModel,
@@ -83,7 +83,7 @@ type PendingSubmission = {
   sourceScope?: SourceScope;
   attachmentVersionIds?: string[];
   helpRequest?: HelpRequestKind | null;
-  teachingMode?: TeachingMethod | null;
+  teachingMode?: TeachingSelection | null;
   teachingAction?: TeachingAction | null;
   regenerateMessageId?: string;
   editMessageId?: string;
@@ -144,8 +144,8 @@ function readSession(): RoomSession | null {
             attachmentVersionIds: Array.isArray(parsed.pending.attachmentVersionIds) ? parsed.pending.attachmentVersionIds.filter((value): value is string => typeof value === 'string') : [],
             sourceScope: parsed.pending.sourceScope && ['unspecified', 'reference', 'only'].includes(parsed.pending.sourceScope.mode) && Array.isArray(parsed.pending.sourceScope.version_ids) ? parsed.pending.sourceScope : undefined,
             helpRequest: ["hint", "explain_step", "example", "try_first"].includes(parsed.pending.helpRequest ?? "") ? parsed.pending.helpRequest : null,
-            teachingMode: ['stepwise', 'socratic'].includes(parsed.pending.teachingMode ?? '') ? parsed.pending.teachingMode : null,
-            teachingAction: ['practice', 'continue'].includes(parsed.pending.teachingAction ?? '') ? parsed.pending.teachingAction : null,
+            teachingMode: ['stepwise', 'socratic', 'feynman', 'default'].includes(parsed.pending.teachingMode ?? '') ? parsed.pending.teachingMode : null,
+            teachingAction: ['practice', 'retell', 'continue'].includes(parsed.pending.teachingAction ?? '') ? parsed.pending.teachingAction : null,
           }
         : undefined,
       learningBrief: parsed.learningBrief,
@@ -358,7 +358,7 @@ export default function AiLearningRoom({
   const [attachmentDraftIds, setAttachmentDraftIds] = useState<string[]>([]);
   const [attachmentClearSignal, setAttachmentClearSignal] = useState(0);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
-  const [selectedTeachingMode, setSelectedTeachingMode] = useState<TeachingMethod | null>(null);
+  const [selectedTeachingMode, setSelectedTeachingMode] = useState<TeachingSelection | null>(null);
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
   const closeHelpHistory = useCallback(() => setHelpHistoryOpen(false), []);
@@ -1135,7 +1135,7 @@ export default function AiLearningRoom({
   const teaching = <TeachingState
     key={conversationId ?? 'new'} kind="conversation" scopeId={conversationId ?? ''} pathKey={teachingPath}
     entries={conversationTeachingEntries(visibleMessages)} standalone={!learningBrief}
-    selectedMode={pendingSubmissionRef.current ? pendingSubmissionRef.current.teachingMode ?? null : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
+    defaultMode={sharedState.teachingDefault} selectedMode={pendingSubmissionRef.current ? pendingSubmissionRef.current.teachingMode ?? null : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
     onAction={(action, label) => void submitMessage(label, true, undefined, undefined, undefined, action)}
     disabled={!entryReady || attachmentBusy || sharedState.blocked || branchBusy || Boolean(currentRun) || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
     onUpdated={(answerId, record) => setDetail(previous => previous?.conversation.id === conversationId

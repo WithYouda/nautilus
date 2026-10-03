@@ -101,6 +101,19 @@ class ConversationService:
         self.search_service = None
         self.materials = None
         self.current_state = None
+        self.preferences = None
+
+    def default_teaching_mode(self, owner, original_snapshot=None):
+        from .teaching_runtime import METHODS
+        from .preferences import PreferencesError
+        if original_snapshot is not None:
+            original = original_snapshot.get('teaching') or {}
+            mode = original.get('default_mode', (original.get('before') or {}).get('mode', 'stepwise'))
+            return mode if mode in METHODS else 'stepwise'
+        try:
+            return self.preferences.get(owner)['teaching_mode'] if self.preferences else 'stepwise'
+        except (PreferencesError, CredentialError) as error:
+            raise ConversationError('默认学习方式无法读取，请先检查设置') from error
 
     def _protocol(self, profile, model_id=None):
         if profile is None:
@@ -1673,7 +1686,8 @@ class ConversationService:
         if edit_message_id and (regenerate_message_id or parent_message_id):
             raise ConversationError("编辑消息不能同时指定重新生成或回答上下文")
 
-        if regenerate_message_id and (help_request is None or teaching_mode is None or teaching_action is None):
+        original_snapshot = None
+        if regenerate_message_id:
             original = self.database.fetchone("""SELECT r.config_snapshot_json FROM ai_run r
                 WHERE r.conversation_id=? AND r.response_message_id=?""", (conversation_id, regenerate_message_id))
             if original:
@@ -1696,6 +1710,8 @@ class ConversationService:
                                               bool(regenerate_message_id or edit_message_id))
             except DomainError as error:
                 raise ConversationConflict(error.code) from error
+
+        teaching_default = self.default_teaching_mode(identity_id, original_snapshot)
 
         # 冻结本次运行使用的配置；提交后不再二次读取可变的 provider 状态。
         profile, config, config_snapshot = self.runtime_for_conversation(
@@ -1844,7 +1860,7 @@ class ConversationService:
                 config_snapshot['teaching'] = freeze_teaching(
                     [item for item in teaching_path if item['role'] == 'assistant'],
                     answer_id=assistant_message_id, message_id=user_message_id,
-                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action)
+                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default)
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,

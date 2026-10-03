@@ -287,7 +287,8 @@ class QuestionDiscussionService:
             image_runtime = self.verification._runtime(owner, discussion['session_id'])
             require_image_capability(self.chats, owner, image_runtime[0]['id'], image_runtime[1].model, frozen)
         material_bound = bool(frozen and frozen['mode'] != 'unspecified')
-        if regenerate_turn_id and (help_request is None or teaching_mode is None or teaching_action is None):
+        original_snapshot = None
+        if regenerate_turn_id:
             original = self.db.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE discussion_id=? AND id=?',
                 (discussion_id, regenerate_turn_id))
             if original:
@@ -323,6 +324,10 @@ class QuestionDiscussionService:
                     search_run = self.chats.search_service.prepare(owner, search, config.provider_kind)
             except (SearchError, ConversationError, DomainError) as error:
                 preparation_error = error
+        try:
+            teaching_default = self.chats.default_teaching_mode(owner, original_snapshot) if not existing_turn else 'stepwise'
+        except ConversationError as error:
+            raise DomainError('teaching_defaults_unavailable', 400) from error
         attempt_id = str(uuid4())
         with self.db.transaction(immediate=True) as c:
             if c.execute('SELECT purged_at FROM learning_question_discussion WHERE id=?', (discussion_id,)).fetchone()[0]:
@@ -394,7 +399,7 @@ class QuestionDiscussionService:
                                        'teaching_mode': teaching_mode, 'teaching_action': teaching_action,
                                        'teaching': teaching.freeze([by_id[item] for item in history_path],
                                            answer_id=turn_id, message_id=turn_id, kind='discussion', scope_id=discussion_id,
-                                           requested_mode=teaching_mode, help_kind=help_request, action=teaching_action),
+                                           requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default),
                                        'attachment_version_ids': attached,
                                        **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
                 if self.current_state is not None:

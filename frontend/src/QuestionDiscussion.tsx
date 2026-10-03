@@ -18,7 +18,7 @@ import ComposerAttachments from './ComposerAttachments';
 import MessageAttachments from './MessageAttachments';
 import { attachmentError } from './AttachmentSupport';
 import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
-import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type TeachingMethod, type TeachingAction, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
+import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type TeachingSelection, type TeachingAction, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
 
 const requestId = (): string => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: string; onBack: () => void; onNavigate: (id: string) => void }) {
@@ -38,8 +38,8 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [busy, setBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const [error, setError] = useState('');
-  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; teachingMode: TeachingMethod | null; teachingAction: TeachingAction | null; sourceScope: SourceScope; attachmentVersionIds: string[] } | null>(null);
-  const [selectedTeachingMode, setSelectedTeachingMode] = useState<TeachingMethod | null>(null);
+  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; teachingMode: TeachingSelection | null; teachingAction: TeachingAction | null; sourceScope: SourceScope; attachmentVersionIds: string[] } | null>(null);
+  const [selectedTeachingMode, setSelectedTeachingMode] = useState<TeachingSelection | null>(null);
   const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
   const [attachmentDraftIds, setAttachmentDraftIds] = useState<string[]>([]);
   const [attachmentClearSignal, setAttachmentClearSignal] = useState(0);
@@ -50,7 +50,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editRequest = useRef<{ turnId: string; content: string; key: string } | null>(null);
   const key = useRef(requestId());
-  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; teachingMode: TeachingMethod | null; teachingAction: TeachingAction | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
+  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; teachingMode: TeachingSelection | null; teachingAction: TeachingAction | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
   const sending = useRef(false);
   const branching = useRef(false);
   const branchKeys = useRef(new Map<string, string>());
@@ -223,7 +223,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     </header>
     {discussion?.id === id && !discussion.purged && <TeachingState key={id} kind="discussion" scopeId={id} pathKey={teachingPath}
       entries={discussionTeachingEntries(visibleTurns)} standalone
-      selectedMode={pending ? pending.teachingMode : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
+      defaultMode={sharedState.teachingDefault} selectedMode={pending ? pending.teachingMode : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
       onAction={(action, label) => void send(label, key.current, false, true, undefined, undefined, undefined, action)}
       disabled={attachmentBusy || sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
       onUpdated={(answerId, record) => setDiscussion(previous => previous?.id === id

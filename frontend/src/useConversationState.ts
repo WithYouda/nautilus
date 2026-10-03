@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, getConversationState, putConversationState, type ConversationState, type ConversationStateValues, type MaterialKind } from './api';
+import { ApiError, getConversationState, putConversationState, type ConversationState, type ConversationStateValues, type MaterialKind, type TeachingMethod } from './api';
 import { getPreferences } from './preferences';
 import type { SearchSelection } from './SearchControls';
 
@@ -39,6 +39,7 @@ export default function useConversationState(kind: MaterialKind, identity: strin
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [defaults, setDefaults] = useState<SearchSelection>({ mode: 'off' });
+  const [teachingDefault, setTeachingDefault] = useState<TeachingMethod>('stepwise');
   const [defaultsReady, setDefaultsReady] = useState(false);
   const stateRef = useRef(snapshot);
   const keyRef = useRef(key); keyRef.current = key;
@@ -60,7 +61,7 @@ export default function useConversationState(kind: MaterialKind, identity: strin
   useEffect(() => {
     let active = true;
     const load = async () => {
-      try { const value = await getPreferences(); if (active) { setDefaults(value.search); setDefaultsReady(true); } }
+      try { const value = await getPreferences(); if (active) { setDefaults(value.search); setTeachingDefault(value.teaching_mode); setDefaultsReady(true); } }
       catch { if (active) { setDefaultsReady(false); setError('默认设置无法读取，请重试；暂不发送消息。'); } }
     };
     void load(); window.addEventListener('nautilus:preferences-changed', load);
@@ -142,7 +143,7 @@ export default function useConversationState(kind: MaterialKind, identity: strin
     throw new Error('正在读取当前学习状态，请稍后重新发送。');
   }
   async function retryLoad() {
-    try { const value = await getPreferences(); setDefaults(value.search); setDefaultsReady(true); } catch { setError('默认设置无法读取，请重试。'); return; }
+    try { const value = await getPreferences(); setDefaults(value.search); setTeachingDefault(value.teaching_mode); setDefaultsReady(true); } catch { setError('默认设置无法读取，请重试。'); return; }
     if (id && key && identity && !stateRef.current.initialized) {
       try {
         let value = await getConversationState(kind, id);
@@ -161,7 +162,7 @@ export default function useConversationState(kind: MaterialKind, identity: strin
   }
   const ready = defaultsReady && (!key || (loadedKey === key && snapshot.initialized && !migration)) && !busy;
   const preview = migration ? { ...snapshot, ...migration } : snapshot;
-  return { snapshot: preview, sourceScope: preview.source_scope, ready, busy, migration, error, notice,
+  return { teachingDefault, snapshot: preview, sourceScope: preview.source_scope, ready, busy, migration, error, notice,
     blocked: !ready || snapshot.issues.length > 0,
     search: { value: preview.search_override ?? defaults, overridden: preview.search_override !== null, ready,
       change: (value: SearchSelection) => { void save({ search_override: value }); }, reset: () => { void save({ search_override: null }); }, error: '' },

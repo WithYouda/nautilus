@@ -94,6 +94,7 @@ def create_app(
         conversation_service.outbound = outbound_approvals
         conversation_service.search_service = search_service
         preferences_service = PreferencesService(credential_store, search_service)
+        conversation_service.preferences = preferences_service
         material_service = MaterialService(learning_service, conversation_service, preferences_service)
         conversation_service.materials = material_service
         ocr_service = MaterialOCR(material_service, credential_store, transport=provider_transport)

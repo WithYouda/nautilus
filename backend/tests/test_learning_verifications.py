@@ -6,6 +6,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from app.conversations import ConversationService
 from app.core.commands import CreateDelegation, CreateLearningAction, CreateOutcome, StartSession
 from app.core.learning import LearningCore
 from app.learning_domain import DomainError, Principal
@@ -84,6 +85,8 @@ MATERIAL_FAIL = for_material(FAIL)
 
 
 class FakeConversations:
+    default_teaching_mode = ConversationService.default_teaching_mode
+    preferences = None
     def provider_runtime(self, _owner_id: str):
         return {}, ProviderConfig(
             base_url="http://127.0.0.1/v1",

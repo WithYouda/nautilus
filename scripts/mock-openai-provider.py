@@ -276,20 +276,44 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 if str(message.get('content', '')).startswith('Nautilus 本轮执行上下文')), None)
             practice_context = json.loads(runtime.split('\n', 1)[1]) if runtime else None
             practice_reply = None
-            if practice_context and practice_context.get('action') == 'practice':
+            if practice_context and practice_context.get('action') == 'retell':
+                invitation = '请用自己的话说说，为什么要先检查输入边界；也可以举一个简单例子。'
+                practice_reply = (invitation, {'step': None, 'attempt': None, 'mode': None, 'help': None,
+                    'practice': {'question': invitation, 'feedback': None}})
+            elif practice_context and practice_context.get('action') == 'practice':
                 sequence = STATE.snapshot()['requests'].get(scenario, 1)
                 question = f'🧩合成变式{sequence}：输入换成两个编号，其中一个缺失。你会怎样检查输入边界，并说明理由？'
                 practice_reply = (question, {'step': None, 'attempt': None, 'mode': None, 'help': None,
                     'practice': {'question': question, 'feedback': None}})
             elif practice_context and practice_context.get('action') == 'continue':
-                practice_reply = ('先继续原来的小点。你会先检查哪一种输入？',
-                    {'step': None, 'attempt': None, 'mode': None, 'help': None, 'practice': None})
+                if not practice_context['before'].get('practice') and practice_context['before'].get('retelling'):
+                    point = '正常输入检查（合成C2复述）。'
+                    practice_reply = (point + '请用自己的话说说，输入正常时你会先检查什么？',
+                        {'step': point, 'attempt': None, 'mode': None, 'help': None, 'practice': None})
+                else:
+                    practice_reply = ('先继续原来的小点。你会先检查哪一种输入？',
+                        {'step': None, 'attempt': None, 'mode': None, 'help': None, 'practice': None})
+            elif practice_context and (practice_context['before'].get('practice') or {}).get('kind') == 'retelling' and '[C2复述作答]' in c1_request:
+                feedback = '💬合成复述反馈：你讲清了先检查边界的原因。待补充：说明输入为空时如何处理，并举一个例子。'
+                practice_reply = (feedback, {'step': None, 'attempt': {'quote': c1_request, 'needs_help': '[C2卡住]' in c1_request},
+                    'mode': None, 'help': None, 'practice': {'question': None, 'feedback': feedback}})
             elif practice_context and practice_context['before'].get('practice') and '[C2作答]' in c1_request:
                 needs_help = '[C2卡住]' in c1_request
                 feedback = ('💡合成练习反馈：你已经检查了缺失编号；还可以单独说明缺失时返回什么。' if needs_help
                             else '💡合成练习反馈：你先检查了缺失编号，并说明了边界处理的理由；可以继续比较两个编号都存在时的情况。')
                 practice_reply = (feedback, {'step': None, 'attempt': {'quote': c1_request, 'needs_help': needs_help},
                     'mode': None, 'help': None, 'practice': {'question': None, 'feedback': feedback}})
+            elif practice_context and not practice_context['before'].get('practice') and practice_context['before'].get('mode') == 'feynman':
+                point = (practice_context['before'].get('step') or {}).get('text') or '输入边界检查（合成C2复述）。'
+                if '[C2复述作答]' in c1_request and practice_context['before'].get('step'):
+                    body = '💬合成复述反馈：你讲清了先检查边界的原因。待补充：说明输入为空时如何处理，并举一个例子。'
+                    attempt = {'quote': c1_request, 'needs_help': '[C2卡住]' in c1_request}
+                    step = None
+                else:
+                    body = point + '请用自己的话说说，为什么要先检查输入边界；也可以举一个简单例子。'
+                    attempt = None
+                    step = None if practice_context['before'].get('step') else point
+                practice_reply = (body, {'step': step, 'attempt': attempt, 'mode': None, 'help': None, 'practice': None})
             if practice_reply:
                 body, proposal = practice_reply
                 trailer = '\n' + practice_context['opening'] + json.dumps(proposal, ensure_ascii=False) + practice_context['closing']
@@ -318,7 +342,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     before = context['before']
                     mode = None
                     for phrase, value in [('完整讲解', 'full_explanation'), ('直接给答案', 'direct_answer'),
-                                          ('提问引导', 'socratic'), ('分步讲解', 'stepwise')]:
+                                          ('提问引导', 'socratic'), ('分步讲解', 'stepwise'), ('费曼复述', 'feynman')]:
                         if phrase in c1_request:
                             persistent = any(word in c1_request for word in ['以后', '今后', '接下来都'])
                             mode = {'value': value, 'scope': 'conversation' if persistent else 'turn',

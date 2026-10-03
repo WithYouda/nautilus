@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { AiProvider } from './api';
+import type { AiProvider, TeachingMethod } from './api';
 import DialogPortal from './DialogPortal';
 import SearchControls from './SearchControls';
 import { getPreferences, savePreferences, type ConflictPolicy, type UserPreferences } from './preferences';
@@ -9,7 +9,7 @@ import ObsidianSettings from './ObsidianSettings';
 import ImageModelSettings from './ImageModelSettings';
 
 export type SettingsSection = 'general' | 'search' | 'provider';
-const initial: UserPreferences = { conflict_policy: 'ask', search: { mode: 'off' } };
+const initial: UserPreferences = { teaching_mode: 'stepwise', conflict_policy: 'ask', search: { mode: 'off' } };
 
 export default function Settings({ open, section, provider, onClose, onOpenSearchSettings, onOpenProviderSettings }: {
   open: boolean; section: SettingsSection; provider: AiProvider | null; onClose: () => void;
@@ -44,6 +44,13 @@ export default function Settings({ open, section, provider, onClose, onOpenSearc
       <header className="dialog-header"><div><p className="eyebrow">NAUTILUS SETTINGS</p><h2 id="unified-settings-title">设置</h2></div><button className="icon-button" type="button" onClick={close} aria-label="关闭设置">×</button></header>
       {loading ? <p className="unified-settings-loading">正在加载设置…</p> : !loaded ? <p className="form-error unified-settings-error" role="alert">{error || '无法读取学习设置。'}请关闭后重试。</p> : <form onSubmit={event => void save(event)}>
         <div className="unified-settings-body">
+          <section><h3>学习方式</h3>
+            <label className="field"><span>默认学习方式</span><select value={draft.teaching_mode} onChange={event => setDraft(current => ({ ...current, teaching_mode: event.target.value as TeachingMethod }))}>
+              <option value="stepwise">分步讲解</option><option value="socratic">提问引导</option><option value="feynman">费曼复述</option>
+            </select></label>
+            <p>费曼复述：先用自己的话解释，再根据反馈补充。</p>
+            <small className="form-hint">用于之后未单独调整的对话请求；已保存的回答保持原样。</small>
+          </section>
           <section className={section === 'general' ? 'is-target' : ''}><h3>资料与回答</h3><p>新上传且读取成功的资料会成为当前对话可参考来源。遇到影响答案的实质冲突时，默认怎样处理？</p>
             <label className="field"><span>资料冲突默认方式</span><select value={draft.conflict_policy} onChange={event => setDraft(current => ({ ...current, conflict_policy: event.target.value as ConflictPolicy }))}>
               <option value="ask">询问我（推荐）</option><option value="balanced">由 AI 综合判断</option><option value="materials">以所选资料为准</option>

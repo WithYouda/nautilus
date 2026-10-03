@@ -1,7 +1,8 @@
+import type { TeachingMethod } from './api';
 import type { SearchSelection } from './SearchControls';
 
 export type ConflictPolicy = 'ask' | 'balanced' | 'materials';
-export type UserPreferences = { conflict_policy: ConflictPolicy; search: Pick<SearchSelection, 'mode' | 'service_id' | 'parameters'> };
+export type UserPreferences = { teaching_mode: TeachingMethod; conflict_policy: ConflictPolicy; search: Pick<SearchSelection, 'mode' | 'service_id' | 'parameters'> };
 
 async function preferencesRequest(init?: RequestInit): Promise<UserPreferences> {
   let response: Response;
@@ -17,7 +18,8 @@ async function preferencesRequest(init?: RequestInit): Promise<UserPreferences> 
   const body = await response.json().catch(() => null) as { detail?: string } | UserPreferences | null;
   if (!response.ok) throw new Error(body && 'detail' in body && typeof body.detail === 'string' ? body.detail : `学习设置请求失败（${response.status}）。`);
   if (!body || !('conflict_policy' in body) || !('search' in body)) throw new Error('学习设置返回了无法读取的结果。');
-  return body as UserPreferences;
+  const value = body as UserPreferences;
+  return { ...value, teaching_mode: value.teaching_mode ?? 'stepwise' };
 }
 
 export const getPreferences = () => preferencesRequest();

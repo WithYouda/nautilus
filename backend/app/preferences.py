@@ -24,7 +24,7 @@ class PreferencesService:
         with self._lock:
             raw = self.credentials.get(f"learning-preferences:{owner}")
             if raw is None:
-                return {"conflict_policy": "ask", "search": {"mode": "off"}}
+                return {"conflict_policy": "ask", "search": {"mode": "off"}, "teaching_mode": "stepwise"}
             try:
                 value = json.loads(raw)
                 if not isinstance(value, dict):
@@ -35,13 +35,19 @@ class PreferencesService:
 
     def save(self, owner: str, payload: dict) -> dict:
         with self._lock:
+            if isinstance(payload, dict) and 'teaching_mode' not in payload:
+                payload = {**payload, 'teaching_mode': self.get(owner)['teaching_mode']}
             value = self._validate(owner, payload)
             self.credentials.set(f"learning-preferences:{owner}", json.dumps(value, ensure_ascii=False))
             return copy.deepcopy(value)
 
     def _validate(self, owner: str, payload: dict, *, verify_service: bool = True) -> dict:
-        if not isinstance(payload, dict) or set(payload) != {"conflict_policy", "search"}:
+        if (not isinstance(payload, dict) or not {'conflict_policy', 'search'} <= set(payload)
+                or not set(payload) <= {'conflict_policy', 'search', 'teaching_mode'}):
             raise PreferencesError("学习设置格式不正确")
+        teaching_mode = payload.get('teaching_mode', 'stepwise')
+        if teaching_mode not in ('stepwise', 'socratic', 'feynman'):
+            raise PreferencesError("默认学习方式不支持")
         policy = payload["conflict_policy"]
         if policy not in ("ask", "balanced", "materials"):
             raise PreferencesError("资料冲突处理方式不支持")
@@ -72,4 +78,4 @@ class PreferencesService:
             saved["service_id"] = service_id
             if parameters:
                 saved["parameters"] = copy.deepcopy(parameters)
-        return {"conflict_policy": policy, "search": saved}
+        return {"conflict_policy": policy, "search": saved, "teaching_mode": teaching_mode}

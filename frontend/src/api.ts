@@ -387,17 +387,21 @@ export type HelpRecord = {
 };
 export type ReferenceHelpDisplay = { kind: 'reference_answer'; at: string; basis: 'client_report' };
 
-export type TeachingMethod = 'stepwise' | 'socratic';
-export type TeachingAction = 'practice' | 'continue';
+export type TeachingMethod = 'stepwise' | 'socratic' | 'feynman';
+export type TeachingSelection = TeachingMethod | 'default';
+export type TeachingAction = 'practice' | 'retell' | 'continue';
 export type TeachingMode = TeachingMethod | 'direct_answer' | 'full_explanation';
 export type TeachingCheckpoint = {
   mode: TeachingMode | null;
+  mode_source?: 'default' | 'conversation';
+  retelling?: { step_id: string; phase: 'awaiting_retelling' | 'feedback_available'; last_observation_id: string | null } | null;
   step: { id: string; source_answer_id: string; text: string; start: number; end: number } | null;
   guidance?: { level: 0 | 1 | 2 | 3 | 4; stuck_count: number; reset_answer_id: string | null } | null;
   practice?: TeachingPractice | null;
 };
 export type TeachingPractice = {
   id: string;
+  kind?: 'variant' | 'retelling';
   basis_step: TeachingCheckpoint['step'];
   question: { answer_id: string; start: number; end: number };
   return_guidance: TeachingCheckpoint['guidance'] | null;
@@ -415,10 +419,12 @@ export type TeachingRecord = {
   after: TeachingCheckpoint | null;
   current: TeachingCheckpoint;
   effective_mode: TeachingMode | null;
-  requested_mode?: TeachingMethod | null;
+  requested_mode?: TeachingSelection | null;
+  default_mode?: TeachingMethod;
   requested_action?: TeachingAction | null;
   practice_question?: TeachingPractice | null;
   practice_observation?: TeachingPracticeObservation | null;
+  retelling_observation?: TeachingPracticeObservation | null;
   guidance?: { level: 0 | 1 | 2 | 3 | 4; reason: string } | null;
   mode_request: { mode: TeachingMode; scope: 'turn' | 'conversation'; start: number; end: number } | null;
   attempt: {
@@ -1064,7 +1070,7 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
-  versions: { current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingMethod | null; teaching_action?: TeachingAction | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {},
+  versions: { current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingSelection | null; teaching_action?: TeachingAction | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -2207,7 +2213,7 @@ export function getQuestionDiscussion(id: string, signal?: AbortSignal): Promise
 export function branchQuestionDiscussion(id: string, turnId: string, requestKey: string): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/branches`, { method: 'POST', body: JSON.stringify({ turn_id: turnId, request_key: requestKey }) });
 }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingMethod | null; teaching_action?: TeachingAction | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {}): Promise<QuestionDiscussion> {
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingSelection | null; teaching_action?: TeachingAction | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {}): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
 }
 export function recordDiscussionHelpDisplay(discussionId: string, turnId: string, characters: number): Promise<HelpRecord> {
