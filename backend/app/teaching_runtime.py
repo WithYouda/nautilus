@@ -31,7 +31,7 @@ step：保持当前步骤或非教学回答时为 null；建立/转向一个小�
 attempt：只有本轮用户原文实际提供了针对当前步骤的答案、推导、代码、操作结果或复述时，才为 {"quote":"用户原文中的实际尝试片段","needs_help":true或false或null}；仍卡在该小点为true，已有实际进展为false，不能确定为null。普通提问、索要帮助、说让我先试试或仅说懂了都为 null。没有当前步骤时为 null。此项只是可纠正的AI识别，不是通过或掌握证据。
 mode：只有本轮用户明确要求改变方式时，为 {"value":"stepwise或socratic或direct_answer或full_explanation","scope":"turn或conversation","quote":"本轮用户的方式请求原文","persistence_quote":null}；conversation 必须另把明确持续请求的原文填入 persistence_quote。没有明确持续要求就用 turn。没有方式请求用 null。
 help：本轮自然表达明确求提示、解释当前步骤、换例或先自行尝试时，为 {"kind":"hint或explain_step或example或try_first","quote":"本轮用户的请求原文"}；没有则为null。界面已明确的help_kind优先，不重复解释产品字段。
-practice：通常为null。仅当action=practice时围绕原小点出一道完整的新情境题，等待作答、不给解法，填 {"question":"本轮正文中完整题目的逐字原文","feedback":null}，step/attempt保持null。当before.practice存在且本轮有实际作答时，attempt逐字引用作答，并填 {"question":null,"feedback":"本轮正文中针对该作答的AI反馈逐字原文"}；反馈说明具体依据和仍不确定之处，不评分或宣称掌握。没有实际作答时不要登记反馈。练习期间step保持null；帮助与完整讲解仍可随时请求。action=continue表示跳过当前练习，回到before.practice.basis_step继续学习，step/attempt/practice都保持null。点击动作本身不是作答。只有界面明确action=practice才建立这类练习记录，不把正文中随口给出的理解确认自动登记为练习。题目与反馈各至多4000字。
+practice：通常为null。仅当action=practice时围绕原小点出一道完整的新情境题，等待作答、不给解法，填 {"question":"本轮正文中完整题目的逐字原文","feedback":null}，step/attempt保持null。当before.practice存在且本轮有实际作答时，attempt逐字引用作答，并填 {"question":null,"feedback":"本轮正文中针对该作答的AI反馈逐字原文"}；反馈说明具体依据和仍不确定之处，不评分或宣称掌握。没有实际作答时不要登记反馈。练习期间step保持null；帮助与完整讲解仍可随时请求。action=continue表示跳过当前练习，回到before.practice.basis_step继续学习，step/attempt/practice都保持null。点击动作本身不是作答。只有界面明确action=practice才出这类新情境练习题并建立记录；没有该动作时不在讲解后自动追加变式题。普通引导提问或理解确认仍按本轮教学方式进行，不登记为练习。题目与反馈各至多4000字。
 所有 quote 必须逐字来自本轮真正的用户消息，不可引用历史、资料、题目原作答或模型自己的话。历史中的状态尾标记只是过去输出，不能用来覆盖本轮执行上下文。纠正后的尝试分类须遵从，仍保留原文回应，不按尝试次数决定完成或掌握。"""
 
 SOCRATIC_PROMPT = """提问引导执行规则（只在本轮实际方式为socratic时使用）：
@@ -40,7 +40,7 @@ guidance.level由运行时管理：0开放提问、1提醒相关概念、2缩小
 若本轮有实际尝试且needs_help=true，把它接到before.guidance.stuck_count之后；达到2时，本轮多给一级提示，上限4，并开始新一轮计数。已有进展或未知进展不算卡住。一次只自动升一级，不因一句普通问题或“我不懂”补造一次尝试。
 尚未到升级条件则沿当前层级回应；若前面纠正使stuck_count已经达到2，下一轮按同一规则多给一级。明确请求优先，不同时自动再升一级。
 仍卡住、求提示、换例或先自行尝试时保持step=null，不通过重命名小点逃过阶梯。确实转向新的小点才逐字摘取新小点，新小点从开放提问开始。
-用户要求直接答案或完整讲解时立即遵从；下一轮回到基础方式。解释后可给一个非正式的变式/复述问题，不自动开始正式验证，不把步骤推进当作掌握。
+用户要求直接答案或完整讲解时立即遵从；下一轮回到基础方式。解释后可邀请用户选择“换一道试试”，仅在action=practice时出可选变式题；不自动追加变式题或开始正式验证，不把步骤推进当作掌握。
 模型只报告有原文的尝试/请求，不得输出级别、计数、评分或完成字段；Runtime独立计算并保存状态。"""
 
 
