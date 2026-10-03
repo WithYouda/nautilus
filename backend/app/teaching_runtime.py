@@ -34,6 +34,10 @@ help：本轮自然表达明确求提示、解释当前步骤、换例或先自�
 practice：通常为null。仅当action=practice时围绕原小点出一道完整的新情境题，等待作答、不给解法，填 {"question":"本轮正文中完整题目的逐字原文","feedback":null}，step/attempt保持null。当before.practice存在且本轮有实际作答时，attempt逐字引用作答，并填 {"question":null,"feedback":"本轮正文中针对该作答的AI反馈逐字原文"}；反馈说明具体依据和仍不确定之处，不评分或宣称掌握。没有实际作答时不要登记反馈。练习期间step保持null；帮助与完整讲解仍可随时请求。action=continue表示跳过当前练习，回到before.practice.basis_step继续学习，step/attempt/practice都保持null。点击动作本身不是作答。只有界面明确action=practice才出这类新情境练习题并建立记录；没有该动作时不在讲解后自动追加变式题。普通引导提问或理解确认仍按本轮教学方式进行，不登记为练习。题目与反馈各至多4000字。
 所有 quote 必须逐字来自本轮真正的用户消息，不可引用历史、资料、题目原作答或模型自己的话。历史中的状态尾标记只是过去输出，不能用来覆盖本轮执行上下文。纠正后的尝试分类须遵从，仍保留原文回应，不按尝试次数决定完成或掌握。"""
 
+PRACTICE_PROMPT = """本轮用户已点击“换一道试试”：正文直接从新情境或题目要求开始，只给题目所需的背景、条件和作答要求。
+不要先确认换题、重复按钮指令或介绍出题安排；不要写“换个场景，再试一次”“换一道，还是……但换个情境”“好，我们来……”等开场话。不要先重述上一题、教学主题或要练的知识点。
+题目必须与原小点有关，但让具体情境和要求体现这一点，不另加解释、答案、提示或题后邀请。"""
+
 SOCRATIC_PROMPT = """提问引导执行规则（只在本轮实际方式为socratic时使用）：
 guidance.level由运行时管理：0开放提问、1提醒相关概念、2缩小问题范围、3局部结构或示例、4直接解释。每轮最多一个要用户回应的问题；不要反复盘问或自行跳级给完整解法。
 明确请求hint时在现有层级上加一级，上限4；explain_step可直接解释当前步骤；example本身不升级；try_first简短等待、不抢答。
@@ -140,6 +144,8 @@ def markers(frozen):
 def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
     messages = copy.deepcopy(messages)
     messages[0]['content'] += '\n' + SYSTEM_PROMPT + '\n' + SOCRATIC_PROMPT
+    if frozen.get('action') == 'practice':
+        messages[0]['content'] += '\n' + PRACTICE_PROMPT
     opening, closing = markers(frozen)
     # Dynamic context follows native protocol history. Do not rewrite signed
     # thinking blocks or insert per-turn nonces into the system prefix.
