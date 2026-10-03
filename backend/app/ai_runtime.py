@@ -57,6 +57,7 @@ class RunState:
 
     generation_trace: dict | None = None
     recorder: GenerationRecorder | None = None
+    teaching_stream: Any = None
 
     @property
     def text(self) -> str:
@@ -147,6 +148,11 @@ class AiRunManager:
             help_kind = json.loads(run.get("config_snapshot_json") or "{}").get("help_request", {}).get("kind")
             if help_kind in HELP_PROMPTS:
                 messages[0] = {**messages[0], "content": messages[0]["content"] + "\n" + HELP_PROMPTS[help_kind]}
+            teaching = json.loads(run.get('config_snapshot_json') or '{}').get('teaching')
+            if teaching:
+                from .teaching_runtime import add_prompt, TeachingStream
+                messages = add_prompt(messages, teaching, prepared.get('teaching_attempt_texts'))
+                state.teaching_stream = TeachingStream(teaching)
             state.task = asyncio.create_task(
                 self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"), public_search_query,
                               prepared.get('frozen_scope'))
@@ -231,9 +237,12 @@ class AiRunManager:
                             strict_only=bool(frozen_scope and frozen_scope['mode'] == 'only' and knowledge))
                     else:
                         stream = provider.stream_chat(messages)
-                    async for chunk in stream:
+                    chunks = state.teaching_stream.filter(stream) if state.teaching_stream else stream
+                    async for chunk in chunks:
                         if state.cancel_requested:
                             break
+                        if chunk.kind == 'completion':
+                            continue
                         if chunk.kind in {"search_status", "search_sources"}:
                             apply_native_event(state.search_trace, chunk)
                             self._publish_search(state, state.search_trace)
@@ -265,6 +274,8 @@ class AiRunManager:
                             )
                         if len(accepted) != len(chunk.text):
                             raise ProviderError("AI 回复超过长度限制", kind="output_limit")
+            if not state.cancel_requested and not state.text.strip():
+                raise ProviderError('提供方没有返回回答正文', kind='empty_response')
             self._finish(state, "canceled" if state.cancel_requested else "succeeded")
             if state.status == "succeeded":
                 self._schedule_automatic_title(state, config)
@@ -465,6 +476,8 @@ class AiRunManager:
                 reasoning_content=state.reasoning_text,
                 error_kind=kind,
                 error_message=message,
+                **({'teaching_proposal': state.teaching_stream.proposal()}
+                   if state.teaching_stream and status == 'succeeded' else {}),
             )
         except Exception:  # noqa: BLE001 - 收敛失败不能再抛进后台 task
             logger.exception("无法收敛 AI 运行记录：%s", state.run_id)
@@ -547,6 +560,7 @@ class AiRunManager:
             state.search_trace = {'mode': 'off', 'status': 'off', 'items': []}
             state.generation_trace = None
             state.recorder = None
+            state.teaching_stream = None
             state.error_kind = state.error_message = None
             if state.task and not state.task.done():
                 state.task.cancel()

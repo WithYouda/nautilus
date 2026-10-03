@@ -1623,7 +1623,8 @@ def test_conversation_history_is_sent_to_the_provider(tmp_path):
 
         assert len(captured) == 2
         roles = [item["role"] for item in captured[1]["messages"]]
-        assert roles == ["system", "user", "assistant", "user"]
+        assert roles == ["system", "user", "assistant", "user", "user"]
+        assert captured[1]['messages'][-2]['content'].startswith('Nautilus 本轮执行上下文')
         # Teaching guidance reaches the provider on every turn, including resumed history.
         for request in captured:
             system = request["messages"][0]["content"]

@@ -81,8 +81,8 @@ async def test_stream_parses_sse_format_and_ignores_empty_deltas():
     provider = build_provider(config, transport=transport)
 
     chunks = [chunk async for chunk in provider.stream_chat([{"role": "user", "content": "test"}])]
-    # 空 delta 被过滤，[DONE] 被过滤。
-    assert len(chunks) == 3
+    # 空 delta 被过滤，[DONE] 被过滤；完成情况另作元事件。
+    assert len([chunk for chunk in chunks if chunk.kind != "completion"]) == 3
 
 
 @pytest.mark.asyncio

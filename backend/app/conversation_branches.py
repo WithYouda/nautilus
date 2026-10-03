@@ -91,6 +91,8 @@ def create_branch(self, identity_id, conversation_id, message_id, request_key):
             snapshot['branch_material_version_ids'] = (snapshot.get('source_scope') or {}).get('version_ids', [])
             # A location summary belongs to its original conversation, not the new branch.
             snapshot.pop('learning_position', None)
+            from .teaching_runtime import remap as remap_teaching
+            remap_teaching(snapshot, ids)
             context_id = run['context_snapshot_id']
             if context_id:
                 context = dict(c.execute('SELECT * FROM context_snapshot WHERE id=?', (context_id,)).fetchone())

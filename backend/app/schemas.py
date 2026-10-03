@@ -335,6 +335,13 @@ class HelpDisplayRequest(BaseModel):
     characters: int = Field(ge=1)
 
 
+class TeachingAttemptCorrectionRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
+    expected_revision: int = Field(ge=0)
+    is_attempt: bool = Field(strict=True)
+    request_key: str = Field(min_length=1, max_length=100)
+
+
 class LearningActionCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     context_key: str = Field(min_length=1, max_length=200)

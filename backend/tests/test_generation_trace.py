@@ -122,7 +122,8 @@ def test_app_process_replays_and_next_external_turn_retains_tool_history(tmp_pat
         save_tavily(client)
         conversation = start_conversation(client, create_task(client))
         first = client.post(f"/api/ai/conversations/{conversation}/messages", json={
-            "content": "First question", "client_message_id": "first", "search": {"mode": "external", "service_id": "tavily-test"}})
+            "content": "First question", "client_message_id": "first", "public_search_query": "focused source",
+            "search": {"mode": "external", "service_id": "tavily-test"}})
         assert first.status_code == 202, first.text
         first_events = read_sse(client, first.json()["run"]["id"])
         assert first_events[-1][0] == "done", first_events
@@ -134,7 +135,8 @@ def test_app_process_replays_and_next_external_turn_retains_tool_history(tmp_pat
         assert detail["messages"][-1]["generation_trace"] == first_trace
         assert "_model_turn" not in json.dumps(detail)
         repeated = client.post(f"/api/ai/conversations/{conversation}/messages", json={
-            "content": "First question", "client_message_id": "first", "search": {"mode": "external", "service_id": "tavily-test"}})
+            "content": "First question", "client_message_id": "first", "public_search_query": "focused source",
+            "search": {"mode": "external", "service_id": "tavily-test"}})
         assert repeated.json()["created"] is False
         assert "model_turn" not in json.loads(repeated.json()["run"]["config_snapshot_json"])
 

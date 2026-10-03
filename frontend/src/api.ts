@@ -387,6 +387,26 @@ export type HelpRecord = {
 };
 export type ReferenceHelpDisplay = { kind: 'reference_answer'; at: string; basis: 'client_report' };
 
+export type TeachingMode = 'stepwise' | 'direct_answer' | 'full_explanation';
+export type TeachingCheckpoint = {
+  mode: TeachingMode | null;
+  step: { id: string; source_answer_id: string; text: string; start: number; end: number } | null;
+};
+export type TeachingRecord = {
+  status: 'running' | 'applied' | 'not_updated';
+  before: TeachingCheckpoint;
+  after: TeachingCheckpoint | null;
+  current: TeachingCheckpoint;
+  effective_mode: TeachingMode | null;
+  mode_request: { mode: TeachingMode; scope: 'turn' | 'conversation'; start: number; end: number } | null;
+  attempt: {
+    message_id: string; step_id: string; source: 'ai'; start: number; end: number;
+    is_attempt: boolean; revision: number;
+    corrections: Array<{ revision: number; is_attempt: boolean; at: string }>;
+  } | null;
+};
+export type TeachingAttemptCorrection = { expected_revision: number; is_attempt: boolean; request_key: string };
+
 export type AiMessage = {
   id: string;
   conversation_id: string;
@@ -404,6 +424,7 @@ export type AiMessage = {
   search_trace?: SearchTrace | null;
   generation_trace?: GenerationTrace | null;
   help_record?: HelpRecord | null;
+  teaching?: TeachingRecord | null;
   source_scope?: AppliedSourceScope | null;
   attachment_version_ids?: string[];
   inherited_from?: { conversation_id: string; message_id: string } | null;
@@ -976,8 +997,8 @@ export function createAiConversation(
   });
 }
 
-export function getAiConversation(conversationId: string): Promise<AiConversationDetail> {
-  return request<AiConversationDetail>(`/api/ai/conversations/${conversationId}`);
+export function getAiConversation(conversationId: string, signal?: AbortSignal): Promise<AiConversationDetail> {
+  return request<AiConversationDetail>(`/api/ai/conversations/${conversationId}`, { signal });
 }
 
 export function branchAiConversation(conversationId: string, messageId: string, requestKey: string): Promise<AiConversationDetail> {
@@ -1053,6 +1074,10 @@ export function decideOutboundRequest(id: string, digest: string, decision: 'app
 
 export function recordAiHelpDisplay(conversationId: string, messageId: string, characters: number): Promise<HelpRecord> {
   return request(`/api/ai/conversations/${conversationId}/messages/${messageId}/help-display`, { method: 'POST', body: JSON.stringify({ characters }) });
+}
+
+export function correctAiTeachingAttempt(conversationId: string, answerId: string, payload: TeachingAttemptCorrection, signal?: AbortSignal): Promise<TeachingRecord> {
+  return request(`/api/ai/conversations/${conversationId}/messages/${answerId}/teaching-attempt`, { method: 'POST', body: JSON.stringify(payload), signal });
 }
 
 export function cancelAiRun(runId: string): Promise<{ run: AiRun }> {
@@ -2118,7 +2143,7 @@ export type QuestionDiscussion = {
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
   provider_protocol?: AiApiProtocol | null;
   image_model?: { provider_profile_id: string; provider_model_id: string; model: string; supports_image_input: boolean | null } | null;
-  turns: Array<{ search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; source_scope?: AppliedSourceScope | null; attachment_version_ids?: string[]; inherited_from?: { discussion_id: string; turn_id: string } | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+  turns: Array<{ teaching?: TeachingRecord | null; search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; source_scope?: AppliedSourceScope | null; attachment_version_ids?: string[]; inherited_from?: { discussion_id: string; turn_id: string } | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; outcome_id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
@@ -2156,7 +2181,7 @@ export function getLearningRecord(id: string): Promise<LearningRecordDetail> { r
 export function createQuestionDiscussion(id: string, submissionId: string, questionId: string, requestKey: string, evaluationId?: string | null): Promise<QuestionDiscussion> {
   return request(`/api/learning/verifications/${id}/discussions`, { method: 'POST', body: JSON.stringify({ submission_id: submissionId, question_id: questionId, request_key: requestKey, evaluation_id: evaluationId }) });
 }
-export function getQuestionDiscussion(id: string): Promise<QuestionDiscussion> { return request(`/api/learning/discussions/${id}`); }
+export function getQuestionDiscussion(id: string, signal?: AbortSignal): Promise<QuestionDiscussion> { return request(`/api/learning/discussions/${id}`, { signal }); }
 export function branchQuestionDiscussion(id: string, turnId: string, requestKey: string): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/branches`, { method: 'POST', body: JSON.stringify({ turn_id: turnId, request_key: requestKey }) });
 }
@@ -2165,6 +2190,9 @@ export function sendDiscussionMessage(id: string, content: string, requestKey: s
 }
 export function recordDiscussionHelpDisplay(discussionId: string, turnId: string, characters: number): Promise<HelpRecord> {
   return request(`/api/learning/discussions/${discussionId}/turns/${turnId}/help-display`, { method: 'POST', body: JSON.stringify({ characters }) });
+}
+export function correctDiscussionTeachingAttempt(discussionId: string, turnId: string, payload: TeachingAttemptCorrection, signal?: AbortSignal): Promise<TeachingRecord> {
+  return request(`/api/learning/discussions/${discussionId}/turns/${turnId}/teaching-attempt`, { method: 'POST', body: JSON.stringify(payload), signal });
 }
 export function recordReferenceHelpDisplay(verificationId: string, evaluationId: string, questionId: string): Promise<ReferenceHelpDisplay> {
   return request(`/api/learning/verifications/${verificationId}/evaluations/${evaluationId}/questions/${questionId}/help-display`, { method: 'POST' });

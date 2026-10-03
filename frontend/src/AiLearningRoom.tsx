@@ -5,7 +5,7 @@ import useReplyHistory from "./useReplyHistory";
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
 import { setReviewLocation } from "./LearningRecords";
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject, type ReactNode } from "react";
 import { ArrowLeft, Bot, Check, CircleAlert, History, ListChecks, MapPin, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
 import LearningMarkdown from "./LearningMarkdown";
 import SearchControls, { type SearchSelection } from "./SearchControls";
@@ -61,6 +61,7 @@ import DialogPortal from "./DialogPortal";
 import useDismissibleLayer from "./useDismissibleLayer";
 import LearningVerification from "./LearningVerification";
 import LearningPosition from "./LearningPosition";
+import TeachingState, { conversationTeachingEntries } from './TeachingState';
 import LearningCompletion from "./LearningCompletion";
 
 const SESSION_KEY = "nautilus.ai.learning-room";
@@ -1112,6 +1113,12 @@ export default function AiLearningRoom({
   const canSend = entryReady && !branchBusy && !sharedState.blocked && Boolean(
     activeProvider?.has_api_key && activeProvider.enabled && (!selectedModelId || (activeModel?.enabled && activeModel.discovery_status !== "unavailable")),
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
+  const teaching = conversationId && detail?.conversation.id === conversationId && <TeachingState
+    key={conversationId} kind="conversation" scopeId={conversationId} pathKey={replyHistory.path.join(':')}
+    entries={conversationTeachingEntries(visibleMessages)} standalone={!learningBrief}
+    disabled={!entryReady || sharedState.blocked || branchBusy || Boolean(currentRun) || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
+    onUpdated={(answerId, record) => setDetail(previous => previous?.conversation.id === conversationId
+      ? { ...previous, messages: previous.messages.map(message => message.id === answerId ? { ...message, teaching: record } : message) } : previous)} />;
 
   return (
     <>
@@ -1272,11 +1279,12 @@ export default function AiLearningRoom({
         </div>
       </header>
 
-    {learningBrief && <><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
+    {learningBrief && <><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} teaching={teaching} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
         <button className="button button--quiet" disabled={branchBusy} onClick={async () => { try { const card = await getReturnReview(); if (card) await chooseReturnReview(card.id, "stop_for_now", `room-stop:${card.id}`); onBack(); } catch (reason) { setError(reason instanceof Error ? reason.message : "暂停未保存"); } }}>今天先停</button>
         {learningBrief.delegation_id && !learningBrief.history_only && <button className="button button--quiet" type="button" aria-expanded={completionOpen} onClick={() => setCompletionOpen(value => !value)}>记录本次完成</button>}
         {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}
       </div></>}
+      {!learningBrief && teaching}
 
       <div className="ai-chat-with-map">
       <ConversationStateNotice state={sharedState} onSelectPath={() => { void sharedState.save({ leaf_id: detail?.messages.filter(message => !message.source_scope?.purged).at(-1)?.id ?? null, paths: {} }); }} />
@@ -1448,7 +1456,7 @@ function ContextFacts({ context }: { context: AiLearningContext }) {
   return <dl><div><dt>计划</dt><dd>{context.plan_counts.total}</dd></div><div><dt>待执行</dt><dd>{context.task_counts.total}</dd></div><div><dt>逾期</dt><dd>{context.task_counts.overdue}</dd></div></dl>;
 }
 
-function LearningRoomBriefCard({ brief, conversationId, visibleMessages, chatBusy }: { brief: LearningRoomBrief; conversationId: string | null; visibleMessages: AiMessage[]; chatBusy: boolean }) {
+function LearningRoomBriefCard({ brief, conversationId, visibleMessages, chatBusy, teaching }: { brief: LearningRoomBrief; conversationId: string | null; visibleMessages: AiMessage[]; chatBusy: boolean; teaching: ReactNode }) {
   return (
     <section className="ai-room-brief" aria-label="本次学习安排">
       <details>
@@ -1459,6 +1467,8 @@ function LearningRoomBriefCard({ brief, conversationId, visibleMessages, chatBus
           {brief.boundaries && <span><b>边界</b>{brief.boundaries}</span>}
           <span><b>停止</b>{brief.stop_conditions}</span>
         </div>
+        {teaching}
+        {/* Learning position remains a separate, revisable note. */}
         {brief.session_id && <LearningPosition key={`${brief.session_id}:${conversationId}`} sessionId={brief.session_id} conversationId={conversationId} visibleMessages={visibleMessages} chatBusy={chatBusy} />}
       </details>
     </section>

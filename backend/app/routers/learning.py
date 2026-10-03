@@ -34,7 +34,7 @@ from ..completion import CompletionService, CompletionRequest, CompletionReviewR
 from ..managed_purge import ManagedPurge
 from ..question_discussion import QuestionDiscussionService
 from ..schemas import QuestionDiscussionCreateRequest, QuestionDiscussionMessageRequest, DiscussionBranchRequest
-from ..schemas import HelpDisplayRequest
+from ..schemas import HelpDisplayRequest, TeachingAttemptCorrectionRequest
 from ..verification_help import record_solution_display
 from ..schemas import (
     AgentPermissionDenyRequest,
@@ -548,6 +548,17 @@ def record_discussion_display(discussion_id: str, turn_id: str, payload: HelpDis
                               request: Request, identity: dict[str, Any] = Depends(current_identity)):
     try:
         return request.app.state.discussions.record_help_display(identity, discussion_id, turn_id, payload.characters)
+    except DomainError as error:
+        _raise_learning_error(error)
+
+
+@router.post('/discussions/{discussion_id}/turns/{turn_id}/teaching-attempt')
+def correct_teaching_attempt(discussion_id: str, turn_id: str,
+                             payload: TeachingAttemptCorrectionRequest, request: Request,
+                             identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return request.app.state.discussions.correct_teaching_attempt(
+            identity, discussion_id, turn_id, **payload.model_dump())
     except DomainError as error:
         _raise_learning_error(error)
 

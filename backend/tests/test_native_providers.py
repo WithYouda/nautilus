@@ -49,6 +49,7 @@ async def test_search_is_only_in_enabled_chat_request(cls, kind):
     for enabled in (False, True):
         provider = cls(config(kind, search=enabled), transport=httpx.MockTransport(handler))
         chunks = [chunk async for chunk in provider.stream_chat([{"role": "user", "content": "test"}])]
+        chunks = [chunk for chunk in chunks if chunk.kind != "completion"]
         assert any(chunk.kind == "content" and chunk.text == "reply" for chunk in chunks)
         if enabled:
             assert json.loads(chunks[-1].text)["status"] == "not_used"
@@ -76,6 +77,7 @@ async def test_openai_search_call_and_url_citation():
             ("response.completed", {"type": "response.completed", "response": {"output": []}}),
         )
     chunks = [c async for c in OpenAIResponsesProvider(config("openai_responses"), httpx.MockTransport(handler)).stream_chat([{"role": "user", "content": "q"}])]
+    chunks = [chunk for chunk in chunks if chunk.kind != "completion"]
     assert any(c.kind == "reasoning" and c.text == "provider summary" for c in chunks)
     assert json.loads(chunks[-2].text)["items"] == [{"title": "One", "url": "https://example.com/1"}]
     assert json.loads(chunks[-1].text)["status"] == "succeeded"
@@ -88,6 +90,7 @@ async def test_google_grounding_and_sources():
         assert str(request.url) == "https://api.example.test/v1beta/models/gemini-test:streamGenerateContent?alt=sse"
         return sse(("", {"candidates": [{"content": {"parts": [{"text": "answer"}]}, "finishReason": "STOP", "groundingMetadata": {"webSearchQueries": ["q"], "groundingChunks": [{"web": {"uri": "https://example.com/2", "title": "Two"}}], "searchEntryPoint": {"renderedContent": suggestion}}}]}))
     chunks = [c async for c in GoogleProvider(config("google"), httpx.MockTransport(handler)).stream_chat([{"role": "user", "content": "q"}])]
+    chunks = [chunk for chunk in chunks if chunk.kind != "completion"]
     assert json.loads(chunks[-2].text)["items"] == [{"title": "Two", "url": "https://example.com/2"}]
     assert json.loads(chunks[-2].text)["search_suggestions_html"] == suggestion
     assert json.loads(chunks[-1].text)["status"] == "succeeded"
@@ -100,6 +103,7 @@ async def test_google_oversized_search_suggestion_is_omitted():
     def handler(_request):
         return sse(("", {"candidates": [{"content": {"parts": [{"text": "answer"}]}, "finishReason": "STOP", "groundingMetadata": {"webSearchQueries": ["q"], "searchEntryPoint": {"renderedContent": "x" * (64 * 1024 + 1)}}}]}))
     chunks = [c async for c in GoogleProvider(config("google"), httpx.MockTransport(handler)).stream_chat([{"role": "user", "content": "q"}])]
+    chunks = [chunk for chunk in chunks if chunk.kind != "completion"]
     assert not any(c.kind == "search_sources" for c in chunks)
     assert json.loads(chunks[-1].text)["status"] == "succeeded"
 
@@ -114,6 +118,7 @@ async def test_anthropic_result_and_citation():
             ("message_stop", {"type": "message_stop"}),
         )
     chunks = [c async for c in AnthropicProvider(config("anthropic"), httpx.MockTransport(handler)).stream_chat([{"role": "user", "content": "q"}])]
+    chunks = [chunk for chunk in chunks if chunk.kind != "completion"]
     assert json.loads(chunks[-2].text)["items"] == [{"title": "Three", "url": "https://example.com/3"}]
     assert json.loads(chunks[-1].text)["status"] == "succeeded"
 

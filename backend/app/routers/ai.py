@@ -18,6 +18,7 @@ from ..schemas import (
     ModelManualRequest,
     MessageSendRequest,
     HelpDisplayRequest,
+    TeachingAttemptCorrectionRequest,
     ProviderModelsRequest,
     ProviderCreateRequest,
     ProviderSaveRequest,
@@ -578,6 +579,17 @@ def record_help_display(
 ) -> dict[str, Any]:
     try:
         return conversation_service(request).record_help_display(identity["id"], conversation_id, message_id, payload.characters)
+    except ConversationError as error:
+        _raise(error)
+
+
+@router.post('/conversations/{conversation_id}/messages/{message_id}/teaching-attempt')
+def correct_teaching_attempt(conversation_id: str, message_id: str,
+                             payload: TeachingAttemptCorrectionRequest, request: Request,
+                             identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return conversation_service(request).correct_teaching_attempt(
+            identity['id'], conversation_id, message_id, **payload.model_dump())
     except ConversationError as error:
         _raise(error)
 

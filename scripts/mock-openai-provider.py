@@ -271,6 +271,21 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n')
                 self.wfile.flush()
                 return
+            c1_request = str(messages[last_user].get('content', '')) if last_user >= 0 else ''
+            if '[C1' in c1_request:
+                runtime = next((str(m.get('content', '')) for m in reversed(messages)
+                    if str(m.get('content', '')).startswith('Nautilus 本轮执行上下文')), None)
+                if runtime:
+                    context = json.loads(runtime.split('\n', 1)[1])
+                    sequence = STATE.snapshot()['requests'].get(scenario, 1)
+                    point = f'输入边界检查（合成{sequence}）。'
+                    proposal = {'step': point, 'attempt': {'quote': c1_request}
+                        if '[C1尝试]' in c1_request and context['before']['step'] else None, 'mode': None}
+                    trailer = '\n' + context['opening'] + json.dumps(proposal, ensure_ascii=False) + context['closing']
+                    chunks = ([point, '请说明你的判断。'] if '[C1慢流]' not in c1_request
+                              else ['正在分析输入边界。', *SLOW_CHUNKS, point])
+                    chunks += [trailer[index:index + 17] for index in range(0, len(trailer), 17)]
+                    delay = .08 if '[C1慢流]' in c1_request else .005
             if scenario == "mock-reasoning" or discussion_stream:
                 for reasoning in ["先识别题目条件。", "再核对推导路径。"]:
                     event = json.dumps(

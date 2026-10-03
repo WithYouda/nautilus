@@ -19,6 +19,7 @@ from .help_records import HELP_PROMPTS, public_help, record_display
 from .source_runtime import material_guard, scope_key, public_scope, compatible_scope
 from .material_images import attach_material_images, check_image_sources, require_image_capability
 from .provider_network import ProviderDiagnostics
+from . import teaching_runtime as teaching
 
 
 class QuestionDiscussionService:
@@ -205,6 +206,7 @@ class QuestionDiscussionService:
         turn['question_version_id'] = reply.get('question_version_id', turn['question_id'])
         turn['parent_turn_id'] = reply.get('parent_turn_id', turn.get('parent_turn_id'))
         turn['help_record'] = public_help(snapshot, turn.get('assistant_content'), turn['status'], turn.get('finished_at'))
+        turn['teaching'] = teaching.public(snapshot, turn['status'])
         turn['sources'] = [{**source, **(self._resolve(owner, delegation_id, source) or {'excerpt': '来源已不可用'})}
                            for source in json.loads(turn.pop('sources_json'))]
         return turn
@@ -228,6 +230,28 @@ class QuestionDiscussionService:
                 c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
                     (json.dumps(snapshot, ensure_ascii=False), turn_id))
             return public_help(snapshot, row['assistant_content'], row['status'], row['finished_at'])
+
+    def correct_teaching_attempt(self, identity, discussion_id, turn_id, **payload):
+        owner = self.learning.principal(identity).owner_id
+        with self.db.transaction(immediate=True) as c:
+            discussion = self._owned(owner, discussion_id)
+            self._source(identity, discussion, c)
+            row = c.execute('SELECT status,provider_snapshot_json FROM learning_discussion_turn WHERE discussion_id=? AND id=?',
+                            (discussion_id, turn_id)).fetchone()
+            if row is None:
+                raise DomainError('not_found', 404)
+            snapshot = json.loads(row['provider_snapshot_json'] or '{}')
+            if row['status'] != 'succeeded' or (snapshot.get('source_scope') or {}).get('purged'):
+                raise DomainError('artifact_not_eligible', 409)
+            if c.execute("SELECT 1 FROM learning_discussion_turn WHERE discussion_id=? AND status='running'", (discussion_id,)).fetchone():
+                raise DomainError('discussion_busy', 409)
+            try:
+                teaching.correct(snapshot, **payload, at=utc_timestamp())
+            except ValueError as error:
+                raise DomainError(str(error), 409) from error
+            c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
+                      (json.dumps(snapshot, ensure_ascii=False), turn_id))
+            return teaching.public(snapshot, row['status'])
 
     @material_guard
     def start(self, identity, discussion_id, content, request_key, retry=False,
@@ -359,6 +383,8 @@ class QuestionDiscussionService:
                                        'attempt_id': attempt_id, 'reply': reply, 'search_request': search or {'mode': 'off'},
                                        'source_request': source_scope or {'mode': 'unspecified', 'version_ids': []},
                                        'source_scope': public_scope(frozen),
+                                       'teaching': teaching.freeze([by_id[item] for item in history_path],
+                                           answer_id=turn_id, message_id=turn_id, kind='discussion', scope_id=discussion_id),
                                        'attachment_version_ids': attached,
                                        **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
                 if self.current_state is not None:
@@ -564,6 +590,16 @@ class QuestionDiscussionService:
                 help_kind = snapshot.get('help_request', {}).get('kind')
                 if help_kind in HELP_PROMPTS:
                     messages[0] = {**messages[0], 'content': messages[0]['content'] + '\n' + HELP_PROMPTS[help_kind]}
+                teaching_stream = None
+                if snapshot.get('teaching'):
+                    attempt_texts = {}
+                    for observation in snapshot['teaching']['attempt_context']:
+                        original = self.db.fetchone('SELECT user_content FROM learning_discussion_turn WHERE discussion_id=? AND id=? AND status<>?',
+                            (discussion_id, observation['message_id'], 'purged'))
+                        if original:
+                            attempt_texts[observation['message_id']] = original['user_content'] or ''
+                    messages = teaching.add_prompt(messages, snapshot['teaching'], attempt_texts)
+                    teaching_stream = teaching.TeachingStream(snapshot['teaching'])
                 def active():
                     # Also used inside KnowledgeRun's learning DB transaction:
                     # do not start a nested transaction on the same connection.
@@ -607,7 +643,10 @@ class QuestionDiscussionService:
                     stream = provider.stream_chat(messages)
                 reply = ''
                 reasoning = ''
-                async for chunk in stream:
+                chunks = teaching_stream.filter(stream) if teaching_stream else stream
+                async for chunk in chunks:
+                    if chunk.kind == 'completion':
+                        continue
                     if chunk.kind in {'search_status', 'search_sources'}:
                         apply_native_event(trace, chunk)
                         publish_search(trace)
@@ -641,6 +680,15 @@ class QuestionDiscussionService:
                 if not self._active(c, discussion_id, turn_id, attempt_id) or any(self._resolve(owner, discussion['delegation_id'], ref) is None for ref in refs):
                     raise DomainError('artifact_not_eligible', 409)
                 c.execute("UPDATE learning_discussion_turn SET assistant_content=?, status='succeeded', finished_at=? WHERE id=? AND status='running'", (reply, utc_timestamp(), turn_id))
+                if teaching_stream:
+                    current_snapshot = json.loads(c.execute(
+                        'SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (turn_id,)).fetchone()[0])
+                    result = teaching.complete(current_snapshot.get('teaching'), teaching_stream.proposal(),
+                        body=reply, user_text=content, at=utc_timestamp())
+                    if result:
+                        current_snapshot['teaching']['result'] = result
+                        c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
+                            (json.dumps(current_snapshot, ensure_ascii=False), turn_id))
                 from .branch_maps import name_new_discussion_turn
                 name_new_discussion_turn(c, discussion_id, turn_id)
         except BaseException as error:
@@ -655,7 +703,7 @@ class QuestionDiscussionService:
                     c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=json_patch(provider_snapshot_json,?) WHERE id=?',
                               (json.dumps({'search_trace': trace}), turn_id))
                 if isinstance(error, DomainError) and error.code == 'artifact_not_eligible':
-                    c.execute("UPDATE learning_discussion_turn SET assistant_content=NULL, reasoning_content=NULL, sources_json='[]', provider_snapshot_json=json_remove(provider_snapshot_json,'$.generation_trace','$.model_turn','$.search_trace') WHERE id=? AND status='running' AND json_extract(provider_snapshot_json,'$.attempt_id')=?", (turn_id, attempt_id))
+                    c.execute("UPDATE learning_discussion_turn SET assistant_content=NULL, reasoning_content=NULL, sources_json='[]', provider_snapshot_json=json_remove(provider_snapshot_json,'$.generation_trace','$.model_turn','$.search_trace','$.teaching','$.teaching_attempt_corrections') WHERE id=? AND status='running' AND json_extract(provider_snapshot_json,'$.attempt_id')=?", (turn_id, attempt_id))
                 c.execute("UPDATE learning_discussion_turn SET status='failed', reason=?, finished_at=? WHERE id=? AND status='running' AND json_extract(provider_snapshot_json,'$.attempt_id')=?", ('cancelled' if isinstance(error, OutboundCanceled) else 'interrupted' if isinstance(error, asyncio.CancelledError) else 'generation_failed', utc_timestamp(), turn_id, attempt_id))
             if isinstance(error, asyncio.CancelledError):
                 raise

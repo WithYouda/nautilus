@@ -13,6 +13,7 @@ import OutboundApproval from './OutboundApproval';
 import AssistantResponse from './AssistantResponse';
 import HelpControls from './HelpControls';
 import HelpRecord, { HelpRecordFacts } from './HelpRecord';
+import TeachingState, { discussionTeachingEntries } from './TeachingState';
 import ComposerAttachments from './ComposerAttachments';
 import MessageAttachments from './MessageAttachments';
 import { attachmentError } from './AttachmentSupport';
@@ -215,6 +216,11 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
       </div>
       <span className="question-discussion-context">题目讨论</span>
     </header>
+    {discussion?.id === id && !discussion.purged && <TeachingState key={id} kind="discussion" scopeId={id} pathKey={replyHistory.path.join(':')}
+      entries={discussionTeachingEntries(visibleTurns)} standalone
+      disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
+      onUpdated={(answerId, record) => setDiscussion(previous => previous?.id === id
+        ? { ...previous, turns: previous.turns.map(turn => turn.id === answerId ? { ...turn, teaching: record } : turn) } : previous)} />}
     <div className="ai-chat-with-map">
     <BranchMap kind="discussion" id={id} revision={`${discussion?.title}:${discussion?.turns.at(-1)?.status}:${discussion?.turns.length}`} disabled={!discussion || discussion.id !== id || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
       onNavigate={(nextId, source) => { drafts.current.set(id, content); if (source) setMapLocation({ id: nextId, source }); onNavigate(nextId); }}

@@ -202,6 +202,7 @@ async def external_stream(service, run, messages, provider, publish, *, outbound
             # second private archive or be replayed as protocol history.
             if not knowledge or not knowledge.used:
                 yield ProviderChunk("model_turn", json.dumps(session.export_turn(), ensure_ascii=False))
+            yield ProviderChunk('completion', turn.completion)
             return
         if not allow_tools:
             raise ProviderError("模型未遵守工具调用次数限制", kind="tool_limit")

@@ -46,7 +46,7 @@ class ProviderConfig:
 
 @dataclass(frozen=True)
 class ProviderChunk:
-    kind: Literal["content", "reasoning", "search_status", "search_sources", "turn_end", "tool_start", "tool_end", "model_turn"]
+    kind: Literal["content", "reasoning", "search_status", "search_sources", "turn_end", "tool_start", "tool_end", "model_turn", "completion"]
     text: str
 
 
@@ -212,10 +212,11 @@ class OpenAICompatibleProvider:
                         body = await self._read_limited(response)
                         raise self._http_error(response.status_code, body, include_detail=include_error_detail)
                     terminal = False
+                    finish_reason = None
                     saw_content = False
                     think_parser = _ThinkStreamParser()
                     async for line in response.aiter_lines():
-                        chunks, line_terminal = self._parse_stream_event(
+                        chunks, line_terminal, line_finish = self._parse_stream_event(
                             line, secret=self.config.api_key, include_error_detail=include_error_detail
                         )
                         for chunk in chunks:
@@ -227,6 +228,16 @@ class OpenAICompatibleProvider:
                             for item in normalized:
                                 saw_content = saw_content or item.kind == "content"
                                 yield item
+                        if line_finish is not None:
+                            finish_reason = line_finish
+                            if finish_reason == "length":
+                                for item in think_parser.finish():
+                                    yield item
+                                raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
+                            if finish_reason == "content_filter":
+                                raise ProviderError("提供方未返回可用内容", kind="content_filtered")
+                            if finish_reason != "stop":
+                                raise ProviderError("提供方回复未正常完成", kind="protocol_error")
                         if line_terminal:
                             terminal = True
                             break
@@ -241,6 +252,9 @@ class OpenAICompatibleProvider:
                         raise ProviderError(
                             "提供方流式响应没有正文", kind="protocol_error"
                         )
+                    # Some compatible endpoints omit finish_reason despite [DONE].
+                    # Their text remains usable, but cannot advance teaching state.
+                    yield ProviderChunk("completion", "complete" if finish_reason == "stop" else "unknown")
         except httpx.TimeoutException as error:
             raise ProviderError("提供方响应超时", kind="timeout") from error
         except httpx.HTTPError as error:
@@ -322,16 +336,16 @@ class OpenAICompatibleProvider:
     @staticmethod
     def _parse_stream_event(
         line: str, *, secret: str | None = None, include_error_detail: bool = True
-    ) -> tuple[list[ProviderChunk], bool]:
-        """解析一行 SSE，返回（规范化增量、是否终止）。"""
+    ) -> tuple[list[ProviderChunk], bool, str | None]:
+        """解析一行 SSE，返回（规范化增量、流终止标志、模型结束原因）。"""
         stripped = line.strip()
         if not stripped or not stripped.startswith("data:"):
-            return [], False
+            return [], False, None
         data = stripped[len("data:") :].strip()
         if not data:
-            return [], False
+            return [], False, None
         if data == "[DONE]":
-            return [], True
+            return [], True, None
         try:
             event = json.loads(data)
         except json.JSONDecodeError as error:
@@ -361,6 +375,11 @@ class OpenAICompatibleProvider:
         reasoning = delta.get("reasoning_content", delta.get("reasoning"))
         if reasoning is not None and not isinstance(reasoning, str):
             raise ProviderError("提供方返回了无效的推理增量", kind="protocol_error")
+        finish_reason = choice.get("finish_reason")
+        if finish_reason is not None and not isinstance(finish_reason, str):
+            raise ProviderError("提供方返回了无效的结束原因", kind="protocol_error")
+        if delta.get("refusal"):
+            raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
         # Chat Completions 流通常先发 finish_reason、随后再发 [DONE]。
         # 这里不把 finish_reason 当终止，否则会吞掉缺失 [DONE] 的截断响应。
         chunks: list[ProviderChunk] = []
@@ -368,12 +387,12 @@ class OpenAICompatibleProvider:
             chunks.append(ProviderChunk(kind="reasoning", text=reasoning))
         if content:
             chunks.append(ProviderChunk(kind="content", text=content))
-        return chunks, False
+        return chunks, False, finish_reason
 
     @staticmethod
     def _parse_stream_line(line: str) -> str | None:
         """兼容旧的内部调用：只返回正文增量。"""
-        chunks, _terminal = OpenAICompatibleProvider._parse_stream_event(line)
+        chunks, _terminal, _finish_reason = OpenAICompatibleProvider._parse_stream_event(line)
         return "".join(chunk.text for chunk in chunks if chunk.kind == "content") or None
 
     async def list_models(self) -> list[str]:

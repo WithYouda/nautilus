@@ -226,6 +226,7 @@ class OpenAIResponsesProvider(_NativeProvider):
         seen = False
         searched = False
         completed = False
+        completion = "unknown"
         sources: dict[str, dict[str, str]] = {}
         if enabled:
             yield _status(self.kind, "running")
@@ -259,13 +260,28 @@ class OpenAIResponsesProvider(_NativeProvider):
                     if output.get("type") == "web_search_call" and output.get("status") == "completed":
                         searched = True
                 if event == "response.completed":
+                    response = _object(body.get("response"))
+                    if response.get("status") not in {None, "completed"}:
+                        raise ProviderError("提供方回复未正常完成", kind="protocol_error")
+                    if any(_object(part).get("type") == "refusal"
+                           for output in _array(response.get("output"))
+                           for part in _array(_object(output).get("content"))):
+                        raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
                     completed = True
+                    completion = "complete" if response.get("status") == "completed" else "unknown"
             elif event in {"response.reasoning_text.delta", "response.reasoning_summary_text.delta"}:
                 delta = body.get("delta")
                 if isinstance(delta, str) and delta:
                     yield ProviderChunk("reasoning", delta)
             elif event in {"response.failed", "response.incomplete", "error"}:
+                reason = _object(_object(body.get("response")).get("incomplete_details")).get("reason")
+                if reason == "max_output_tokens":
+                    raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
+                if reason == "content_filter":
+                    raise ProviderError("提供方未返回可用内容", kind="content_filtered")
                 raise ProviderError("提供方未完成回复", kind="upstream_error")
+            elif event in {"response.refusal.delta", "response.refusal.done"}:
+                raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
             elif event == "[DONE]":
                 break
         if not completed:
@@ -276,6 +292,7 @@ class OpenAIResponsesProvider(_NativeProvider):
             if sources:
                 yield _sources(list(sources.values())[:MAX_SOURCES])
             yield _status(self.kind, "succeeded" if searched else "not_used")
+        yield ProviderChunk("completion", completion)
 
     async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
         # Responses JSON mode requires an explicit JSON instruction in the input.
@@ -351,9 +368,12 @@ class GoogleProvider(_NativeProvider):
                 if body.get("promptFeedback"):
                     raise ProviderError("提供方未返回可用内容", kind="content_filtered")
                 continue
-            if candidate.get("finishReason") in {"MAX_TOKENS", "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT"}:
-                raise ProviderError("提供方未完成回复", kind="output_truncated")
-            if candidate.get("finishReason") not in {None, "STOP"}:
+            finish_reason = candidate.get("finishReason")
+            if finish_reason is not None and not isinstance(finish_reason, str):
+                raise ProviderError("提供方返回了无效的结束原因", kind="protocol_error")
+            if finish_reason in {"SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT"}:
+                raise ProviderError("提供方未返回可用内容", kind="content_filtered")
+            if finish_reason not in {None, "STOP", "MAX_TOKENS"}:
                 raise ProviderError("提供方未完成回复", kind="protocol_error")
             if candidate.get("finishReason") == "STOP":
                 finished = True
@@ -367,6 +387,8 @@ class GoogleProvider(_NativeProvider):
                 else:
                     saw = True
                     yield ProviderChunk("content", value)
+            if finish_reason == "MAX_TOKENS":
+                raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
             grounding = _object(candidate.get("groundingMetadata"))
             suggestion = _object(grounding.get("searchEntryPoint")).get("renderedContent")
             if isinstance(suggestion, str) and len(suggestion.encode("utf-8")) <= 64 * 1024:
@@ -386,6 +408,7 @@ class GoogleProvider(_NativeProvider):
             if sources or search_suggestions_html is not None:
                 yield _sources(list(sources.values())[:MAX_SOURCES], search_suggestions_html=search_suggestions_html)
             yield _status(self.kind, "succeeded" if grounded else "not_used")
+        yield ProviderChunk("completion", "complete")
 
     async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
         body = await self._post_json(self._endpoint(False), self._payload(messages, stream=False, max_tokens=max_tokens, json_mode=json_mode))
@@ -430,6 +453,7 @@ class AnthropicProvider(_NativeProvider):
         enabled = bool(getattr(self.config, "web_search", False))
         saw = False
         completed = False
+        stop_reason = None
         searched = False
         sources: dict[str, dict[str, str]] = {}
         if enabled:
@@ -473,8 +497,18 @@ class AnthropicProvider(_NativeProvider):
                             sources[source["url"]] = source
             elif kind == "message_delta":
                 reason = _object(body.get("delta")).get("stop_reason")
-                if reason == "max_tokens":
+                if reason is not None:
+                    if not isinstance(reason, str):
+                        raise ProviderError("提供方返回了无效的结束原因", kind="protocol_error")
+                    stop_reason = reason
+                if stop_reason in {"max_tokens", "model_context_window_exceeded"}:
                     raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
+                if stop_reason == "refusal":
+                    raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
+                if stop_reason == "pause_turn":
+                    raise ProviderError("提供方工具执行暂停，回复尚未完成", kind="upstream_error")
+                if stop_reason not in {None, "end_turn"}:
+                    raise ProviderError("提供方回复未正常完成", kind="protocol_error")
             elif kind == "message_stop":
                 completed = True
             elif kind == "[DONE]":
@@ -487,6 +521,7 @@ class AnthropicProvider(_NativeProvider):
             if sources:
                 yield _sources(list(sources.values())[:MAX_SOURCES])
             yield _status(self.kind, "succeeded" if searched else "not_used")
+        yield ProviderChunk("completion", "complete" if stop_reason == "end_turn" else "unknown")
 
     async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int = 48, json_mode: bool = False) -> str:
         body = await self._post_json(self.endpoint, self._payload(messages, stream=False, max_tokens=max_tokens, json_mode=json_mode))

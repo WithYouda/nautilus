@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 import httpx
 
@@ -34,6 +34,7 @@ class ToolCall:
 class ToolTurn:
     calls: list[ToolCall]
     continuation: Any
+    completion: Literal["complete", "unknown"] = "complete"
 
 
 def _bad(message: str = "提供方工具响应格式不正确") -> ProviderError:
@@ -101,6 +102,8 @@ class ToolSession:
                 continue
             native = saved["messages"]
             size = len(json.dumps(native, ensure_ascii=False).encode("utf-8"))
+            if saved.get('teaching_input'):
+                size += len(json.dumps(saved['teaching_input'], ensure_ascii=False).encode('utf-8'))
             if size <= MAX_CONTINUATION and replay_bytes + size <= MAX_REPLAY_BYTES:
                 selected[index] = native
                 replay_bytes += size
@@ -108,6 +111,14 @@ class ToolSession:
         for index, message in enumerate(self.messages):
             role = message.get("role")
             if index in selected:
+                # C1's per-run user context preceded this answer's original
+                # question. Preserve it when replaying signed native history;
+                # do not reconstruct it from revised/current teaching state.
+                runtime = message.get('_model_turn', {}).get('teaching_input')
+                if (isinstance(runtime, dict) and runtime.get('role') == 'user'
+                        and isinstance(runtime.get('content'), str) and history
+                        and history[-1].get('role') == 'user'):
+                    history.insert(len(history) - 1, encode_message(runtime, self.kind))
                 history.extend(copy.deepcopy(selected[index]))
                 continue
             if self.kind in {"openai_compatible", "openai_responses"}:
@@ -133,8 +144,13 @@ class ToolSession:
             raise _bad("模型轮次记录包含图片输入")
         if len(serialized.encode("utf-8")) > MAX_CONTINUATION:
             raise _bad("模型轮次记录过大")
+        runtime = next(({'role': 'user', 'content': m['content']} for m in reversed(self.messages)
+                        if m.get('_teaching_runtime') is True), None)
+        if runtime and len(serialized.encode('utf-8')) + len(json.dumps(runtime, ensure_ascii=False).encode('utf-8')) > MAX_CONTINUATION:
+            raise _bad('模型轮次记录过大')
         return {"provider_kind": self.kind, "model": self.provider.config.model,
-                "base_url": self.provider.config.base_url, "messages": copy.deepcopy(generated)}
+                "base_url": self.provider.config.base_url, "messages": copy.deepcopy(generated),
+                **({'teaching_input': runtime} if runtime else {})}
 
     async def stream_turn(self, tools: list[dict], *, allow_tools: bool = True) -> AsyncIterator[ProviderChunk | ToolTurn]:
         if self._pending is not None:
@@ -157,10 +173,11 @@ class ToolSession:
             async for item in self._anthropic(tools, allow_tools):
                 yield item
 
-    def _finish(self, calls: list[ToolCall], continuation: Any) -> ToolTurn:
+    def _finish(self, calls: list[ToolCall], continuation: Any, *,
+                completion: Literal["complete", "unknown"] = "complete") -> ToolTurn:
         if len(json.dumps(continuation, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
             raise _bad("提供方响应过大")
-        turn = ToolTurn(_bounded(calls), continuation)
+        turn = ToolTurn(_bounded(calls), continuation, completion)
         if turn.calls:
             self._pending = turn
         else:
@@ -203,7 +220,7 @@ class ToolSession:
             self._history.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": call.id, "content": by_id[call.id]} for call in turn.calls]})
         self._pending = None
 
-    async def _chat_events(self, payload: dict) -> AsyncIterator[dict]:
+    async def _chat_events(self, payload: dict) -> AsyncIterator[dict | None]:
         provider = self.provider
         try:
             async with provider._client() as client:
@@ -217,6 +234,7 @@ class ToolSession:
                             continue
                         data = line[5:].strip()
                         if data == "[DONE]":
+                            yield None  # Keep transport completion separate from finish_reason.
                             break
                         if len(data.encode("utf-8")) > 256_000:
                             raise _bad("提供方流式事件过大")
@@ -243,8 +261,12 @@ class ToolSession:
         content, reasoning = "", ""
         reasoning_seen = False
         finish = None
+        terminal = False
         think_parser = _ThinkStreamParser()
         async for event in self._chat_events(payload):
+            if event is None:
+                terminal = True
+                continue
             choices = event.get("choices")
             if not isinstance(choices, list) or not choices:
                 continue
@@ -270,6 +292,8 @@ class ToolSession:
                             yield chunk
                     else:
                         yield ProviderChunk(kind, value)
+            if delta.get("refusal"):
+                raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
             for item in delta.get("tool_calls") or []:
                 if not isinstance(item, dict) or not isinstance(item.get("index"), int):
                     raise _bad()
@@ -300,7 +324,8 @@ class ToolSession:
             assistant["reasoning_content"] = reasoning
         if calls:
             assistant["tool_calls"] = [{"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}} for call in calls]
-        yield self._finish(calls, assistant)
+        yield self._finish(calls, assistant,
+                           completion="complete" if terminal or calls else "unknown")
 
     async def _responses(self, tools: list[dict], allow_tools: bool) -> AsyncIterator[ProviderChunk | ToolTurn]:
         payload = {"model": self.provider.config.model, "input": self._history, "stream": True, "store": False,
@@ -310,6 +335,7 @@ class ToolSession:
         items: dict[int, dict] = {}
         calls_delta: dict[str, str] = {}
         completed = False
+        completion: Literal["complete", "unknown"] = "unknown"
         response_output: list[dict] | None = None
         async for event, body in self.provider._events(self.provider.endpoint, payload):
             kind = body.get("type") or event
@@ -338,12 +364,20 @@ class ToolSession:
                 if isinstance(index, int) and isinstance(item, dict):
                     items[index] = copy.deepcopy(item)
             elif kind == "response.completed":
-                completed = True
                 response = body.get("response") or {}
-                if isinstance(response, dict) and isinstance(response.get("output"), list):
+                if not isinstance(response, dict):
+                    raise _bad()
+                status = response.get("status")
+                if status is not None and status != "completed":
+                    raise _bad("提供方回复未正常完成")
+                completed = True
+                completion = "complete" if status == "completed" else "unknown"
+                if isinstance(response.get("output"), list):
                     response_output = response["output"]
             elif kind in {"response.failed", "response.incomplete", "error"}:
                 raise ProviderError("提供方未完成回复", kind="upstream_error")
+            elif kind in {"response.refusal.delta", "response.refusal.done"}:
+                raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
         if not completed:
             raise _bad("提供方流式响应未正常结束")
         output = copy.deepcopy(response_output) if response_output is not None else [items[i] for i in sorted(items)]
@@ -359,12 +393,15 @@ class ToolSession:
         for index, item in enumerate(output):
             if not isinstance(item, dict):
                 raise _bad()
+            if any(isinstance(part, dict) and part.get("type") == "refusal"
+                   for part in (item.get("content") or [])):
+                raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
             if item.get("type") == "function_call":
                 arguments = item.get("arguments")
                 if not isinstance(arguments, str) or not arguments:
                     arguments = calls_delta.get(str(index), "")
                 calls.append(_call(item.get("call_id"), item.get("name"), arguments))
-        yield self._finish(calls, copy.deepcopy(output))
+        yield self._finish(calls, copy.deepcopy(output), completion=completion)
 
     async def _google(self, tools: list[dict], allow_tools: bool) -> AsyncIterator[ProviderChunk | ToolTurn]:
         payload: dict[str, Any] = {"contents": self._history,

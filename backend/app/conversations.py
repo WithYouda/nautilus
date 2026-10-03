@@ -1481,6 +1481,8 @@ class ConversationService:
             item["source_scope"] = public_scope(snapshot.get("source_scope"), item["content"])
             item["attachment_version_ids"] = snapshot.get("attachment_version_ids", [])
             if item["role"] == "assistant":
+                from .teaching_runtime import public as public_teaching
+                item['teaching'] = public_teaching(snapshot, item['status'])
                 if snapshot.get('branch_origin'):
                     origin = snapshot['branch_origin']
                     item['inherited_from'] = {'conversation_id': origin['conversation_id'],
@@ -1520,6 +1522,30 @@ class ConversationService:
             if not snapshot.get('branch_origin') and record_display(snapshot, characters, _now()):
                 connection.execute("UPDATE ai_run SET config_snapshot_json=? WHERE id=?", (json.dumps(snapshot, ensure_ascii=False), row["run_id"]))
             return public_help(snapshot, row["content"], row["status"], row["updated_at"])
+
+    def correct_teaching_attempt(self, identity_id, conversation_id, message_id, **payload):
+        from . import teaching_runtime as teaching
+        with self.database.transaction() as connection:
+            self.owned_conversation(identity_id, conversation_id)
+            row = connection.execute('''SELECT r.id,r.config_snapshot_json,m.status
+                FROM ai_run r JOIN message m ON m.id=r.response_message_id
+                WHERE r.identity_id=? AND r.conversation_id=? AND m.id=?''',
+                (identity_id, conversation_id, message_id)).fetchone()
+            if row is None:
+                raise ConversationError('回答不存在')
+            snapshot = json.loads(row['config_snapshot_json'] or '{}')
+            if row['status'] != 'complete' or (snapshot.get('source_scope') or {}).get('purged'):
+                raise ConversationConflict('这条尝试记录已不可用，请重新加载')
+            if connection.execute("SELECT 1 FROM ai_run WHERE conversation_id=? AND status IN ('queued','running')",
+                                  (conversation_id,)).fetchone():
+                raise ConversationConflict('请等本轮回答结束后再纠正')
+            try:
+                teaching.correct(snapshot, **payload, at=_now())
+            except ValueError as error:
+                raise ConversationConflict('尝试记录已变化，请读取最新记录后重试') from error
+            connection.execute('UPDATE ai_run SET config_snapshot_json=? WHERE id=?',
+                               (json.dumps(snapshot, ensure_ascii=False), row['id']))
+            return teaching.public(snapshot, row['status'])
 
     @staticmethod
     def message_path(messages, leaf_id):
@@ -1785,7 +1811,8 @@ class ConversationService:
                     question_version_id = question.get("question_version_id", question["id"])
                 if parent_id and (parent_id not in by_id or by_id[parent_id]["role"] != "assistant"):
                     raise ConversationError("回答上下文不存在")
-                history_items = [item for item in scoped_path(self.message_path(messages, parent_id), frozen)
+                teaching_path = scoped_path(self.message_path(messages, parent_id), frozen)
+                history_items = [item for item in teaching_path
                                  if item['status'] == 'complete' and item['content']][-HISTORY_LIMIT:]
                 history = [self._history_message(connection, item, bool(search_run and search_run.selection['mode'] == 'external'
                            and not (frozen and frozen['mode'] == 'only' and frozen.get('knowledge_base'))))
@@ -1795,7 +1822,15 @@ class ConversationService:
                     if (context or material_bound or not native_public_only(
                             [*history, {'role': 'user', 'content': text}], public_search_query)):
                         raise ConversationError(NATIVE_PRIVATE_MESSAGE)
-                config_snapshot['source_history_message_ids'] = [item['id'] for item in history_items]
+                # Teaching checkpoints can refer to an earlier step even when
+                # the ordinary text context is trimmed. Retain that dependency
+                # for source clearing, without copying older user content.
+                config_snapshot['source_history_message_ids'] = [item['id'] for item in teaching_path]
+                from .teaching_runtime import freeze as freeze_teaching
+                config_snapshot['teaching'] = freeze_teaching(
+                    [item for item in teaching_path if item['role'] == 'assistant'],
+                    answer_id=assistant_message_id, message_id=user_message_id,
+                    kind='conversation', scope_id=conversation_id)
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,
@@ -1917,6 +1952,7 @@ class ConversationService:
             "search_run": search_run,
             "material_prompt": self.materials.prompt(frozen) if material_bound else None,
             "frozen_scope": frozen,
+            'teaching_attempt_texts': {item['id']: item['content'] for item in teaching_path if item['role'] == 'user'},
         }
 
     def mark_run_running(self, run_id: str) -> bool:
@@ -1994,6 +2030,7 @@ class ConversationService:
         reasoning_content: str = "",
         error_kind: str | None = None,
         error_message: str | None = None,
+        teaching_proposal: dict | None = None,
     ) -> str | None:
         """收敛运行记录与助手消息。已经是终态的运行不会被再次改写。"""
         if status not in {"succeeded", "failed", "canceled"}:
@@ -2002,13 +2039,24 @@ class ConversationService:
         message_status = "complete" if status == "succeeded" else status
         with self.database.transaction() as connection:
             row = connection.execute(
-                "SELECT status, conversation_id, response_message_id FROM ai_run WHERE id = ?",
+                "SELECT status, conversation_id, response_message_id, config_snapshot_json FROM ai_run WHERE id = ?",
                 (run_id,),
             ).fetchone()
             if not row:
                 return None
             if row["status"] not in {"queued", "running"}:
                 return str(row["status"])
+            snapshot = json.loads(row['config_snapshot_json'] or '{}')
+            if status == 'succeeded' and snapshot.get('teaching'):
+                from .teaching_runtime import complete as complete_teaching
+                user = connection.execute('SELECT content FROM message WHERE id=? AND conversation_id=?',
+                    (snapshot['teaching']['message_id'], row['conversation_id'])).fetchone()
+                result = complete_teaching(snapshot['teaching'], teaching_proposal, body=content,
+                    user_text=user['content'] if user else '', at=now)
+                if result:
+                    snapshot['teaching']['result'] = result
+                    connection.execute('UPDATE ai_run SET config_snapshot_json=? WHERE id=?',
+                        (json.dumps(snapshot, ensure_ascii=False), run_id))
             connection.execute(
                 """
                 UPDATE ai_run

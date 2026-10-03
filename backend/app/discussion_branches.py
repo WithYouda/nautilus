@@ -73,6 +73,8 @@ def create_branch(self, identity, discussion_id, turn_id, request_key):
                 history_turn_ids=list(dict.fromkeys([*history, turn['id']])))
             snapshot['branch_origin'] = dict(discussion_id=discussion_id, turn_id=turn_id, source_turn_id=turn['id'])
             snapshot['branch_material_version_ids'] = (snapshot.get('source_scope') or {}).get('version_ids', [])
+            from .teaching_runtime import remap as remap_teaching
+            remap_teaching(snapshot, ids)
             c.execute('''INSERT INTO learning_discussion_turn
                 (id,discussion_id,request_key,user_content,assistant_content,status,reason,sources_json,
                  provider_snapshot_json,created_at,finished_at,reasoning_content) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
