@@ -313,6 +313,7 @@ class MessageSendRequest(BaseModel):
     public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
+    attachment_version_ids: list[str] = Field(default_factory=list)
     search: dict[str, Any] | None = None
     help_request: Literal["hint", "explain_step", "example", "try_first"] | None = None
     regenerate_message_id: str | None = Field(default=None, max_length=64)
@@ -638,6 +639,7 @@ class QuestionDiscussionMessageRequest(BaseModel):
     public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
+    attachment_version_ids: list[str] = Field(default_factory=list)
     search: dict[str, Any] | None = None
     help_request: Literal["hint", "explain_step", "example", "try_first"] | None = None
     regenerate_turn_id: str | None = Field(default=None, max_length=64)

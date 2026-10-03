@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ApiError, cancelMaterialOcr, confirmMaterialOcr, getMaterialOcr, materialPreviewUrl, startMaterialOcr, type AttachmentPage, type MaterialKind, type MaterialOcrJob, type MaterialVersion } from './api';
 import DialogPortal from './DialogPortal';
 import ImageModelSettings from './ImageModelSettings';
-import { attachmentChanged, attachmentError } from './AttachmentSupport';
+import { attachmentChanged, attachmentError, attachmentName } from './AttachmentSupport';
 import './styles/composer-attachments.css';
 
 export function AttachmentDialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
@@ -40,16 +40,18 @@ function OriginalPage({ kind, id, version, number }: { kind: MaterialKind; id: s
     {failed && <button type="button" className="text-button" onClick={() => setFailed(false)}>重试预览</button>}</div>;
 }
 
-export function AttachmentPreview({ kind, id, version, pageNumbers, onClose }: { kind: MaterialKind; id: string; version: MaterialVersion; pageNumbers?: number[]; onClose: () => void }) {
+export function AttachmentPreview({ kind, id, version, pageNumbers, onClose, children }: { kind: MaterialKind; id: string; version: MaterialVersion; pageNumbers?: number[]; onClose: () => void; children?: ReactNode }) {
   const [pageIndex, setPageIndex] = useState(1);
   const numbers = pageNumbers?.length ? pageNumbers : Array.from({ length: version.attachment?.page_count ?? 1 }, (_, index) => index + 1);
   const page = numbers[pageIndex - 1];
   const count = numbers.length;
-  return <AttachmentDialog title={`原件与保存版本 · ${version.title ?? '附件'} · 第 ${version.version} 版`} onClose={onClose}>
+  const paged = version.attachment && ['image', 'pdf'].includes(version.attachment.kind);
+  return <AttachmentDialog title={`附件详情 · ${attachmentName(version)}`} onClose={onClose}>
     {version.attachment?.origin === 'ocr' && <p>这是已核对的 OCR 文字派生版本。下方文字是该版本保存的内容，不代表原件内容已核实。</p>}
-    <PageNavigation page={pageIndex} count={count} setPage={setPageIndex} />
-    <div className="attachment-review-columns"><OriginalPage kind={kind} id={id} version={version} number={page} />
-      {version.attachment?.mode === 'text' && <div><h3>{version.attachment.origin === 'ocr' ? '此版本已核对的 OCR 文字' : '此版本读取的文字'}</h3><pre>{version.attachment.pages.find(item => item.number === page)?.text ?? version.content}</pre></div>}</div>
+    {paged && count > 1 && <PageNavigation page={pageIndex} count={count} setPage={setPageIndex} />}
+    <div className="attachment-review-columns">{paged && <OriginalPage kind={kind} id={id} version={version} number={page} />}
+      {version.content !== null && version.attachment?.mode !== 'image' && <div><h3>{version.attachment?.origin === 'ocr' ? '已核对的 OCR 文字' : '读取的文字'}</h3><pre>{version.attachment?.pages.find(item => item.number === page)?.text ?? version.content}</pre></div>}</div>
+    {children && <div className="attachment-detail-actions">{children}</div>}
     {version.original && <a href={`/api/materials/${kind}/${encodeURIComponent(id)}/versions/${encodeURIComponent(version.id)}/original`} download={version.original.filename}>下载原件：{version.original.filename}</a>}
   </AttachmentDialog>;
 }
@@ -129,7 +131,7 @@ export function AttachmentOcrReview({ kind, id, version, onClose, onConfirmed }:
       attachmentChanged(kind, id);
       if (!alive.current) return;
       const applied = await onConfirmed(saved);
-      if (alive.current) { setPages(saved.attachment?.pages ?? pages); setNotice(applied ? '已保存核对后的文字版本，并加入当前参考。' : '文字版本已保存，但当前参考未确认。请关闭后点击附件卡片“参考此版本”重试。'); setJob(previous => previous ? { ...previous, status: 'confirmed', result_version_id: saved.id } : null); }
+      if (alive.current) { setPages(saved.attachment?.pages ?? pages); setNotice(applied ? '已保存核对后的文字，并加入本次附件。' : '核对文字已保存，尚未加入本次附件。请关闭后重试添加。'); setJob(previous => previous ? { ...previous, status: 'confirmed', result_version_id: saved.id } : null); }
     } catch (reason) { failure(reason); }
     finally { if (alive.current) setBusy(false); }
   }

@@ -375,6 +375,27 @@ class MaterialService:
                                for index,item in enumerate(frozen['materials'], 1)]
         return result
 
+    def attachment_ids(self, frozen, version_ids):
+        """Record explicitly attached files separately from continuing reference scope."""
+        ids = version_ids or []
+        if (not isinstance(ids, list) or any(not isinstance(value, str) for value in ids)
+                or len(set(ids)) != len(ids)
+                or not set(ids).issubset((frozen or {}).get('version_ids', []))):
+            raise DomainError('invalid_attachment_selection', 422)
+        # freeze() already checked ownership, scope access and availability under
+        # the material lock. An original alone is insufficient: Vault snapshots
+        # also retain original bytes and must not become uploaded-file cards.
+        for version_id in ids:
+            row = self.db.fetchone('SELECT id,provenance_json FROM learning_task_material WHERE id=?', (version_id,))
+            provenance = json.loads(row['provenance_json'] or '{}') if row else {}
+            if provenance.get('kind') not in ('file', 'ocr_text', 'user_text'):
+                raise DomainError('invalid_attachment_selection', 422)
+            source_id = self.original_version_id(dict(row))
+            if not self.db.fetchone('''SELECT 1 FROM learning_material_original
+                    WHERE version_id=? AND purged_at IS NULL AND content IS NOT NULL''', (source_id,)):
+                raise DomainError('invalid_attachment_selection', 422)
+        return list(ids)
+
     @staticmethod
     def prompt(frozen):
         if frozen['mode'] == 'unspecified':

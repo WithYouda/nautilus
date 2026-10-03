@@ -198,6 +198,7 @@ class QuestionDiscussionService:
             turn['inherited_from'] = dict(discussion_id=origin['discussion_id'], turn_id=origin['source_turn_id'])
         turn['history_searched'] = bool(snapshot.get('history_searched'))
         turn['source_scope'] = public_scope(snapshot.get('source_scope'), turn.get('assistant_content'))
+        turn['attachment_version_ids'] = snapshot.get('attachment_version_ids', [])
         turn['search_trace'] = snapshot.get('search_trace')
         turn['generation_trace'] = snapshot.get('generation_trace')
         turn['question_id'] = reply.get('question_id', turn['id'])
@@ -231,7 +232,7 @@ class QuestionDiscussionService:
     @material_guard
     def start(self, identity, discussion_id, content, request_key, retry=False,
               regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None, help_request=None, source_scope=None,
-              current_state_revision=None, public_search_query=None):
+              current_state_revision=None, public_search_query=None, attachment_version_ids=None):
         if retry:
             raise DomainError('discussion_regeneration_required', 422)
         if edit_turn_id and (regenerate_turn_id or parent_turn_id):
@@ -252,6 +253,9 @@ class QuestionDiscussionService:
         source = self._source(identity, discussion)
         materials = getattr(self.chats, 'materials', None)
         frozen = materials.freeze(identity, 'discussion', discussion_id, source_scope) if materials else None
+        if attachment_version_ids and materials is None:
+            raise DomainError('invalid_attachment_selection', 422)
+        attached = materials.attachment_ids(frozen, attachment_version_ids) if materials else []
         if source_scope and source_scope.get('mode') != 'unspecified' and not materials:
             raise DomainError('material_scope_invalid', 422)
         image_runtime = None
@@ -276,6 +280,7 @@ class QuestionDiscussionService:
                         or saved_reply.get('requested_parent') != parent_turn_id
                         or saved_reply.get('edit_of') != edit_turn_id
                         or saved_snapshot.get('source_request', {'mode': 'unspecified', 'version_ids': []}) != (source_scope or {'mode': 'unspecified', 'version_ids': []})
+                        or saved_snapshot.get('attachment_version_ids', []) != attached
                         or saved_snapshot.get('search_request', {'mode': 'off'}) != (search or {'mode': 'off'})
                         or (saved_snapshot.get('help_request') or {}).get('kind') != help_request):
                     raise DomainError('idempotency_conflict', 409)
@@ -328,6 +333,7 @@ class QuestionDiscussionService:
                           (json.dumps({'attempt_id': attempt_id, 'reply': reply, 'search_request': search or {'mode': 'off'},
                                        'source_request': source_scope or {'mode': 'unspecified', 'version_ids': []},
                                        'source_scope': public_scope(frozen),
+                                       'attachment_version_ids': attached,
                                        **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
                 if self.current_state is not None:
                     self.current_state.advance(owner, 'discussion', discussion_id, turn_id, c)

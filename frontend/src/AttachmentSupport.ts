@@ -19,4 +19,18 @@ export function attachmentError(reason: unknown): string {
   return messages[code] ?? (reason instanceof Error ? messages[reason.message] : undefined) ?? (reason instanceof Error ? reason.message : '操作未完成，请重试。');
 }
 export const attachmentLabel = (version: MaterialVersion) => version.attachment?.origin === 'ocr' ? '已核对的 OCR 文字（派生版本）' : version.attachment?.mode === 'image' ? '原图参考' : '已读取文字';
+export function isUploadedAttachment(version: MaterialVersion): boolean {
+  if (!version.original || version.purged_at) return false;
+  if (version.attachment?.origin === 'uploaded' || version.attachment?.origin === 'ocr') return true;
+  try { return (version.provenance ?? JSON.parse(version.provenance_json ?? '{}')).kind === 'user_text'; }
+  catch { return false; }
+}
+export const attachmentName = (version: MaterialVersion) => version.original?.filename || version.title || '附件';
+export function uploadedAttachments(versions: MaterialVersion[]): MaterialVersion[] {
+  const purged = new Set(versions.filter(item => item.purged_at).map(item => item.material_id));
+  return versions.filter(item => !purged.has(item.material_id) && isUploadedAttachment(item));
+}
+export function latestUploadedAttachments(versions: MaterialVersion[]): MaterialVersion[] {
+  return [...new Map(uploadedAttachments(versions).sort((a, b) => a.version - b.version).map(item => [item.material_id, item])).values()].sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
 export function attachmentChanged(kind: string, id: string) { window.dispatchEvent(new CustomEvent('nautilus:materials-changed', { detail: { kind, id } })); }

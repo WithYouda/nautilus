@@ -14,6 +14,7 @@ import AssistantResponse from './AssistantResponse';
 import HelpControls from './HelpControls';
 import HelpRecord, { HelpRecordFacts } from './HelpRecord';
 import ComposerAttachments from './ComposerAttachments';
+import MessageAttachments from './MessageAttachments';
 import { attachmentError } from './AttachmentSupport';
 import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
 import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
@@ -36,15 +37,18 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [busy, setBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const [error, setError] = useState('');
-  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; sourceScope: SourceScope } | null>(null);
+  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; sourceScope: SourceScope; attachmentVersionIds: string[] } | null>(null);
   const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
+  const [attachmentDraftIds, setAttachmentDraftIds] = useState<string[]>([]);
+  const [attachmentClearSignal, setAttachmentClearSignal] = useState(0);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [reconnect, setReconnect] = useState(0);
   const [connectionLost, setConnectionLost] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editRequest = useRef<{ turnId: string; content: string; key: string } | null>(null);
   const key = useRef(requestId());
-  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; sourceScope: SourceScope }>());
+  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
   const sending = useRef(false);
   const branching = useRef(false);
   const branchKeys = useRef(new Map<string, string>());
@@ -129,7 +133,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   }, [id, runningTurn?.id, reconnect]);
 
   async function send(text = content, requestKey = key.current, retry = false, preserveDraft = false, regenerateTurnId?: string, editTurnId?: string, requestedHelp?: HelpRequestKind | null): Promise<boolean> {
-    if (!text.trim() || sending.current || branching.current || running) return false;
+    if (attachmentBusy || !text.trim() || sending.current || branching.current || running) return false;
     if (sharedState.blocked) { setError("请先确认或修复当前学习状态，再发送消息。"); return false; }
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !sourceScope.knowledge_base && !searchByRequestKey.current.has(requestKey)) { setError('请先选择至少一个资料版本或知识库，或改为未指定资料。'); return false; }
     if (searchByRequestKey.current.size && (!searchByRequestKey.current.has(requestKey) || searchByRequestKey.current.get(requestKey)?.content !== text)) {
@@ -140,13 +144,15 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     sending.current = true; setBusy(true); setError('');
     const frozenHelp = searchByRequestKey.current.has(requestKey) ? searchByRequestKey.current.get(requestKey)!.helpRequest : (requestedHelp !== undefined ? requestedHelp : regenerateTurnId ? discussion?.turns.find(turn => turn.id === regenerateTurnId)?.help_record?.request?.kind ?? null : null);
     const frozenScope = searchByRequestKey.current.get(requestKey)?.sourceScope ?? sourceScope;
-    if (!retry && !regenerateTurnId && !editTurnId) { setPending({ content: text, key: requestKey, failed: false, helpRequest: frozenHelp, sourceScope: frozenScope }); if (!preserveDraft) { setContent(''); drafts.current.set(id, ''); } }
+    const frozenAttachments = searchByRequestKey.current.get(requestKey)?.attachmentVersionIds ?? (regenerateTurnId || editTurnId ? [] : attachmentDraftIds.filter(id => frozenScope.version_ids.includes(id)));
+    if (!retry && !regenerateTurnId && !editTurnId) { setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: false, helpRequest: frozenHelp, sourceScope: frozenScope }); if (!preserveDraft) { setContent(''); drafts.current.set(id, ''); } }
     try {
       const frozenSearch = searchByRequestKey.current.get(requestKey)?.search ?? structuredClone(searchSelection);
       const frozenPublicQuery = searchByRequestKey.current.get(requestKey)?.publicQuery ?? (!regenerateTurnId && !editTurnId && frozenSearch.mode === 'external' ? publicQuery.trim() : '');
-      searchByRequestKey.current.set(requestKey, { search: frozenSearch, publicQuery: frozenPublicQuery, content: text, helpRequest: frozenHelp, sourceScope: frozenScope });
-      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, source_scope: frozenScope, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
+      searchByRequestKey.current.set(requestKey, { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, content: text, helpRequest: frozenHelp, sourceScope: frozenScope });
+      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (generation.current !== currentGeneration) return false;
+      if (!regenerateTurnId && !editTurnId) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
       searchByRequestKey.current.delete(requestKey);
       setDiscussion(previous => ({ ...saved, turns: saved.turns.map(turn => ({ ...turn, search_trace: turn.search_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.search_trace : turn.search_trace, generation_trace: turn.generation_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.generation_trace : turn.generation_trace })) })); setPending(null); key.current = requestId();
@@ -161,7 +167,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         if (editRequest.current?.key === requestKey) editRequest.current = null;
         if (key.current === requestKey) key.current = requestId();
         if (!retry && !regenerateTurnId && !editTurnId) { setPending(null); if (!preserveDraft) { setContent(text); drafts.current.set(id, text); } }
-      } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ content: text, key: requestKey, failed: true, helpRequest: frozenHelp, sourceScope: frozenScope });
+      } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: true, helpRequest: frozenHelp, sourceScope: frozenScope });
       setError(stateRejected ? '消息未发送，请核对最新状态后重新发送。' : attachmentError(reason));
       return false;
     } finally {
@@ -221,8 +227,9 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         onSubmit={event => { event.preventDefault(); void send(); }}
         placeholder="输入关于这道题的问题，或回答拓展问题" maxLength={12000}
         disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
-        attachments={<ComposerAttachments kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} supportsImages={discussion.image_model?.supports_image_input} discussionModel disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} />}
-        suggestions={<HelpControls disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onChoose={(kind, label) => void send(label, key.current, false, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !searchChoice.ready} providerKind={discussion.provider_protocol ?? undefined} /><TaskMaterials kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={discussion.turns.flatMap(turn => turn.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onPurged={async () => { const current = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === current) { setDiscussion(next); await sharedState.reload(); } }} candidates={webMaterialCandidates(discussion.turns.map(turn => ({ runId: turn.id, trace: turn.search_trace, complete: turn.status === 'succeeded' })))} /></>}
+        attachments={<ComposerAttachments kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} supportsImages={discussion.image_model?.supports_image_input} discussionModel onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} />}
+        sendDisabled={attachmentBusy}
+        suggestions={<HelpControls disabled={attachmentBusy || sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onChoose={(kind, label) => void send(label, key.current, false, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !searchChoice.ready} providerKind={discussion.provider_protocol ?? undefined} /><TaskMaterials kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={discussion.turns.flatMap(turn => turn.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onPurged={async () => { const current = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === current) { setDiscussion(next); await sharedState.reload(); } }} candidates={webMaterialCandidates(discussion.turns.map(turn => ({ runId: turn.id, trace: turn.search_trace, complete: turn.status === 'succeeded' })))} /></>}
         actions={running && <button className="button button--danger button--with-icon" type="button" disabled={cancelling} onClick={() => void cancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}
     >
@@ -249,9 +256,11 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         {visibleTurns.map(turn => {
           const questionVersions = [...new Map(discussion.turns.filter(item => (item.question_version_id ?? item.question_id) === (turn.question_version_id ?? turn.question_id)).map(item => [item.question_id, item])).values()];
           const questionIndex = questionVersions.findIndex(item => item.question_id === turn.question_id);
+          const questionAttachments = discussion.turns.find(item => item.question_id === turn.question_id && item.attachment_version_ids?.length) ?? turn;
           return <div key={turn.id} className="discussion-turn" id={`turn-${turn.id}`}>
           {turn.status === 'purged' ? <p>这轮讨论内容已删除。</p> : <>
             <LearningUserMessage content={turn.user_content ?? ''} maxLength={12000}
+              attachments={<MessageAttachments kind="discussion" id={id} versionIds={questionAttachments.attachment_version_ids ?? []} scope={questionAttachments.source_scope} versions={materialVersions} />}
               editing={editingTurnId === turn.id} editDisabled={busy || branchBusy || running || Boolean(pending) || (Boolean(editingTurnId) && editingTurnId !== turn.id)} sendDisabled={busy || branchBusy || running || Boolean(pending)}
               onStartEdit={() => setEditingTurnId(turn.id)}
               onCancelEdit={() => { setEditingTurnId(null); editRequest.current = null; setError(''); }}

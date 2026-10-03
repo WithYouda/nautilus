@@ -103,6 +103,7 @@ class AiRunManager:
         public_search_query: str | None = None,
         help_request: str | None = None,
         source_scope: dict | None = None,
+        attachment_version_ids: list[str] | None = None,
         current_state_revision: int | None = None,
     ) -> dict[str, Any]:
         prepared = self.conversations.prepare_run(
@@ -114,6 +115,7 @@ class AiRunManager:
             public_search_query=public_search_query,
             help_request=help_request,
             **({"source_scope": source_scope} if source_scope is not None else {}),
+            attachment_version_ids=attachment_version_ids,
             current_state_revision=current_state_revision,
             **({"regenerate_message_id": regenerate_message_id,
                 "parent_message_id": parent_message_id,

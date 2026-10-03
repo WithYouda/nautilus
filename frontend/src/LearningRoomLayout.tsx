@@ -83,10 +83,10 @@ export function LearningReplyActions({ content, onRetry, retryDisabled, onBranch
   </div>;
 }
 
-export function LearningUserMessage({ content, automatic, editing, onStartEdit, onCancelEdit, onSendEdit, editDisabled, sendDisabled, version, maxLength = 8000 }: {
+export function LearningUserMessage({ content, automatic, editing, onStartEdit, onCancelEdit, onSendEdit, editDisabled, sendDisabled, version, attachments, maxLength = 8000 }: {
   content: string; automatic?: boolean; editing: boolean; onStartEdit: () => void; onCancelEdit: () => void;
   onSendEdit: (content: string) => Promise<boolean>; editDisabled?: boolean; sendDisabled?: boolean;
-  version?: MessageVersion; maxLength?: number;
+  version?: MessageVersion; attachments?: ReactNode; maxLength?: number;
 }) {
   const [draft, setDraft] = useState(content);
   const [submitting, setSubmitting] = useState(false);
@@ -125,6 +125,7 @@ export function LearningUserMessage({ content, automatic, editing, onStartEdit, 
       <button className="button button--accent" type="submit" disabled={submitting || sendDisabled || !draft.trim()}>{submitting ? '发送中…' : '发送'}</button>
     </div>
   </form> : <>
+    {attachments}
     <div className="ai-message-content">{content}</div>
     <div className="ai-reply-actions ai-user-actions" role="group" aria-label="消息操作">
       <MessageVersions version={version} label="消息" />
@@ -136,10 +137,10 @@ export function LearningUserMessage({ content, automatic, editing, onStartEdit, 
   return <LearningMessage role="user" state={editing ? 'editing' : undefined}>{body}</LearningMessage>;
 }
 
-export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, maxLength = 8000, textareaRef, attachments, tools, suggestions, actions, sendLabel = '发送问题' }: {
+export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, sendDisabled, maxLength = 8000, textareaRef, attachments, tools, suggestions, actions, sendLabel = '发送问题' }: {
   id: string; label?: string; value: string; onChange: (value: string) => void;
   onSubmit: FormEventHandler<HTMLFormElement>; onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
-  placeholder: string; disabled?: boolean; maxLength?: number;
+  placeholder: string; disabled?: boolean; sendDisabled?: boolean; maxLength?: number;
   textareaRef?: RefObject<HTMLTextAreaElement | null>; attachments?: ReactNode; tools?: ReactNode; suggestions?: ReactNode; actions?: ReactNode; sendLabel?: string;
 }) {
   const localRef = useRef<HTMLTextAreaElement>(null);
@@ -156,11 +157,11 @@ export function LearningComposer({ id, label = '输入学习问题', value, onCh
       onKeyDown={onKeyDown ?? (event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
           event.preventDefault();
-          if (!disabled && value.trim()) event.currentTarget.form?.requestSubmit();
+          if (!disabled && !sendDisabled && value.trim()) event.currentTarget.form?.requestSubmit();
         }
       })} placeholder={placeholder} rows={1} maxLength={maxLength} disabled={disabled} /></div>
     <div className="ai-composer-actions"><span>Enter 发送 · Shift+Enter 换行 · {value.length}/{maxLength}</span>
-      <div>{tools}{actions}<button className="button button--accent button--with-icon" type="submit" disabled={disabled || !value.trim()}><Send size={14} />{sendLabel}</button></div>
+      <div>{tools}{actions}<button className="button button--accent button--with-icon" type="submit" disabled={disabled || sendDisabled || !value.trim()}><Send size={14} />{sendLabel}</button></div>
     </div>
   </form>;
 }

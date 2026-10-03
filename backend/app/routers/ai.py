@@ -555,6 +555,7 @@ async def send_message(
             public_search_query=payload.public_search_query,
             help_request=payload.help_request,
             source_scope=payload.source_scope,
+            attachment_version_ids=payload.attachment_version_ids,
             current_state_revision=payload.current_state_revision,
         )
     except ConversationError as error:

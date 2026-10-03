@@ -1479,6 +1479,7 @@ class ConversationService:
             snapshot = json.loads(item.pop("config_snapshot_json") or "{}")
             reply = snapshot.get("reply", {})
             item["source_scope"] = public_scope(snapshot.get("source_scope"), item["content"])
+            item["attachment_version_ids"] = snapshot.get("attachment_version_ids", [])
             if item["role"] == "assistant":
                 if snapshot.get('branch_origin'):
                     origin = snapshot['branch_origin']
@@ -1580,6 +1581,7 @@ class ConversationService:
     def _existing_submission(
         self, conversation_id, client_message_id, content, *, connection=None,
         regenerate_message_id=None, parent_message_id=None, edit_message_id=None, search=None, help_request=None, source_scope=None,
+        attachment_version_ids=None,
     ):
         query = connection.execute if connection is not None else self.database.connection.execute
         existing = query("SELECT * FROM message WHERE conversation_id=? AND client_message_id=?",
@@ -1591,6 +1593,8 @@ class ConversationService:
         if not run:
             raise ConversationError("这条消息已提交，但缺少对应的 AI 运行记录")
         snapshot = json.loads(run["config_snapshot_json"] or "{}")
+        if snapshot.get("attachment_version_ids", []) != (attachment_version_ids or []):
+            raise ConversationConflict("同一 client_message_id 已用于不同的附件")
         if snapshot.get("source_request", {"mode": "unspecified", "version_ids": []}) != (source_scope or {"mode": "unspecified", "version_ids": []}):
             raise ConversationConflict("同一 client_message_id 已用于不同的资料范围")
         if snapshot.get("search_request", {"mode": "off"}) != (search or {"mode": "off"}):
@@ -1622,6 +1626,7 @@ class ConversationService:
         public_search_query: str | None = None,
         help_request: str | None = None,
         source_scope: dict | None = None,
+        attachment_version_ids: list[str] | None = None,
         current_state_revision: int | None = None,
     ) -> dict[str, Any]:
         """写入用户消息、上下文快照、助手占位消息和 queued 运行记录。
@@ -1642,7 +1647,7 @@ class ConversationService:
             if original:
                 help_request = (json.loads(original["config_snapshot_json"] or "{}").get("help_request") or {}).get("kind")
 
-        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope)
+        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids)
         if replayed:
             return replayed
         if self.current_state is not None:
@@ -1677,6 +1682,13 @@ class ConversationService:
                 label = '当前模型不支持图片' if error.code == 'image_model_unsupported' else '当前模型的图片输入能力尚未确认'
                 raise ConversationError(label + '，请在图片模型设置中确认能力、选择支持图片的模型，或对附件使用 OCR。') from error
         material_bound = bool(frozen and frozen["mode"] != "unspecified")
+        from .learning_domain import DomainError
+        try:
+            if attachment_version_ids and self.materials is None:
+                raise ConversationError("附件不可用，请重新选择文件")
+            config_snapshot["attachment_version_ids"] = self.materials.attachment_ids(frozen, attachment_version_ids) if self.materials else []
+        except DomainError as error:
+            raise ConversationError("附件不可用，请重新选择文件") from error
         config_snapshot["source_request"] = source_scope or {"mode": "unspecified", "version_ids": []}
         config_snapshot["source_scope"] = public_scope(frozen)
         from .search_adapters import SearchError
@@ -1704,7 +1716,7 @@ class ConversationService:
                 replayed = self._existing_submission(
                     conversation_id, client_message_id, text, connection=connection,
                     regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id,
-                    edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope
+                    edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids
                 )
                 if replayed:
                     return replayed
@@ -1884,7 +1896,7 @@ class ConversationService:
         except sqlite3.IntegrityError as error:
             # 并发提交命中唯一索引：另一个协程已经写入了同一个 client_message_id。
             # 返回对方的运行记录，不重复追加消息，也不报错。
-            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope)
+            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids)
             if replayed:
                 return replayed
             active = self.active_run(identity_id, conversation_id)
@@ -2106,7 +2118,7 @@ class ConversationService:
                 ).fetchone()
                 if not trigger or not conversation or conversation["title_generation_status"] != "pending":
                     return None
-                if scope_key(json.loads(trigger['config_snapshot_json'] or '{}').get('source_scope')) != ('unspecified', ()):
+                if scope_key(json.loads(trigger['config_snapshot_json'] or '{}').get('source_scope')) != scope_key(None):
                     return None
                 inputs = self._title_inputs(conversation_id, connection=connection)
                 if not inputs:
