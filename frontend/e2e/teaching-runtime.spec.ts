@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Locator } from '@playwright/test';
-import { authorize } from './fact-helpers';
+import { authorize, checkDefaultTeachingSupport } from './fact-helpers';
 import type { AiConversationDetail, QuestionDiscussion } from '../src/api';
 
 test.beforeEach(async ({ page }) => {
@@ -15,6 +15,7 @@ async function provider(page: Page) {
     display_name: 'Synthetic teaching provider', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL,
     model: 'mock-success', api_key: 'synthetic-teaching-key', enabled: true, request_timeout_seconds: 15,
   } })).ok()).toBeTruthy();
+  await checkDefaultTeachingSupport(page);
 }
 
 async function conversation(page: Page, id: string): Promise<AiConversationDetail> {
@@ -120,7 +121,7 @@ test('ordinary teaching follows selected versions, preserves cancelled checkpoin
 
   const beforeSlow = (await conversation(page, id)).messages.find(message => message.id === old.id)!.teaching!.current;
   await sendOrdinary(page, '[C1慢流] 请继续这个小点。', false);
-  await expect(page.locator('.ai-message--assistant').last().locator('.ai-message-content')).not.toBeEmpty();
+  await expect(page.locator('.ai-message--assistant').last().locator('.ai-message-content')).toContainText('正在分析输入边界。');
   await expect(arrangement.locator('.teaching-state__step')).toContainText(beforeSlow.step!.text);
   await expect(attempt.getByRole('button', { name: '恢复为尝试', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '取消生成', exact: true }).click();

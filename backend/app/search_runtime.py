@@ -166,9 +166,13 @@ async def external_stream(service, run, messages, provider, publish, *, outbound
     succeeded = False
     seen = set()
     content_emitted = False
+    from .teaching_wire import uses_json
+    structured_teaching = uses_json(messages)
     # Invalid/repeated requests consume the same bounded attempt budget. One final
     # tool-disabled turn always lets the model explain the available evidence.
     for _ in range(budget + 1):
+        if structured_teaching:
+            yield ProviderChunk('model_start', '')
         diagnostic = getattr(provider, 'diagnostics', None)
         if diagnostic:
             diagnostic.phase = 'tool_continuation' if attempts else 'initial_response'

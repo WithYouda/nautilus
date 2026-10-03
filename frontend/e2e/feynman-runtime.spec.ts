@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Response } from '@playwright/test';
-import { authorize } from './fact-helpers';
+import { authorize, checkDefaultTeachingSupport } from './fact-helpers';
 import type { AiConversationDetail, AiRun, QuestionDiscussion, TeachingMethod, VerificationReview } from '../src/api';
 
 test.beforeEach(async ({ page }) => {
@@ -18,6 +18,7 @@ async function setup(page: Page) {
     display_name: 'Synthetic Feynman provider', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL,
     model: 'mock-success', api_key: 'synthetic-feynman-key', enabled: true, request_timeout_seconds: 15,
   } })).ok()).toBeTruthy();
+  await checkDefaultTeachingSupport(page);
   const preferences = await (await page.request.get('/api/preferences')).json();
   expect((await page.request.put('/api/preferences', { data: { ...preferences, teaching_mode: 'stepwise' } })).ok()).toBeTruthy();
   await page.reload();

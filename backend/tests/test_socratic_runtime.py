@@ -11,11 +11,11 @@ from app import teaching_runtime as teaching
 from app.discussion_branches import create_branch as branch_discussion
 from app.learning_domain import DomainError
 from app.question_discussion import QuestionDiscussionService
-from test_ai_conversations import authorize, configure_provider, make_client, read_sse
+from test_ai_conversations import authorize, make_client, read_sse
 from test_conversation_branches import branch
 from test_learning_domain_schema import learning_database  # noqa: F401
 from test_learning_verifications import IDENTITY
-from test_teaching_runtime import TeachingProvider, chat_turn, new_chat, saved
+from test_teaching_runtime import configure_provider, TeachingProvider, chat_turn, new_chat, saved
 from test_verification_review import attempt as verification_attempt
 
 

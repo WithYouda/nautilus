@@ -17,13 +17,13 @@ from app.preferences import PreferencesService
 from app.purge_storage import register_backup, storage_lock
 from app.question_discussion import QuestionDiscussionService
 from app.search_service import SearchService
-from test_ai_conversations import authorize, configure_provider, make_client, read_sse
+from test_ai_conversations import authorize, make_client, read_sse
 from test_conversation_branches import branch
 from test_learning_domain_schema import learning_database  # noqa: F401
 from test_learning_verifications import IDENTITY
 from test_preferences import service as preference_service
 from test_teaching_practice import PracticeProvider, state
-from test_teaching_runtime import chat_turn, new_chat, saved
+from test_teaching_runtime import configure_provider, chat_turn, new_chat, saved
 from test_verification_review import attempt as verification_attempt
 
 INVITATION = '🍊 请用自己的话说明为什么空输入需要单独检查。'

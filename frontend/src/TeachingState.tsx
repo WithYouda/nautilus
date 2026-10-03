@@ -58,6 +58,12 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
   // The final selected answer owns this position. Legacy answers remain unknown;
   // cancellation and incomplete runs use their own saved pre-generation state.
   const last = entries.at(-1)?.teaching;
+  const recordingUnavailable = last?.status === 'unavailable' || last?.recording?.available === false;
+  const recordingNotice = last?.recording?.reason === 'not_checked'
+    ? '当前模型尚未检查教学记录支持。可在设置中检查，普通对话可继续。'
+    : last?.recording?.reason === 'native_search_unverified'
+      ? '当前联网方式尚不能记录教学状态，普通对话可继续。'
+      : '当前模型暂不能记录教学状态，普通对话可继续。';
   const checkpoint = last?.status === 'applied' ? last.current : last?.before;
   const attempts = entries.filter(entry => entry.teaching?.attempt && !entry.teaching.practice_observation && !entry.teaching.retelling_observation);
   const practices = entries.filter(entry => entry.teaching?.status === 'applied' && entry.teaching.practice_question);
@@ -167,6 +173,7 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
   }
 
   const body = <div className="teaching-state" aria-label="当前教学安排">
+    {recordingUnavailable && <p className="form-hint" role="status">{recordingNotice}</p>}
     <label className="teaching-state__choice">讲解方式
       <select aria-label="讲解方式" value={method} disabled={disabled || Boolean(busyId)} onChange={event => onModeChange(event.target.value as TeachingSelection)}>
         {!method && <option value="" disabled>选择方式</option>}
@@ -183,15 +190,15 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
     {(last?.effective_mode ?? checkpoint?.mode) === 'socratic' && guidance && <p className="teaching-state__mode">提示安排 · {guidanceLabels[guidance.level]}</p>}
     {checkpoint?.step && <div className="teaching-state__step"><b>当前小点</b><p>{checkpoint.step.text}</p></div>}
     {checkpoint?.step?.text.trim() && <div className="teaching-state__practice-actions">
-      <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh}
+      <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
         onClick={() => onAction('practice', '换一道试试。')}>换一道试试</button>
-      <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh}
+      <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
         onClick={() => onAction('retell', '用自己的话说说。')}>用自己的话说说</button>
       {(checkpoint.practice || checkpoint.retelling) && <>
         <span className="teaching-state__practice-phase">{checkpoint.practice
           ? checkpoint.practice.phase === 'awaiting_attempt' ? checkpoint.practice.kind === 'retelling' ? '等待复述' : '等待作答' : '已有反馈'
           : checkpoint.retelling?.phase === 'awaiting_retelling' ? '等待复述' : '已有反馈'}</span>
-        <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh}
+        <button type="button" className="button button--quiet button--compact" disabled={disabled || Boolean(busyId) || needsRefresh || recordingUnavailable}
           onClick={() => onAction('continue', checkpoint.practice && checkpoint.practice.kind !== 'retelling' ? '这道先不练了，继续学习。' : '继续学习。')}>继续学习</button>
       </>}
     </div>}

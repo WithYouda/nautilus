@@ -414,7 +414,8 @@ export type TeachingPracticeObservation = {
   eligible: boolean; needs_help: boolean | null; help_context?: unknown[];
 };
 export type TeachingRecord = {
-  status: 'running' | 'applied' | 'not_updated';
+  status: 'running' | 'applied' | 'not_updated' | 'unavailable';
+  recording?: { available: boolean; reason: 'not_checked' | 'not_supported' | 'native_search_unverified' | null };
   before: TeachingCheckpoint;
   after: TeachingCheckpoint | null;
   current: TeachingCheckpoint;
@@ -651,15 +652,17 @@ export function actionableProviderError(kind?: string | null, message?: string |
   }
 }
 
+const teachingRecordingUnavailableMessage = '当前模型暂不能记录教学状态。可在设置中检查支持，或继续普通对话。';
+
 function parseErrorBody(body: unknown): { kind?: string; message?: string } {
   if (!body || typeof body !== "object") return {};
   const detail = "detail" in body ? (body as { detail?: unknown }).detail : body;
-  if (typeof detail === "string") return { message: detail };
+  if (typeof detail === "string") return { message: detail === 'teaching_recording_unavailable' ? teachingRecordingUnavailableMessage : detail };
   if (detail && typeof detail === "object") {
     const record = detail as { kind?: unknown; message?: unknown };
     return {
       kind: typeof record.kind === "string" ? record.kind : undefined,
-      message: typeof record.message === "string" ? record.message : undefined,
+      message: record.kind === 'teaching_recording_unavailable' ? teachingRecordingUnavailableMessage : typeof record.message === "string" ? record.message : undefined,
     };
   }
   return {};
@@ -931,6 +934,17 @@ export function getAiProvider(): Promise<{ provider: AiProvider | null }> {
 
 export function listAiProviders(): Promise<AiProvider[]> {
   return request<AiProvider[]>("/api/ai/providers");
+}
+
+export type TeachingSupportState = 'supported' | 'unavailable' | 'unchecked';
+export type TeachingSupport = { plain: TeachingSupportState; tools: TeachingSupportState; checked_at: string | null };
+export type TeachingSupportCheck = { support: TeachingSupport; failures: Partial<Record<'plain' | 'tools', string>>; updated: boolean };
+const teachingSupportPath = (provider: string, model: string) => `/api/ai/providers/${encodeURIComponent(provider)}/models/${encodeURIComponent(model)}/teaching-support`;
+export function getTeachingSupport(provider: string, model: string, signal?: AbortSignal): Promise<TeachingSupport> {
+  return request(teachingSupportPath(provider, model), { signal });
+}
+export function checkTeachingSupport(provider: string, model: string, signal?: AbortSignal): Promise<TeachingSupportCheck> {
+  return request(`${teachingSupportPath(provider, model)}/check`, { method: 'POST', signal });
 }
 
 export function createAiProvider(payload: AiProviderInput & { is_default?: boolean; provider_kind?: "openai_compatible" }): Promise<{ provider: AiProvider }> {

@@ -7,6 +7,7 @@ import './styles/settings.css';
 import { DiagnosticSettings } from './Diagnostics';
 import ObsidianSettings from './ObsidianSettings';
 import ImageModelSettings from './ImageModelSettings';
+import TeachingRecordSettings from './TeachingRecordSettings';
 
 export type SettingsSection = 'general' | 'search' | 'provider';
 const initial: UserPreferences = { teaching_mode: 'stepwise', conflict_policy: 'ask', search: { mode: 'off' } };
@@ -50,6 +51,7 @@ export default function Settings({ open, section, provider, onClose, onOpenSearc
             </select></label>
             <p>费曼复述：先用自己的话解释，再根据反馈补充。</p>
             <small className="form-hint">用于之后未单独调整的对话请求；已保存的回答保持原样。</small>
+            <TeachingRecordSettings provider={provider} />
           </section>
           <section className={section === 'general' ? 'is-target' : ''}><h3>资料与回答</h3><p>新上传且读取成功的资料会成为当前对话可参考来源。遇到影响答案的实质冲突时，默认怎样处理？</p>
             <label className="field"><span>资料冲突默认方式</span><select value={draft.conflict_policy} onChange={event => setDraft(current => ({ ...current, conflict_policy: event.target.value as ConflictPolicy }))}>

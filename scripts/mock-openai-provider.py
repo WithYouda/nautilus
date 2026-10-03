@@ -30,18 +30,40 @@ MATH_TEXT = (
 )
 
 
+def teaching_chunks(body: list[str], proposal: dict[str, Any], context: dict[str, Any]) -> list[str]:
+    if context.get('output_format') == 'json':
+        chunks = ['{"reply":"', *(json.dumps(piece, ensure_ascii=False)[1:-1] for piece in body)]
+        metadata = ',"teaching":' + json.dumps(proposal, ensure_ascii=False) + ',"token":' + json.dumps(context['token']) + '}'
+        return [*chunks, '"', *(metadata[index:index + 17] for index in range(0, len(metadata), 17))]
+    trailer = '\n' + context['opening'] + json.dumps(proposal, ensure_ascii=False) + context['closing']
+    return [*body, *(trailer[index:index + 17] for index in range(0, len(trailer), 17))]
+
+
 class MockState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.requests: Counter[str] = Counter()
         self.delivered: Counter[str] = Counter()
         self.disconnects: Counter[str] = Counter()
+        self.teaching_check_failures = 0
 
     def reset(self) -> None:
         with self._lock:
             self.requests.clear()
             self.delivered.clear()
             self.disconnects.clear()
+            self.teaching_check_failures = 0
+
+    def fail_teaching_checks(self) -> None:
+        with self._lock:
+            self.teaching_check_failures = 2
+
+    def reject_teaching_check(self) -> bool:
+        with self._lock:
+            if self.teaching_check_failures:
+                self.teaching_check_failures -= 1
+                return True
+            return False
 
     def requested(self, scenario: str) -> None:
         with self._lock:
@@ -100,6 +122,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                         {"id": "mock-slow"},
                         {"id": "mock-evidence"},
                         {"id": "mock-error"},
+                        {"id": "mock-unsupported"},
                     ]
                 },
             )
@@ -109,6 +132,10 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         if self.path == "/__mock__/reset":
             STATE.reset()
+            self._json(200, {"ok": True})
+            return
+        if self.path == "/__mock__/teaching-check/fail-next":
+            STATE.fail_teaching_checks()
             self._json(200, {"ok": True})
             return
         if not self.path.endswith("/chat/completions"):
@@ -124,6 +151,13 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
+        capability_check = any(message.get('role') == 'system' and '这是一次应用能力检查' in str(message.get('content', ''))
+                               for message in payload.get('messages', []))
+        if capability_check:
+            STATE.requested('teaching-check:tools' if payload.get('tools') else 'teaching-check:plain')
+            if STATE.reject_teaching_check():
+                self._json(401, {"error": {"message": "Synthetic temporary teaching-check rejection"}})
+                return
         scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools", "mock-process-tools", "mock-knowledge-tools"} else "mock-success"
         is_title_request = payload.get("stream") is not True and int(payload.get("max_tokens") or 0) >= 256
         STATE.requested(f"title:{scenario}" if is_title_request else scenario)
@@ -215,6 +249,16 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
         try:
             messages = payload.get("messages", [])
             last_user = max((i for i, message in enumerate(messages) if message.get("role") == "user"), default=-1)
+            if capability_check:
+                result = str(messages[last_user]['content']) if model != 'mock-unsupported' else '合成普通回答。'
+                for index in range(0, len(result), 7):
+                    event = json.dumps({"choices": [{"delta": {"content": result[index:index + 7]}}]}, ensure_ascii=False)
+                    self.wfile.write(f'data: {event}\n\n'.encode())
+                    self.wfile.flush()
+                    time.sleep(.002)
+                self.wfile.write(b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+                self.wfile.flush()
+                return
             has_result = any(message.get("role") == "tool" for message in messages[last_user + 1:])
             if scenario == "mock-knowledge-tools":
                 results = [message for message in messages[last_user + 1:] if message.get("role") == "tool"]
@@ -316,9 +360,8 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 practice_reply = (body, {'step': step, 'attempt': attempt, 'mode': None, 'help': None, 'practice': None})
             if practice_reply:
                 body, proposal = practice_reply
-                trailer = '\n' + practice_context['opening'] + json.dumps(proposal, ensure_ascii=False) + practice_context['closing']
                 chunks = ([body] if '[C2慢流]' not in c1_request else ['正在分析新的情境。', *SLOW_CHUNKS, body])
-                chunks += [trailer[index:index + 17] for index in range(0, len(trailer), 17)]
+                chunks = teaching_chunks(chunks, proposal, practice_context)
                 delay = .08 if '[C2慢流]' in c1_request else .005
             elif '[C1' in c1_request:
                 runtime = next((str(m.get('content', '')) for m in reversed(messages)
@@ -329,10 +372,9 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     point = f'输入边界检查（合成{sequence}）。'
                     proposal = {'step': point, 'attempt': {'quote': c1_request}
                         if '[C1尝试]' in c1_request and context['before']['step'] else None, 'mode': None, 'practice': None}
-                    trailer = '\n' + context['opening'] + json.dumps(proposal, ensure_ascii=False) + context['closing']
                     chunks = ([point, '请说明你的判断。'] if '[C1慢流]' not in c1_request
                               else ['正在分析输入边界。', *SLOW_CHUNKS, point])
-                    chunks += [trailer[index:index + 17] for index in range(0, len(trailer), 17)]
+                    chunks = teaching_chunks(chunks, proposal, context)
                     delay = .08 if '[C1慢流]' in c1_request else .005
             elif any('[C2' in str(message.get('content', '')) for message in messages if message.get('role') == 'user'):
                 runtime = next((str(message.get('content', '')) for message in reversed(messages)
@@ -376,11 +418,12 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                             else ['你会先检查哪一种输入？', '想想空输入和输入边界。', '先只考虑空输入时应返回什么。',
                                   '局部例子：输入为空时，先走空输入分支。', '直接解释：先判断输入是否为空，再检查正常输入。'][level])
                     proposal = {'step': new_step, 'attempt': attempt, 'mode': mode, 'help': help_request, 'practice': None}
-                    trailer = '\n' + context['opening'] + json.dumps(proposal, ensure_ascii=False) + context['closing']
                     chunks = ([point, body] if '[C2慢流]' not in c1_request
                               else ['正在分析输入边界。', *SLOW_CHUNKS, point, body])
-                    chunks += [trailer[index:index + 17] for index in range(0, len(trailer), 17)]
+                    chunks = teaching_chunks(chunks, proposal, context)
                     delay = .08 if '[C2慢流]' in c1_request else .005
+            elif practice_context and practice_context.get('output_format') == 'json':
+                chunks = teaching_chunks(chunks, {'step': None, 'attempt': None, 'mode': None, 'help': None, 'practice': None}, practice_context)
             if scenario == "mock-reasoning" or discussion_stream:
                 for reasoning in ["先识别题目条件。", "再核对推导路径。"]:
                     event = json.dumps(

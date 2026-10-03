@@ -13,6 +13,7 @@ import httpx
 
 from .provider_network import ProviderHTTPClient
 from .provider_messages import encode_messages
+from .teaching_wire import apply_json_output, uses_json
 
 logger = logging.getLogger("nautilus.providers")
 
@@ -46,7 +47,7 @@ class ProviderConfig:
 
 @dataclass(frozen=True)
 class ProviderChunk:
-    kind: Literal["content", "reasoning", "search_status", "search_sources", "turn_end", "tool_start", "tool_end", "model_turn", "completion"]
+    kind: Literal["content", "reasoning", "search_status", "search_sources", "turn_end", "tool_start", "tool_end", "model_start", "model_turn", "completion"]
     text: str
 
 
@@ -236,6 +237,8 @@ class OpenAICompatibleProvider:
             "messages": encode_messages(messages, "openai_compatible"),
             "stream": True,
         }
+        apply_json_output(payload, self.kind, messages)
+        json_output = uses_json(messages)
         include_error_detail = not any(message.get("_images") for message in messages)
         try:
             async with self._client() as client:
@@ -256,7 +259,7 @@ class OpenAICompatibleProvider:
                         for chunk in chunks:
                             normalized = (
                                 think_parser.feed(chunk.text)
-                                if chunk.kind == "content"
+                                if chunk.kind == "content" and not json_output
                                 else [chunk]
                             )
                             for item in normalized:

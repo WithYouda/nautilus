@@ -181,6 +181,25 @@ class ImageCapabilityRequest(BaseModel):
     supports_image_input: StrictBool | None
 
 
+@router.get('/providers/{provider_id}/models/{model_id}/teaching-support')
+def teaching_support(provider_id: str, model_id: str, request: Request, identity=Depends(current_identity)):
+    from ..teaching_capability import status as teaching_status
+    try:
+        return teaching_status(conversation_service(request), identity['id'], provider_id, model_id)
+    except ConversationError as error:
+        _raise(error)
+
+
+@router.post('/providers/{provider_id}/models/{model_id}/teaching-support/check')
+async def check_teaching_support(provider_id: str, model_id: str, request: Request, identity=Depends(current_identity)):
+    from ..teaching_capability import check
+    try:
+        return await check(conversation_service(request), identity['id'], provider_id, model_id,
+                           transport=ai_run_manager(request).transport)
+    except ConversationError as error:
+        _raise(error)
+
+
 @router.put('/providers/{provider_id}/models/{model_id}/image-capability')
 def set_image_capability(provider_id: str, model_id: str, payload: ImageCapabilityRequest,
                          request: Request, identity=Depends(current_identity)):

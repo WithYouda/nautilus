@@ -102,6 +102,11 @@ class ConversationService:
         self.materials = None
         self.current_state = None
         self.preferences = None
+        self._teaching_checks = set()
+
+    def teaching_output(self, owner, profile, config, *, search=None, scope=None):
+        from .teaching_capability import output_for
+        return output_for(self, owner, profile, config, search=search, scope=scope)
 
     def default_teaching_mode(self, owner, original_snapshot=None):
         from .teaching_runtime import METHODS
@@ -1857,10 +1862,14 @@ class ConversationService:
                 # for source clearing, without copying older user content.
                 config_snapshot['source_history_message_ids'] = [item['id'] for item in teaching_path]
                 from .teaching_runtime import freeze as freeze_teaching
+                teaching_output = self.teaching_output(identity_id, profile, config,
+                    search=search_run.selection if search_run else None, scope=frozen)
+                if teaching_action and teaching_output['format'] == 'plain':
+                    raise ConversationError('当前模型尚不能记录教学活动，请在设置中检查教学记录支持；普通聊天可继续')
                 config_snapshot['teaching'] = freeze_teaching(
                     [item for item in teaching_path if item['role'] == 'assistant'],
                     answer_id=assistant_message_id, message_id=user_message_id,
-                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default)
+                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output)
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,
@@ -2063,6 +2072,7 @@ class ConversationService:
         error_message: str | None = None,
         teaching_proposal: dict | None = None,
         teaching_not_applied_reason: str | None = None,
+        teaching_reply_start: int = 0,
     ) -> str | None:
         """收敛运行记录与助手消息。已经是终态的运行不会被再次改写。"""
         if status not in {"succeeded", "failed", "canceled"}:
@@ -2084,7 +2094,8 @@ class ConversationService:
                 user = connection.execute('SELECT content FROM message WHERE id=? AND conversation_id=?',
                     (snapshot['teaching']['message_id'], row['conversation_id'])).fetchone()
                 adopt_teaching(snapshot['teaching'], teaching_proposal, body=content,
-                    user_text=user['content'] if user else '', at=now, not_applied_reason=teaching_not_applied_reason)
+                    user_text=user['content'] if user else '', at=now, not_applied_reason=teaching_not_applied_reason,
+                    reply_start=teaching_reply_start)
                 connection.execute('UPDATE ai_run SET config_snapshot_json=? WHERE id=?',
                     (json.dumps(snapshot, ensure_ascii=False), run_id))
             connection.execute(

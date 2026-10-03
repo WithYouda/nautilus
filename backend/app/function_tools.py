@@ -14,6 +14,7 @@ import httpx
 
 from .providers import ProviderChunk, ProviderError, _ThinkStreamParser, _teaching_opening
 from .provider_messages import encode_message, message_images
+from .teaching_wire import apply_json_output, output_kind, uses_json
 
 MAX_CALLS = 8
 MAX_ARGUMENTS = 20_000
@@ -100,6 +101,12 @@ class ToolSession:
                     and saved.get("base_url") == self.provider.config.base_url
                     and isinstance(saved.get("messages"), list)):
                 continue
+            saved_output = saved.get('teaching_output', 'legacy' if saved.get('teaching_input') else 'plain')
+            if saved_output != output_kind(self.messages):
+                # Reuse public reply text at a format boundary. In particular,
+                # do not put an old JSON envelope into a plain-chat history.
+                # The saved native blocks/signatures themselves stay untouched.
+                continue
             native = saved["messages"]
             size = len(json.dumps(native, ensure_ascii=False).encode("utf-8"))
             if saved.get('teaching_input'):
@@ -150,6 +157,7 @@ class ToolSession:
             raise _bad('模型轮次记录过大')
         return {"provider_kind": self.kind, "model": self.provider.config.model,
                 "base_url": self.provider.config.base_url, "messages": copy.deepcopy(generated),
+                'teaching_output': output_kind(self.messages),
                 **({'teaching_input': runtime} if runtime else {})}
 
     async def stream_turn(self, tools: list[dict], *, allow_tools: bool = True) -> AsyncIterator[ProviderChunk | ToolTurn]:
@@ -257,6 +265,8 @@ class ToolSession:
         payload = {"model": self.provider.config.model, "messages": self._history, "stream": True,
                    "tools": [{"type": "function", "function": t} for t in tools],
                    "tool_choice": "auto" if allow_tools else "none"}
+        apply_json_output(payload, self.kind, self.messages)
+        json_output = uses_json(self.messages)
         indexed: dict[int, dict[str, str]] = {}
         content, reasoning = "", ""
         reasoning_seen = False
@@ -289,7 +299,7 @@ class ToolSession:
                         reasoning += value
                     if len(content.encode("utf-8")) + len(reasoning.encode("utf-8")) > MAX_CONTINUATION:
                         raise _bad("提供方响应过大")
-                    if kind == "content":
+                    if kind == "content" and not json_output:
                         for chunk in think_parser.feed(value):
                             yield chunk
                     else:
@@ -338,6 +348,7 @@ class ToolSession:
                    "tools": [{"type": "function", **t, "strict": False} for t in tools],
                    "tool_choice": "auto" if allow_tools else "none",
                    "include": ["reasoning.encrypted_content"]}
+        apply_json_output(payload, self.kind, self.messages)
         items: dict[int, dict] = {}
         calls_delta: dict[str, str] = {}
         completed = False
@@ -415,6 +426,7 @@ class ToolSession:
             "toolConfig": {"functionCallingConfig": {"mode": "AUTO" if allow_tools else "NONE"}}}
         if self._system:
             payload["systemInstruction"] = {"parts": [{"text": self._system}]}
+        apply_json_output(payload, self.kind, self.messages)
         parts: list[dict] = []
         finished = False
         async for event, body in self.provider._events(self.provider._endpoint(True), payload):
@@ -460,6 +472,7 @@ class ToolSession:
             "tool_choice": {"type": "auto" if allow_tools else "none"}}
         if self._system:
             payload["system"] = self._system
+        apply_json_output(payload, self.kind, self.messages)
         blocks: dict[int, dict] = {}
         raw_inputs: dict[int, str] = {}
         stopped = False

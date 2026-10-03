@@ -15,11 +15,17 @@ from app.discussion_branches import create_branch as branch_discussion
 from app.providers import ProviderChunk
 from app.question_discussion import QuestionDiscussionService
 from app.purge_storage import register_backup, storage_lock
-from test_ai_conversations import make_client, authorize, configure_provider, read_sse
+from test_ai_conversations import make_client, authorize, configure_provider as configure_base_provider, read_sse
 from test_conversation_branches import branch
 from test_learning_domain_schema import learning_database  # noqa: F401
 from test_learning_verifications import IDENTITY
 from test_verification_review import attempt
+
+
+def configure_provider(client):
+    """Exercise legacy semantic fixtures; JSON transport has separate coverage."""
+    configure_base_provider(client)
+    client.app.state.conversations.teaching_output = lambda *_args, **_kwargs: {'format': 'legacy', 'version': 1}
 
 
 class TeachingProvider:

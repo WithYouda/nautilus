@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Response } from '@playwright/test';
-import { authorize } from './fact-helpers';
+import { authorize, checkDefaultTeachingSupport } from './fact-helpers';
 import type { AiConversationDetail, AiRun, QuestionDiscussion, TeachingPractice, VerificationReview } from '../src/api';
 
 test.beforeEach(async ({ page }) => {
@@ -16,6 +16,7 @@ async function setup(page: Page) {
     display_name: 'Synthetic teaching practice provider', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL,
     model: 'mock-success', api_key: 'synthetic-teaching-practice-key', enabled: true, request_timeout_seconds: 15,
   } })).ok()).toBeTruthy();
+  await checkDefaultTeachingSupport(page);
   await page.reload();
 }
 

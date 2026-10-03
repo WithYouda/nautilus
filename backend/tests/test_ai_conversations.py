@@ -1623,8 +1623,11 @@ def test_conversation_history_is_sent_to_the_provider(tmp_path):
 
         assert len(captured) == 2
         roles = [item["role"] for item in captured[1]["messages"]]
-        assert roles == ["system", "user", "assistant", "user", "user"]
-        assert captured[1]['messages'][-2]['content'].startswith('Nautilus 本轮执行上下文')
+        # Unchecked models retain ordinary chat without a teaching protocol.
+        assert roles == ["system", "user", "assistant", "user"]
+        assert captured[1]['messages'][-2]['content'] == '矩阵乘法的核心是行列对应相乘再求和。'
+        assert not any(str(item['content']).startswith('Nautilus 本轮执行上下文')
+                       for item in captured[1]['messages'])
         # Teaching guidance reaches the provider on every turn, including resumed history.
         for request in captured:
             system = request["messages"][0]["content"]

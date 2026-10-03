@@ -328,6 +328,12 @@ class QuestionDiscussionService:
             teaching_default = self.chats.default_teaching_mode(owner, original_snapshot) if not existing_turn else 'stepwise'
         except ConversationError as error:
             raise DomainError('teaching_defaults_unavailable', 400) from error
+        teaching_output = {'format': 'plain', 'version': 1, 'reason': 'not_checked'}
+        if not existing_turn and prepared_runtime:
+            teaching_output = self.chats.teaching_output(owner, *prepared_runtime,
+                search=search_run.selection if search_run else None, scope=frozen)
+            if teaching_action and teaching_output['format'] == 'plain':
+                raise DomainError('teaching_recording_unavailable', 400)
         attempt_id = str(uuid4())
         with self.db.transaction(immediate=True) as c:
             if c.execute('SELECT purged_at FROM learning_question_discussion WHERE id=?', (discussion_id,)).fetchone()[0]:
@@ -399,7 +405,7 @@ class QuestionDiscussionService:
                                        'teaching_mode': teaching_mode, 'teaching_action': teaching_action,
                                        'teaching': teaching.freeze([by_id[item] for item in history_path],
                                            answer_id=turn_id, message_id=turn_id, kind='discussion', scope_id=discussion_id,
-                                           requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default),
+                                           requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output),
                                        'attachment_version_ids': attached,
                                        **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
                 if self.current_state is not None:
@@ -707,7 +713,8 @@ class QuestionDiscussionService:
                         'SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (turn_id,)).fetchone()[0])
                     proposal = teaching_stream.proposal()
                     teaching.adopt(current_snapshot['teaching'], proposal,
-                        body=reply, user_text=content, at=utc_timestamp(), not_applied_reason=teaching_stream.not_applied_reason)
+                        body=reply, user_text=content, at=utc_timestamp(), not_applied_reason=teaching_stream.not_applied_reason,
+                        reply_start=teaching_stream.reply_start)
                     c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
                         (json.dumps(current_snapshot, ensure_ascii=False), turn_id))
                 from .branch_maps import name_new_discussion_turn

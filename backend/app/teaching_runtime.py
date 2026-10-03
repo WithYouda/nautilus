@@ -1,9 +1,8 @@
 """A small, version-local teaching checkpoint. Never learning evidence or a plan.
 
-The model proposes metadata in the same text stream as its answer. Only a
-normally completed answer can commit it; ordinary text providers need no tools
-or JSON-mode capability. Frozen execution and later user corrections are kept
-separately in the existing answer snapshot.
+The model proposes metadata in the same response as its answer. Only a
+normally completed answer can commit it. Checked models use a constrained JSON
+envelope; other models retain ordinary chat. Legacy trailers remain readable.
 """
 from __future__ import annotations
 
@@ -17,9 +16,12 @@ from .providers import ProviderChunk
 MODES = {'stepwise', 'socratic', 'feynman', 'direct_answer', 'full_explanation'}
 METHODS = {'stepwise', 'socratic', 'feynman'}
 HELP_KINDS = {'hint', 'explain_step', 'example', 'try_first'}
-PROTOCOL = 'teaching-v4'
-READABLE_PROTOCOLS = {'stepwise-v1', 'teaching-v2', 'teaching-v3', PROTOCOL}
+PROTOCOL = 'teaching-v5'
+READABLE_PROTOCOLS = {'stepwise-v1', 'teaching-v2', 'teaching-v3', 'teaching-v4', PROTOCOL}
 MAX_METADATA = 16384
+
+LEGACY_OUTPUT_RULE = '本轮执行上下文给出唯一 opening/closing 标记。在最终回答正文结束后，另起一行输出 opening，紧接严格 JSON，再输出 closing；不得用代码块包裹，不要在正文解释这些字段。调用工具前不要输出这段状态。'
+JSON_OUTPUT_RULE = '应用程序需要一个完整JSON响应。最终回答只输出一个JSON对象，字段按顺序为reply、teaching、token。reply是向用户展示的Markdown正文字符串，teaching是本轮教学观察对象，token逐字复制本轮执行上下文的token。不要输出JSON之外的文字或代码块。需要工具时先调用工具，取得结果后才输出最终对象。正文和记录是同一结果，缺任何一个都不完整。本轮字段约束以执行上下文的teaching_constraints为准；不得在reply中解释产品字段。'
 
 SYSTEM_PROMPT = """教学执行约定：这是学习讨论，不评分，不修改正式计划或完成/掌握结论。
 按本轮执行上下文中的基础方式继续；stepwise 每轮只处理一个小点、最多一次理解确认，等待用户回应；socratic 用提问引导，让用户先实际尝试。
@@ -89,7 +91,7 @@ def _recount(path, before):
     guide['stuck_count'] = count
 
 
-def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, help_kind=None, action=None, default_mode='stepwise'):
+def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, help_kind=None, action=None, default_mode='stepwise', output=None):
     """Path has already passed the caller's material/ownership boundary."""
     before = checkpoint()
     if path and path[-1].get('teaching'):
@@ -154,6 +156,7 @@ def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, 
                                  ('message_id', 'step_id', 'is_attempt', 'revision', 'start', 'end')}
                                 | {'answer_id': item['id'], 'needs_help': attempt.get('needs_help')})
     return {'protocol': PROTOCOL, 'token': uuid4().hex, 'before': before,
+            'output': copy.deepcopy(output if output is not None else {'format': 'legacy', 'version': 1}),
             'answer_id': answer_id, 'message_id': message_id,
             'parent_answer_id': path[-1]['id'] if path else None,
             'origin': {'kind': kind, 'scope_id': scope_id, 'answer_id': answer_id, 'message_id': message_id},
@@ -169,7 +172,13 @@ def markers(frozen):
 
 def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
     messages = copy.deepcopy(messages)
-    messages[0]['content'] += '\n' + SYSTEM_PROMPT + '\n' + SOCRATIC_PROMPT + '\n' + FEYNMAN_PROMPT
+    output = (frozen.get('output') or {}).get('format', 'legacy')
+    if output == 'plain':
+        return messages
+    instructions = SYSTEM_PROMPT
+    if output == 'json':
+        instructions = instructions.replace(LEGACY_OUTPUT_RULE, JSON_OUTPUT_RULE).replace('JSON 格式固定为', 'teaching 字段格式固定为')
+    messages[0]['content'] += '\n' + instructions + '\n' + SOCRATIC_PROMPT + '\n' + FEYNMAN_PROMPT
     if frozen.get('action') == 'practice':
         messages[0]['content'] += '\n' + PRACTICE_PROMPT
     opening, closing = markers(frozen)
@@ -188,7 +197,28 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
     context = {'before': frozen['before'], 'attempt_context': observations, 'help_kind': frozen.get('help_kind'),
                'action': frozen.get('action'), 'practice_context': practice_context,
                'opening': opening, 'closing': closing}
-    if (frozen.get('action') == 'retell' or frozen['before']['mode'] == 'feynman'
+    if output == 'json':
+        context.pop('opening'); context.pop('closing')
+        context.update(output_format='json', token=frozen['token'], response_example={
+            'reply': '向用户展示的Markdown正文',
+            'teaching': dict(step=None, attempt=None, mode=None, help=None, practice=None),
+            'token': frozen['token']})
+        action = frozen.get('action')
+        constraints = {'attempt': '只引用本轮用户的真实尝试；普通提问、求助、点击或说懂了必须为null。',
+                       'step': '只有首次或明确转向新小点时填写；实际复述和帮助请求保持null。'}
+        if action in {'practice', 'retell'}:
+            constraints.update(attempt='必须为null，点击不是作答。', step='必须为null。',
+                practice='必须填question为本轮reply中的完整题目或复述邀请原文；feedback必须为null。')
+        elif action == 'continue':
+            constraints.update(attempt='必须为null，点击不是作答。', practice='必须为null。',
+                step='单次活动返回原小点必须为null；持续费曼继续后续小点可摘取新主题。')
+        elif practice:
+            constraints.update(step='必须为null，留在当前活动。',
+                practice='只有真实作答/复述才填question:null与反馈逐字原文feedback；没有真实作答时必须为null。')
+        else:
+            constraints['practice'] = '必须为null，本轮没有单次活动。持续费曼的实际复述只写attempt，应用会将本轮reply作为反馈关联。'
+        context['teaching_constraints'] = constraints
+    elif (frozen.get('action') == 'retell' or frozen['before']['mode'] == 'feynman'
             or (practice or {}).get('kind') == 'retelling'):
         empty = dict(step=None, attempt=None, mode=None, help=None, practice=None)
         examples = {'没有尝试或状态变更': empty}
@@ -201,14 +231,25 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
             'required_format': '先写回答正文，再另起一行附状态尾，两部分都写完才结束。示例不是本轮结果：按执行规则填写字段；引用占位文字必须替换成真实原文。普通提问、求助、点击和说懂了不能照抄实际复述示例。首次建立或明确继续新小点时才填写step。',
             'trailer_examples': {label: opening + json.dumps(value, ensure_ascii=False) + closing
                                  for label, value in examples.items()}}
-    messages.insert(len(messages) - 1, {'role': 'user', '_teaching_runtime': True, 'content':
+    messages.insert(len(messages) - 1, {'role': 'user', '_teaching_runtime': True,
+        **({'_teaching_output': 'json'} if output == 'json' else {}), 'content':
         'Nautilus 本轮执行上下文（下一条才是本轮用户原文）：\n' + json.dumps(context, ensure_ascii=False)})
     return messages
 
 
 class TeachingStream:
-    """Hide a bounded trailer before any body, SSE, trace, or help observation."""
+    """Expose only reply text to body/SSE/trace; keep teaching metadata private."""
     def __init__(self, frozen):
+        self.output = (frozen.get('output') or {}).get('format', 'legacy')
+        self.token = frozen['token']
+        self.reply_start = 0
+        self.body_size = 0
+        self._separator = False
+        self._reply_started = False
+        self.decoder = None
+        if self.output == 'json':
+            from .teaching_json import JsonTeachingDecoder
+            self.decoder = JsonTeachingDecoder(self.token, MAX_METADATA)
         opening, self.closing = markers(frozen)
         self.opening = opening
         self.pending = ''
@@ -218,6 +259,18 @@ class TeachingStream:
         self.not_applied_reason = None
 
     def feed(self, text):
+        if self.output == 'plain':
+            return text
+        if self.decoder is not None:
+            visible = self.decoder.feed(text)
+            if visible:
+                if not self._reply_started:
+                    separator = '\n\n' if self._separator else ''
+                    self.reply_start = self.body_size + len(separator)
+                    self._reply_started = True
+                    visible = separator + visible
+                self.body_size += len(visible)
+            return visible
         if self.metadata is not None:
             if len(self.metadata) + len(text) > MAX_METADATA:
                 self.overflow = True
@@ -238,6 +291,8 @@ class TeachingStream:
         return text
 
     def flush(self):
+        if self.output != 'legacy':
+            return ''
         # A broken metadata marker is not useful learning text. A lone newline
         # can be normal Markdown, however, and must not eat answer content.
         text = self.pending if self.pending in ('', '\n') else ''
@@ -246,14 +301,27 @@ class TeachingStream:
 
     async def filter(self, stream):
         async for chunk in stream:
+            if chunk.kind == 'model_start':
+                if self.output == 'json':
+                    from .teaching_json import JsonTeachingDecoder
+                    self.decoder = JsonTeachingDecoder(self.token, MAX_METADATA)
+                    self.reply_start = self.body_size
+                    self._separator = self.body_size > 0
+                    self._reply_started = False
+                    self.completed = False
+                continue
             if chunk.kind == 'completion':
                 self.completed = chunk.text == 'complete'
+                if self.decoder is not None:
+                    self.decoder.finish()
             elif chunk.kind == 'content':
                 visible = self.feed(chunk.text)
                 if visible:
                     yield ProviderChunk('content', visible)
             else:
                 if chunk.kind in {'turn_end', 'tool_start'}:
+                    if self.decoder is not None:
+                        self.decoder.finish()
                     tail = self.flush()
                     if tail:
                         yield ProviderChunk('content', tail)
@@ -270,9 +338,16 @@ class TeachingStream:
 
     def proposal(self):
         self.not_applied_reason = None
+        if self.output == 'plain':
+            self.not_applied_reason = 'output_unavailable'
+            return None
         if not self.completed:
             self.not_applied_reason = 'completion_unknown'
             return None
+        if self.decoder is not None:
+            result = self.decoder.proposal()
+            self.not_applied_reason = self.decoder.reason
+            return result
         if self.metadata is None:
             self.not_applied_reason = 'trailer_missing'
             return None
@@ -298,7 +373,8 @@ class TeachingStream:
 
     def outcome(self):
         proposal = self.proposal()
-        return {'teaching_proposal': proposal, 'teaching_not_applied_reason': self.not_applied_reason}
+        return {'teaching_proposal': proposal, 'teaching_not_applied_reason': self.not_applied_reason,
+                'teaching_reply_start': self.reply_start}
 
 
 def _span(quote, original, limit):
@@ -470,6 +546,8 @@ def _retelling_transition(frozen, after, observed, effective_mode, body):
 
 def evaluate(frozen, proposal, *, body, user_text, at):
     """Validate before adopting any model change; return a private reason enum."""
+    if ((frozen or {}).get('output') or {}).get('format') == 'plain':
+        return None, 'output_unavailable'
     if not body.strip():
         return None, 'empty_body'
     if (not frozen or not isinstance(proposal, dict)
@@ -549,10 +627,32 @@ def complete(frozen, proposal, *, body, user_text, at):
     return evaluate(frozen, proposal, body=body, user_text=user_text, at=at)[0]
 
 
-def adopt(frozen, proposal, *, body, user_text, at, not_applied_reason=None):
+def adopt(frozen, proposal, *, body, user_text, at, not_applied_reason=None, reply_start=0):
     """Called only inside the existing successful-answer save transaction."""
-    result, reason = evaluate(frozen, proposal, body=body, user_text=user_text, at=at)
+    if type(reply_start) is not int or not 0 <= reply_start <= len(body):
+        frozen['not_applied_reason'] = 'reply_boundary_invalid'
+        return
+    result, reason = evaluate(frozen, proposal, body=body[reply_start:], user_text=user_text, at=at)
     if result:
+        # Intermediate tool-round prose is part of the saved answer, but cannot
+        # serve as the source of the final model round's teaching proposal.
+        if reply_start:
+            def shift_step(step):
+                if step and step['source_answer_id'] == frozen['answer_id']:
+                    step['start'] += reply_start
+                    step['end'] += reply_start
+            def shift_frame(frame):
+                if frame and frame['question']['answer_id'] == frozen['answer_id']:
+                    frame['question']['start'] += reply_start
+                    frame['question']['end'] += reply_start
+            shift_step(result['after'].get('step'))
+            shift_frame(result['after'].get('practice'))
+            shift_frame(result.get('practice_question'))
+            for key in ('practice_observation', 'retelling_observation'):
+                if result.get(key):
+                    result[key]['feedback_start'] += reply_start
+                    result[key]['feedback_end'] += reply_start
+            result['reply_start'] = reply_start
         frozen['result'] = result
         frozen.pop('not_applied_reason', None)
     else:
@@ -595,7 +695,9 @@ def public(snapshot, status):
             observation.update(eligible=bool(attempt and attempt['is_attempt']),
                                needs_help=attempt.get('needs_help') if attempt else None)
         return observation
-    return {'status': 'applied' if result else 'running' if status in {'queued', 'running', 'streaming'} else 'not_updated',
+    unavailable = (frozen.get('output') or {}).get('format') == 'plain'
+    return {'status': 'unavailable' if unavailable else 'applied' if result else 'running' if status in {'queued', 'running', 'streaming'} else 'not_updated',
+            'recording': {'available': not unavailable, 'reason': (frozen.get('output') or {}).get('reason')},
             'before': before, 'after': after, 'current': after or before,
             'effective_mode': result['effective_mode'] if result else None,
             'mode_request': {key: value for key, value in result['mode_request'].items() if key != 'persistence'}

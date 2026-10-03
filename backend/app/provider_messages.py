@@ -60,7 +60,9 @@ def encode_message(message: dict[str, Any], kind: str) -> dict[str, Any] | None:
     images = message_images(message)
     role = message.get("role")
     if kind in {"openai_compatible", "openai_responses"}:
-        converted = {key: value for key, value in message.items() if key != "_images"}
+        # Underscore-prefixed keys belong to the application, including image
+        # inputs, teaching format selection and private native replay records.
+        converted = {key: value for key, value in message.items() if not key.startswith("_")}
         if images:
             if kind == "openai_compatible":
                 text = [{"type": "text", "text": message["content"]}] if message["content"] else []
