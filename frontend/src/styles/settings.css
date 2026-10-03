@@ -14,3 +14,8 @@
 .unified-settings-error{margin:8px 24px}
 .unified-settings-loading{padding:24px}
 @media(max-width:700px){.unified-settings-dialog{max-height:calc(100dvh - 16px)}.unified-settings-body{padding:4px 18px 16px}.unified-settings-actions{padding:12px 18px}}
+.obsidian-settings .field{max-width:520px}
+.obsidian-settings-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0}
+.obsidian-settings-path{margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:4px}
+.obsidian-settings-path .button{margin-top:8px}
+.obsidian-settings p{overflow-wrap:anywhere}

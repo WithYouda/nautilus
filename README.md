@@ -7,11 +7,13 @@
 - [当前状态、试用地址、限制与下一项](docs/progress/nautilus-development-status.md)
 - [PRD V2：正式需求](docs/superpowers/specs/2026-09-02-nautilus-prd-v2.md)
 - [产品决定：已确认协议与开放问题](docs/progress/nautilus-product-design-decisions.md)
-- [当前实施计划与后续范围](docs/superpowers/plans/2026-09-05-nautilus-first-slice-implementation.md)
+- [当前路线与阶段边界](docs/superpowers/plans/2026-09-27-nautilus-product-roadmap.md)
+- [本地Obsidian只读切片规格（B2-1详细契约）](docs/superpowers/specs/2026-10-02-nautilus-obsidian-local-slice.md)
+- [首个纵切片实施计划（详细历史契约，阶段顺序以路线为准）](docs/superpowers/plans/2026-09-05-nautilus-first-slice-implementation.md)
 - [领域架构与数据边界](docs/superpowers/specs/2026-09-05-nautilus-first-slice-domain-architecture.md)
 - [开发规则](AGENTS.md)
 
-状态、需求、决定各维护一处。已被替代的进度报告和旧交接内容可从Git历史查询，不作为当前操作步骤。其余早期设计规格保留独立设计细节；与PRD V2冲突时以V2及后续确认决定为准。
+状态、需求、决定各维护一处；阶段顺序以当前路线为准，旧首片实施计划只保留详细契约。已被替代的进度报告和旧交接内容可从Git历史查询，不作为当前操作步骤。其余早期设计规格保留独立设计细节；与PRD V2冲突时以V2及后续确认决定为准。
 
 ## 开发环境与启动
 
@@ -26,6 +28,8 @@ npm --prefix frontend install
 当前已有trial使用开发状态中的run.sh；它保留用户配置与数据。对结构已匹配的默认环境可运行 `./scripts/start.sh`，构建前端后提供无HMR的预览。普通启动不建库、不迁移；缺库或版本不符会停止。初始化、升级、恢复按明确的数据库范围处理，不通过重复启动解决。
 
 服务绑定 `0.0.0.0`。默认脚本端口为Web5173/API8000，当前trial为Web5188/API8018；Windows访问地址用 `hostname -I` 的实际WSL2 IP。开发用HMR可单独运行 `npm --prefix frontend run dev -- --host 0.0.0.0`，用户试用使用已构建预览。
+
+本地知识库（Obsidian）路径填写的是运行 Nautilus 后端的主机上的绝对路径，不是浏览器设备的路径；当前试用下即 WSL2 主机内的目录。连接后 Nautilus 只读取该 Vault 内的 `.md` 文件，不修改、不删除，也不需要 Obsidian 插件或 API Key。
 
 首次授权时，在运行服务的 WSL2 主机本地读取授权码文件并手动输入页面。默认启动脚本使用 `tmp/access-token`；当前trial使用 `tmp/nautilus-trial-20260919/runtime/access-token`；若设置了 `NAUTILUS_RUNTIME_TOKEN_FILE`，读取该路径。父目录权限0700、文件0600；默认启动脚本只提示路径，不打印授权码。浏览器会话持续到主动注销，普通服务重启不要求重新授权。授权码不写入日志、文档或Git；网络可达不代表已授权，正式网络信任范围仍待决定。
 

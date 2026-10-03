@@ -28,7 +28,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     if (generation.current === version) setDiscussion(next);
   });
   const sourceScope = sharedState.sourceScope;
-  const setSourceScope = (value: SourceScope) => { void sharedState.save({ source_scope: value }); };
+  const setSourceScope = (value: SourceScope) => sharedState.save({ source_scope: value });
   const searchChoice = sharedState.search;
   const searchSelection = searchChoice.value;
   const [busy, setBusy] = useState(false);

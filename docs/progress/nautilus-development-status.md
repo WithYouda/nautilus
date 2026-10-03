@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-此前累计的功能、客户端及文档更新已按作者要求推送至 `origin/main`（截至 `ecd172f` 的34个提交）；本轮只补充同步记录，代码与试用环境未变，复用既有验证。下一项仍为B2真实外部知识库连接。
+此前累计的功能、客户端及文档更新已按作者要求推送至 `origin/main`（截至 `ecd172f` 的34个提交）；本轮只补充同步记录，代码与试用环境未变，复用既有验证。下一项仍为B2真实外部知识库连接；B2-1本地Obsidian只读连接已完成代码与定向检查（见“下一项”中的B2-1实现与验证），但尚未在真实试用启用，也未做真实Vault验收。
 
 A2私有资料外发授权已完成代码与相关检查，并已在原trial035启用。两处对话都在实际HTTP外发前确认接收方/正文/参数，允许单次发送、拒绝后继续回答、取消整轮；公开检索词只限本轮准确匹配，额外参数/接收方须重新确认。自定义脚本逐次fetch及Bing跳转也纳入；私文域名DNS查询在确认后才执行。等待期间可刷新，不占Provider并发槽或生成超时预算；取消、来源清除和重启不复用旧许可。私文内置搜索在发送前拒绝，用户手动选择外部搜索或关闭。A2本身无新迁移；当前学习库已随B1及库内管理升至038。
 
@@ -24,6 +24,7 @@ B1最小切片代码与隔离检查已完成，09-30已在原trial037启用：�
 | --- | --- | --- |
 | 清除交互与高级诊断 | 居中确认、清除成功移除、失败重试；默认关闭的持久化诊断日志与浮动窗口，已在035启用 | `TaskMaterials.tsx`、`Diagnostics.tsx`、`diagnostics.py` |
 | 手动长期资料库（B1，已启用） | 明确入库/选版本、跨任务复用、共享生命周期；038支持库内移除/直接清除及重试，保留原件与恢复边界 | `037_material_library.sql`、`materials.py`、`purge_content.py`、`TaskMaterials.tsx` |
+| 本地Obsidian只读连接（B2-1，代码完成、未启用） | 设置中连接/断开本地Vault；对话内显式检索.md、保存快照并选用；跨场景复用同版本、变化追加版本；来源回看、原件与变化检查；接入现有清除与恢复边界，断开不再新读取 | `obsidian.py`、`routers/obsidian.py`、`ObsidianMaterials.tsx`、`ObsidianSettings.tsx`、`materials.py` |
 | 资料原件基础（B1，已启用） | 新上传原件与文本同事务保存，按版本下载；手动修改不冒充旧原件；清除及受控恢复覆盖原件 | `036_material_originals.sql`、`materials.py`、`TaskMaterials.tsx` |
 | 独立客户端与局域网同步验证（A3） | 0.4.0普通学习首片、本机Key保存、配对同步、任务隔离、帮助/学习记录与位置恢复；作者已反馈此前双端同步和Key版本可用，非完整正式版 | `native/core`、`native/sync`、`frontend/native` |
 | 外发授权（A2） | 实际请求逐次许可、拒绝/取消、单次公开检索词与私文内置搜索限制；已验证并在原trial035启用 | `outbound.py`、搜索执行层、`OutboundApproval.tsx` |
@@ -285,11 +286,52 @@ FOLLOWUP-DELAYED-001（2026-09-26）：作者已批准[独立标准与实施切�
 
 ## 下一项
 
-B1手动资料库与原件最小切片已在原trial037启用，供作者实际体验。库内直接管理反馈已按作者批准方案完成并在038启用：“从资料库移除”只隐藏入口，“彻底清除资料”另行确认跨场景影响。下一项按路线推进B2一个真实外部知识库的完整连接，先核对已有规格及用户实际使用的服务，不扩张到多个平台。B阶段仍含B2/B3未完成；客户端继续暂停。后续同一开发试用环境的正常结构迁移已有常设授权，自动备份并检查后执行，不再逐次询问；清库/恢复旧备份不属于该迁移授权。
+B1手动资料库与原件最小切片已在原trial037启用，供作者实际体验。库内直接管理反馈已按作者批准方案完成并在038启用：“从资料库移除”只隐藏入口，“彻底清除资料”另行确认跨场景影响。下一项按路线推进B2一个真实外部知识库的完整连接：B2-1本地Obsidian只读连接已按作者确认输入与Planner冻结规格完成代码和定向检查，见下“B2-1实现与验证”；尚未在真实试用启用，也未用作者真实Vault验收。B阶段仍含B2/B3未完成；客户端继续暂停。后续同一开发试用环境的正常结构迁移已有常设授权，自动备份并检查后执行，不再逐次询问；清库/恢复旧备份不属于该迁移授权。
 
 客户端开发、功能迁入及已批准UI适配暂停，保留代码、安装包和验证记录。后续沿Web B→C→D→E推进，客户端迁移与F整体UI改进一并规划实施；具体平台验证及迁移边界届时落实，不预先建设第二套实现。Task13B真实使用观察继续并行。
 
 当前进度口径：原Web trial035的学习/验证/讨论、资料/搜索、帮助/补练/回访、分支及完成/清除等既有成果保留，A1/A2已启用；原生0.4.0只迁入普通学习首片。扩展A3暂停未完成，当前Web主线B1首片已启用、下一项B2，不把客户端缺功能写成整个产品未开发，也不把客户端版本号或工程检查当成产品/UI验收。
+
+### B2-1实现与验证（10-02，代码完成，尚未在真实试用启用）
+
+B2仍是下一项产品能力：一个真实外部知识库的完整连接。作者已确认首家来源为Obsidian、本地直接读取、整库授权、路径自填、不接云端、无需插件与Key（产品输入），Planner据此冻结了读取边界、连接配置、检索与令牌、资料身份与事务、清除边界和新增API契约，详细规格集中在[本地Obsidian只读切片规格](../superpowers/specs/2026-10-02-nautilus-obsidian-local-slice.md)。B1手动入库、明确版本、原件与库内移除/清除仍是既有基础，未重复建设。
+
+- **实现范围：** 新增`backend/app/obsidian.py`与`backend/app/routers/obsidian.py`，注册`/api/obsidian`（连接读写/断开、`{kind}/{scope_id}/search`、`capture`、`versions/{id}/source-status`，全部`Cache-Control: no-store`，请求体拒绝未定义字段）；`MaterialService`新增专用`capture_obsidian`（同一事务写入版本、原件、入库关系与当前scope引用，来源元数据全部服务端构造），`purge()`入口在既有资料锁内废弃该owner的候选并提升读取代次。文件读取走descriptor-relative+`O_NOFOLLOW`，符号链接、非普通文件与`.obsidian`/`.git`/`.trash`跳过；捕获前重读并校验哈希与文件状态，不一致返回冲突。**未新增迁移**（仍到038），未改`SourceScope`、消息API、教学Runtime与依赖。
+- **前端：** 设置页“知识库”改为实际连接/断开/换路径（独立保存，不写入学习默认设置，无嵌套form）；资料面板新增共用“从 Obsidian 选用”入口（普通学习室与题目讨论共用），检索、翻页、部分读取失败提示、“保存快照并选用”及说明；快照来源回看显示Vault名、相对路径、版本、保存时间、指纹与全文定位，提供限定`obsidian://open`的外部打开、复制相对路径与“检查原文变化”；清除弹窗补充“不会删除Obsidian原文或其云端备份”。
+- **后端定向检查：** 新增`backend/tests/test_obsidian_local.py`（12项：连接修订/断开重启保留/路径校验不覆盖旧配置、401、路径逃逸与符号链接、编码与空白笔记、分页与casefold匹配、scope与连接前置校验、Vault不可用不伪装空结果、令牌绑定与失效、来源变化冲突、清除收据阻塞、Vault字节不变）与`backend/tests/test_obsidian_materials.py`（9项：版本/原件/来源元数据/入库对应、跨scope复用与同内容不增生、变化追加版本与旧依据不变、手动编辑后追加、事务失败无部分保存、来源状态六态与跨scope404、清除覆盖原件与受管理备份并拒绝恢复、讨论scope同入口且未引用scope不可读）。与既有资料/清除/恢复/当前态/物料测试合计72项通过。
+- **浏览器检查：** 新增`frontend/e2e/obsidian-local.spec.ts`3条旅程（连接→检索→保存快照并选用→Mock回答→回看/原件/指纹/URI→刷新后选择恢复且Vault字节不变；跨场景复用同版本、变化追加第2版且旧回答依据不变、断开后不再新读取但快照可回看、重连保留连接id、切换对话丢弃迟到检索；题目讨论同一入口选用、清除取消不执行、确认后清除且Vault未被修改）。
+- **完整后端套件对照（10-02，判定为既有问题；根因仅一项已确认）：** 全套`backend/tests`会停在`test_generation_trace.py::test_app_process_replays_and_next_external_turn_retains_tool_history`（该文件单独运行3项通过）；跳过该项后得714项通过、4项失败。4项为`test_branch_maps.py::test_033_upgrade_preserves_all_existing_business_columns`、`test_delayed_restore.py::test_031_to_032_preserves_existing_rows_and_adds_empty_tables`、`test_discussion_streaming.py::test_upgrade_028_preserves_existing_turn_and_erases_new_reasoning`、`test_learning_facts_api.py::test_learning_database_is_independent_from_legacy_database`。只有第4项留有可读原因（断言学习库迁移清单等于**停在035/037**的硬编码列表，仓库当前038）；另外3项目前只确认“随本改动同时失败且可在未改动基线`4e78a17`上复现”，**根因未确认**，不写成同一原因。4项与套件卡顿都不属B2-1范围，未修复。
+- **尚未完成：** 未在真实试用启用（未迁移、未重启、未改`frontend/dist`），未用作者真实Vault验收，未实际验证浏览器设备上的Obsidian打开，未接云端/Sync、未做自动扫描与写回，未做Embedding/索引/OCR。下一评审动作：由Planner核对实现与冻结规格的差异并安排真实Vault试用与启用范围。
+
+### B2-1-R1补修与定向回归（10-02，代码完成，待Planner复审，仍未启用）
+
+Planner对R0源码的独立审查结论为REQUEST_CHANGES，指出6项切片内缺陷。R1在同一架构与契约内修复，未新增迁移、依赖或对外HTTP结构：
+
+- **F1 选用结果与当前态确认（前端）**：`ObsidianMaterials`的`onCaptured`与`TaskMaterials`的`onChange`改为返回真实结果，父组件（`AiLearningRoom`、`QuestionDiscussion`）把`sharedState.save()`的`Promise<boolean>`原样传回；只有结果为`true`才显示“已保存快照并选用”，否则显示“快照已保存，但当前选择未确认，请读取最新状态后重试”。应用时改用最新`scopeRef`合并，不再用长异步开始时的陈旧scope覆盖后来的选择；资料库辅助刷新失败不再把已确认的选择报成失败；关闭/切换上下文后迟到捕获不再触发`onCaptured`。浏览器回归`Obsidian：选用结果只在当前态确认后显示`覆盖正常路径（等到当前态PUT成功才出现提示、刷新后保持）、旧修订409（保留快照、保留另一页面的`conflict_policy`与选择、不同时显示“已选用”）与“保存槽被占用”三种情况；`Obsidian：切换对话后迟到的捕获不发起新的选用`验证迟到响应不产生任何当前态写入。
+- **F2 撤权顺序（后端）**：`connect`/`disconnect`改为在`materials.lock`内完成配置写入与失效（顺序恒为materials.lock → obsidian._lock，无反向路径），使“捕获先提交”与“撤权先完成”成为仅有的两种合法结果；`Vault.notes/read`新增`guard`，在每次目录/文件打开与每个读取块前复查代次与连接修订；候选的最终检查与发布移入同一临界区；`source_status`使用同一读取边界。新增`backend/tests/test_obsidian_concurrency.py`6项，用`threading.Event`把真实操作停在真实边界后并发撤权：断开先完成→在途捕获拒绝且库/原件/入库/链接零写入；捕获先提交→断开被提交边界挡住且快照合法保留；撤权后不再打开后续文件且不发布候选；发布临界区内失效不能插入且旧令牌随后被拒；清除先完成→旧捕获拒绝；来源状态在途撤权返回冲突而非“相同/已变化”。
+- **F3 文件边界（后端）**：根路径改为从`/`逐组件descriptor-relative无跟随打开（祖先被替换为链接时整次读取失败）；文件以`O_NONBLOCK`打开后先`fstat`确认普通文件，FIFO等特殊文件快速返回422而不是阻塞在`open`；平台缺少这些能力时报`obsidian_platform_unsupported`(503)而不退化。回归`test_replaced_root_ancestor_cannot_be_read_outside_the_authorized_vault`（外部合成标记不可达）与`test_note_replaced_by_fifo_is_rejected_without_blocking`（捕获与来源状态均在超时内拒绝）。
+- **F4 分页游标（后端+前端）**：`next_after`改按本页已处理的最后一个候选路径推进，`has_more=true`必有严格前进的非空游标；前端仅在存在游标时提供“下一页”，缺失时明确提示而不重放第一页。回归`test_first_page_of_unreadable_notes_still_advances`（50个无效UTF-8后仍有正常笔记可到达）、`test_page_tail_unreadable_still_reaches_later_notes`与浏览器`Obsidian：全部不可读的第一页仍能翻到正常笔记`。
+- **F5 文案**：设置页不再承诺“不会上传”，改为明确区分“连接和检索只在本地进行、不自动上传整个Vault”与“明确保存并选用的快照会成为当前教学模型输入，使用远端Provider时会发送到相应服务；联网/工具外发仍按既有逐次授权”。
+- **A2 直接回归**：新增`test_obsidian_snapshot_reaches_model_input_and_keeps_outbound_gate`——合成笔记含唯一私有标记、用户问题不含该标记；经真实capture接入资料范围后，Mock教学请求确实取得所选正文，根目录绝对路径不出现在任何请求载荷；模型尝试把标记发往外部搜索时，批准前搜索HTTP调用为零，拒绝后仍为零。
+
+- **本轮验证（实际退出码）：** 定向批次（10个文件，含新增并发文件）`69 passed`，`PYTEST_EXIT=0`；隔离构建（`tsc -b && vite build`）`✓ built`，`BUILD_EXIT=0`；浏览器5个spec批次`13 passed`，`PLAYWRIGHT_EXIT=0`；`obsidian-local.spec.ts`单独`6 passed`。日志保存在仓库外的`/tmp/nautilus-b2-r1-*.log`。
+- **两项独立登记的浏览器问题（都不属B2-1，未修）：**
+  1. **跨spec顺序失败（有独立归因证据）：** 把`conversation-current-state.spec.ts`与`task-materials.spec.ts`放进同一次运行会失败（`联网搜索：Bing`未出现）；该失败已在由R0审查包还原的R0基线worktree上复现，因此判定与本轮改动无关。
+  2. **`Response has been disposed`（无独立归因证据）：** `library-removal.spec.ts`的“partial purge retry”用例间歇失败于该文件自身的`page.route`处理器（`route.fetch()`后`response.json()`），测试文件未被本任务修改。R1与R2中多次单独运行及5-spec批次均通过，R2的4-spec批次中失败一次且发生在任何Obsidian用例运行之前、随后单独重跑通过。**只登记为间歇失败，根因未确认**，不与第1项合并成“已证明既有”。
+
+### 只读导出阶段（R0/R1审查包，与上面的代码修改分开记录）
+
+R0/R1/R2的审查包导出是**只读**阶段：核对工作树、导出完整字节、生成`tracked.patch`与manifest、计算SHA-256、打包ZIP，并逐项校验源文件/副本/ZIP三层哈希。它不修改源码、测试、文档、index或运行环境，也不运行或重跑业务测试；审查包内不含凭据、真实Vault、数据库或真实学习正文。R0包`nautilus-b2-review.RlUige.zip`（SHA-256 `62a09d8b…`）已由R1包`nautilus-b2-r1-review.UjmAIl.zip`取代。
+- **尚未完成：** 未在真实试用启用（未迁移、未重启、未改`frontend/dist`），未用作者真实Vault验收，未实际验证浏览器设备上的Obsidian打开，未接云端/Sync、未做自动扫描与写回，未做Embedding/索引/OCR。**下一评审动作：Planner复审R1源码与验证结果，决定是否放行既有trial的受控启用。**
+
+### B2-1-R2补修与定向回归（10-02，代码完成，待Planner增量复审，仍未启用）
+
+Planner对R1的增量复审只确认两组剩余阻塞（C1/C2），均在既有B2-1范围内，无新增产品范围、无迁移、无依赖、无对外HTTP结构变化。
+
+- **C1 关闭后的操作有效性贯通（前端）：** `ObsidianMaterials`新增操作代次`operation`，内层入口折叠时同步递增并清空`result/savingToken/busy/loading/notice/error`；`onCaptured`签名改为`(version, isOperationCurrent)`，子组件在capture返回后、调用父级前以及父级返回后都用同一判定，失效则既不显示成功也不显示失败提示。`TaskMaterials`新增`panelOpen`与`selectionOperation`：面板关闭（点击关闭或程序化关闭）同步使未发出的选用失效，上下文变化同样失效；`useCaptured`在进入、`refresh`之后、发出当前态PUT之前三处检查自身面板/上下文有效性，并叠加子组件传入的判定；保留真实布尔结果、最新scope合并、同资料组版本替换、其他资料/only模式/冲突策略、409 reload不覆盖不重试。快照提交与否不受关闭影响：已发出的PUT可以完成，未发出的PUT不再启动，已保存快照保留且不自动清除。
+- **C2 根描述符打开与目录枚举的撤权许可（后端）：** 新增`ObsidianService._permit()`作为唯一读取许可（在同一把锁内的短临界区校验代次与连接修订，`_check()`改为其别名）；`Vault.open(root_path, guard)`与`_open_root_descriptor(path, guard)`在包含`/`在内的**每一层**打开前取得许可；`Vault._scan`在`os.scandir`之前以及**每个目录项**处理前重新取得许可。`search`/`capture`/`source_status`共用同一`guard`（进入读取阶段时冻结的连接快照与代次，撤权后不会为旧操作重新领取最新generation），后续文件打开与读取块继续逐次取得许可。撤权完成后旧操作以既有冲突码结束，不伪装成空目录或“完整扫描无结果”，不打开根目录、不开始枚举、不发布候选、不写资料。
+- **回归与验证（实际退出码）：** 后端`test_obsidian_local`/`test_obsidian_materials`/`test_obsidian_concurrency`共**36项通过**，`PYTEST_EXIT=0`（其中并发文件10项：R1的6项+新增4项——根打开前撤权、平铺目录首项后撤权、捕获根打开前撤权、来源状态根打开前撤权）；隔离构建（含`tsc -b`）通过，`BUILD_EXIT=0`；浏览器`obsidian-local.spec.ts`**8项通过**（新增C1两组：内层关闭后迟到捕获不发起选用、外层面板关闭后等待中的刷新不发起选用），`PLAYWRIGHT_EXIT=0`。R2的4-spec浏览器批次13项通过、1项为上面登记的间歇失败。日志在仓库外`/tmp/nautilus-b2-r2-*.log`。
+- **尚未完成：** 未启用trial（未迁移、未重启、未改`frontend/dist`）、未用真实Vault验收、`obsidian://`实际唤起仍为人工核验。**下一评审动作：Planner增量复审C1/C2，复用未变证据，决定是否放行既有trial的受控启用。**
 
 ### B1实现与验证（09-30，已在trial037启用）
 
@@ -527,3 +569,11 @@ B1手动资料库与原件最小切片已在原trial037启用，供作者实际�
 - 2026-09-30：按作者批准实现库内移除与直接彻底清除，新增038及移除/库内清除接口、可重开重试，已迁移启用。修改`backend/app/{materials.py,routers/materials.py,migrations/038_material_library_removal.sql}`及移除/生命周期/结构/升级/当前态测试，`frontend/src/{TaskMaterials.tsx,api.ts,styles/task-materials.css}`与新增`e2e/library-removal.spec.ts`，同步PRD/产品决定/本状态。一名Sol medium限定前端，主Agent负责语义/数据/接口/最终审查/迁移；58项后端、6条浏览器、构建及运行资源检查通过。既有试用数据/凭据保持，未做业务清库或真实Provider测试；下一项B2，本地提交不push。
 
 - 2026-10-02：按作者要求将此前34个本地提交推送至`origin/main`，范围从跨浏览器当前态到客户端、外发授权、资料原件/资料库与库内管理，远端由`cb53f3d`更新至`ecd172f`。本轮仅修改本状态、补充同步记录并一并提交推送；核对分支及远端提交、文档差异检查，复用未变代码的既有测试。无迁移或试用环境变更；无关未跟踪文件保留本地。下一项仍为B2一个真实外部知识库的完整连接，先核对规格和作者使用的服务。
+
+- 2026-10-02：B2开工条件前置核对完成，未编写连接器。基线：本地`main`、HEAD与`origin/main`均为`4e78a17`，自上次代码提交`ecd172f`以来只有该文档提交，工作区无跟踪文件改动/暂存，未跟踪项保持原样；未pull、未切分支、未覆盖文件。只读核对既有契约：`create()`只追加版本，`store_in_library()`与`use_library()`分离且按明确`version_id`绑定，`remove_from_library()`只写`removed_at`而`purge()`走完整清除，`freeze()`/`public()`与`CurrentConversationState`只接受`mode`/`version_ids`/`conflict_policy`并校验`expected_revision`，`OutboundApprovals`仅运行内逐次许可，037/038为当前最新迁移。结论：B2仍是下一项产品能力，但缺少产品输入（真实来源服务及部署形态、允许读取的库/目录/集合）与工程规格（连接配置与凭据引用、外部文档片段版本定位、对话显式选库、连接失败/撤权/版本变化行为、断开与副本清除边界、新增API或迁移范围），已分别记入“下一项”，在条件明确前不允许进入连接器编码。执行`env PYTHONPATH=backend .venv/bin/pytest -q backend/tests/test_material_library.py backend/tests/test_library_removal.py`，7项通过；另跑`backend/tests/test_material_library_lifecycle.py`4项通过。复用`ecd172f`以来代码未变的既有58项后端/6条浏览器/构建证据，未重跑浏览器与构建，未运行真实Provider或知识库。仅改本状态文件，无代码、迁移、依赖或运行配置变更，未迁移、未重启试用、未commit/push。
+
+- 2026-10-02：B2-1本地Obsidian只读连接按作者确认输入和Planner冻结规格完成代码与定向检查，未编写通用连接器、未新增迁移。新增`backend/app/obsidian.py`、`backend/app/routers/obsidian.py`、`frontend/src/ObsidianMaterials.tsx`、`frontend/src/ObsidianSettings.tsx`、`backend/tests/test_obsidian_local.py`、`backend/tests/test_obsidian_materials.py`、`frontend/e2e/obsidian-local.spec.ts`与规格文件；修改`backend/app/{materials.py,main.py,routers/...}`接线、`frontend/src/{TaskMaterials.tsx,Settings.tsx,api.ts}`及两处样式。新增21项后端测试通过，与既有资料/清除/恢复/当前态相关测试合计72项通过；隔离构建TSC/Vite通过；3条新浏览器旅程通过（Vault字节在检索、捕获与清除前后不变）。未在真实试用启用、未迁移、未重启服务、未用真实Vault或真实Provider，未commit/push。完整后端套件的4项失败与1处卡顿经基线`4e78a17`对照确认为既有问题，未在任务内修复。下一评审由Planner核对实现与冻结规格并安排真实Vault试用。
+
+- 2026-10-02：按Planner的REQUEST_CHANGES完成B2-1-R1补修：F1选用结果只在当前态确认后显示（全链返回真实布尔、最新scope合并、迟到响应不再更新当前态）；F2撤权顺序（connect/disconnect纳入materials.lock、逐文件与逐读取块代次检查、候选检查与发布同临界区、来源状态同一读取边界），新增6项真实重叠测试；F3根路径逐组件无跟随打开与FIFO非阻塞拒绝；F4分页游标按已处理候选推进；F5设置页文案区分本地检索与远端模型输入；并补一条新来源到A2的直接集成回归。定向后端69项通过（exit 0）、隔离构建通过（exit 0）、浏览器5个spec共13项通过（exit 0）。既有跨spec顺序失败（conversation-current-state+task-materials）经R0基线worktree对照确认与本轮改动无关，未修；四项旧失败的根因仅一项已确认，其余保持未确认。未迁移、未重启、未启用trial、未commit/push。
+
+- 2026-10-02：按Planner对R1的REQUEST_CHANGES完成B2-1-R2：C1把操作有效性贯通到内层折叠与外层面板关闭（`onCaptured(version, isOperationCurrent)`、面板关闭同步失效、`useCaptured`三处检查、失效后不显示任何成功/失败提示、快照保留）；C2把根描述符打开与目录枚举接入同一读取许可（`_permit`、`Vault.open(..., guard)`逐层取得许可、`scandir`与每个目录项前复查、三个操作共用同一guard）。新增后端4项真实重叠回归与浏览器2项关闭回归。后端36项通过（exit 0）、隔离构建通过（exit 0）、obsidian-local浏览器8项通过（exit 0）；4-spec批次中`library-removal`的“partial purge retry”间歇失败一次（该文件未被本任务修改，发生在任何Obsidian用例之前，单独重跑通过，根因未确认），与已归因的Bing跨spec顺序问题分开登记。未迁移、未重启、未启用trial、未commit/push。

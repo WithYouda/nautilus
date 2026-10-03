@@ -42,8 +42,10 @@ from .verification import VerificationService
 from .question_discussion import QuestionDiscussionService
 from .model_discovery import ModelDiscoveryService
 from .materials import MaterialService
+from .obsidian import ObsidianService
 from .conversation_state import CurrentConversationState
 from .routers import materials
+from .routers import obsidian
 from .network import wsl_ip
 from .plan_editor import PlanEditorService
 from .plans import PlanService
@@ -87,6 +89,8 @@ def create_app(
         preferences_service = PreferencesService(credential_store, search_service)
         material_service = MaterialService(learning_service, conversation_service, preferences_service)
         conversation_service.materials = material_service
+        obsidian_service = ObsidianService(credential_store, material_service)
+        material_service.obsidian = obsidian_service
         learning_setup_service = LearningSetupService(
             learning_service,
             conversation_service,
@@ -154,6 +158,7 @@ def create_app(
         app.state.outbound = outbound_approvals
         app.state.preferences = preferences_service
         app.state.materials = material_service
+        app.state.obsidian = obsidian_service
         diagnostic_service = DiagnosticService(app_settings.data_dir / 'runtime' / 'diagnostics')
         app.state.diagnostics = diagnostic_service
         runtime_handler = RuntimeDiagnosticHandler(diagnostic_service, identity['id'])
@@ -231,6 +236,7 @@ def create_app(
     app.include_router(search.router)
     app.include_router(outbound.router)
     app.include_router(materials.router)
+    app.include_router(obsidian.router)
     app.include_router(preferences.router)
     return app
 

@@ -355,7 +355,7 @@ export default function AiLearningRoom({
     if (conversationIdRef.current === conversationId) setDetail(next);
   });
   const sourceScope = sharedState.sourceScope;
-  const setSourceScope = (value: SourceScope) => { void sharedState.save({ source_scope: value }); };
+  const setSourceScope = (value: SourceScope) => sharedState.save({ source_scope: value });
   const searchChoice = sharedState.search;
   const searchSelection = searchChoice.value;
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id, { leaf: sharedState.snapshot.leaf_id, paths: sharedState.snapshot.paths, ready: sharedState.ready, select: (leaf_id, paths) => sharedState.save({ leaf_id, paths }) });

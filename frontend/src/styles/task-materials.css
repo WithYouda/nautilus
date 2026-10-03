@@ -36,3 +36,16 @@
 @media (max-width: 600px) {
   .task-materials-panel { position: fixed; left: 12px; right: 12px; bottom: 88px; width: auto; max-height: calc(100dvh - 160px); box-sizing: border-box; }
 }
+.task-material-obsidian { margin: .9rem 0; padding: .7rem; border: 1px solid var(--line, #ccc); border-radius: .5rem; }
+.task-material-obsidian-panel > p { margin: .6rem 0; }
+.task-material-obsidian-search { display: flex; align-items: flex-end; gap: .5rem; margin: .5rem 0; }
+.task-material-obsidian-search label { flex: 1; margin: 0; }
+.task-material-obsidian-list { max-height: 18rem; overflow: auto; padding-left: 1.25rem; }
+.task-material-obsidian-list li { margin: .6rem 0; padding-bottom: .5rem; border-bottom: 1px solid var(--line, #ddd); }
+.task-material-obsidian-list p { margin: .25rem 0; overflow-wrap: anywhere; }
+.task-material-obsidian-excerpt { padding: .4rem .55rem; border-left: 3px solid var(--line, #ccc); background: var(--paper-soft, #f4f7f5); white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-material-obsidian-hint { color: var(--muted, #53615a); }
+.task-material-obsidian-source { margin: .5rem 0; padding: .5rem .6rem; border: 1px solid var(--line, #ccc); border-radius: .4rem; }
+.task-material-obsidian-source p { margin: .3rem 0; overflow-wrap: anywhere; }
+.task-material-obsidian-source-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: .35rem 0; }
+.task-material-obsidian-source small { display: block; color: var(--muted, #53615a); }

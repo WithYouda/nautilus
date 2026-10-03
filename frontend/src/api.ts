@@ -414,7 +414,7 @@ export type AppliedSourceScope = SourceScope & {
   fingerprint: string;
   purged?: boolean;
 };
-export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; library: boolean; inherited?: boolean; provenance?: Record<string, unknown>; original?: { filename: string; media_type: string; bytes: number; sha256: string } | null };
+export type MaterialVersion = { id: string; material_id: string; version: number; title: string | null; content: string | null; url: string | null; content_kind: 'text' | 'excerpt' | 'page'; created_at: string; purged_at: string | null; library: boolean; inherited?: boolean; provenance?: Record<string, unknown>; provenance_json?: string | null; original?: { filename: string; media_type: string; bytes: number; sha256: string } | null };
 export type MaterialKind = 'conversation' | 'discussion';
 export function getMaterials(kind: MaterialKind, id: string): Promise<{ versions: MaterialVersion[] }> {
   return request(`/api/materials/${kind}/${id}`);
@@ -442,6 +442,29 @@ export function purgeMaterial(kind: MaterialKind, id: string, materialId: string
 }
 export function getMaterialPurge(kind: MaterialKind, id: string, materialId: string): Promise<PurgeReport> {
   return request(`/api/materials/${kind}/${id}/${materialId}/purge`);
+}
+
+export type ObsidianConnection = { connection_id: string; revision: number; root_path: string; vault_name: string; enabled: boolean };
+export type ObsidianSearchItem = { relative_path: string; title: string; excerpt: string; excerpt_start_line: number; excerpt_end_line: number; sha256: string; selection_token: string };
+export type ObsidianSearchResult = { items: ObsidianSearchItem[]; next_after: string | null; has_more: boolean; complete: boolean; unreadable_count: number };
+export type ObsidianSourceStatus = { status: 'same_as_snapshot' | 'changed' | 'missing' | 'unavailable' | 'disconnected' | 'not_applicable'; checked_at: string | null };
+export function getObsidianConnection(): Promise<{ connection: ObsidianConnection | null }> {
+  return request('/api/obsidian/connection');
+}
+export function saveObsidianConnection(rootPath: string, expectedRevision: number | null): Promise<{ connection: ObsidianConnection }> {
+  return request('/api/obsidian/connection', { method: 'PUT', body: JSON.stringify({ root_path: rootPath, expected_revision: expectedRevision }) });
+}
+export function disconnectObsidianConnection(expectedRevision: number): Promise<{ connection: ObsidianConnection }> {
+  return request('/api/obsidian/connection/disconnect', { method: 'POST', body: JSON.stringify({ expected_revision: expectedRevision }) });
+}
+export function searchObsidianNotes(kind: MaterialKind, id: string, payload: { connection_id: string; connection_revision: number; query: string; after?: string | null }): Promise<ObsidianSearchResult> {
+  return request(`/api/obsidian/${kind}/${id}/search`, { method: 'POST', body: JSON.stringify({ ...payload, after: payload.after ?? null }) });
+}
+export function captureObsidianNote(kind: MaterialKind, id: string, selectionToken: string): Promise<MaterialVersion> {
+  return request(`/api/obsidian/${kind}/${id}/capture`, { method: 'POST', body: JSON.stringify({ selection_token: selectionToken }) });
+}
+export function getObsidianSourceStatus(kind: MaterialKind, id: string, versionId: string): Promise<ObsidianSourceStatus> {
+  return request(`/api/obsidian/${kind}/${id}/versions/${encodeURIComponent(versionId)}/source-status`);
 }
 
 export type AiRunStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";

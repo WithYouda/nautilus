@@ -18,6 +18,9 @@ class MaterialService:
         self.db = learning.database
         self.lock = threading.RLock()
         self.preferences = preferences
+        # Optional narrow hook: a local Obsidian connection invalidates its in-process
+        # selection candidates when material content is erased. It is not an event bus.
+        self.obsidian = None
 
     def owned_scope(self, identity, kind, scope_id):
         owner = self.learning.principal(identity).owner_id
@@ -313,4 +316,80 @@ class MaterialService:
 
     def purge(self, identity, material_id):
         from .material_purge import purge
+        if self.obsidian is not None:
+            # Erasure starts by killing in-process Obsidian candidates for this owner,
+            # so an in-flight search cannot hand out a token after the content is gone.
+            with self.lock:
+                self.obsidian.invalidate(self.learning.principal(identity).owner_id)
         return purge(self, identity, material_id)
+
+    def capture_obsidian(self, identity, kind, scope_id, *, connection_id, vault_name, relative_path,
+                         byte_sha256, line_count, title, filename, content, raw, generation=None):
+        """One transaction for a server-built Obsidian snapshot: version, original, library, link."""
+        with self.lock, self.db._lock:
+            owner = self.owned_scope(identity, kind, scope_id)
+            if self.obsidian is not None and generation is not None:
+                self.obsidian.require_generation(owner, generation)
+            clean_title = title.strip() if isinstance(title, str) else ''
+            if not clean_title or len(clean_title) > 300:
+                raise DomainError('invalid_material_title', 422)
+            if not isinstance(content, str) or not content.strip():
+                raise DomainError('invalid_material_content', 422)
+            if (not isinstance(relative_path, str) or not relative_path
+                    or relative_path.startswith('/') or '\x00' in relative_path
+                    or any(part in ('', '.', '..') for part in relative_path.split('/'))):
+                raise DomainError('obsidian_path_invalid', 422)
+            if not isinstance(byte_sha256, str) or not byte_sha256 or not isinstance(raw, bytes):
+                raise DomainError('invalid_material_source', 422)
+            provenance = {'kind': 'obsidian_local', 'schema_version': 1, 'connection_id': connection_id,
+                          'vault_name': vault_name, 'relative_path': relative_path,
+                          'sha256': byte_sha256, 'captured_at': utc_timestamp(),
+                          'locator': {'kind': 'whole_document', 'start_line': 1,
+                                      'end_line': max(1, int(line_count))}}
+            with self.db.transaction(immediate=True) as c:
+                group = c.execute('''SELECT material_id FROM learning_task_material
+                    WHERE owner_id=? AND purged_at IS NULL
+                      AND json_extract(provenance_json,'$.kind')='obsidian_local'
+                      AND json_extract(provenance_json,'$.connection_id')=?
+                      AND json_extract(provenance_json,'$.relative_path')=?
+                    ORDER BY version DESC LIMIT 1''',
+                    (owner, connection_id, relative_path)).fetchone()
+                latest = None
+                if group is not None:
+                    latest = c.execute('''SELECT id,material_id,version,provenance_json
+                        FROM learning_task_material WHERE owner_id=? AND material_id=? AND purged_at IS NULL
+                        ORDER BY version DESC LIMIT 1''', (owner, group['material_id'])).fetchone()
+                reused = None
+                if latest is not None:
+                    try:
+                        stored = json.loads(latest['provenance_json'])
+                    except (TypeError, ValueError):
+                        stored = {}
+                    if isinstance(stored, dict) and stored.get('kind') == 'obsidian_local' \
+                            and stored.get('sha256') == byte_sha256:
+                        reused = latest
+                if reused is not None:
+                    version_id, material_id = reused['id'], reused['material_id']
+                else:
+                    material_id = latest['material_id'] if latest is not None else str(uuid4())
+                    version = int(latest['version']) + 1 if latest is not None else 1
+                    version_id = str(uuid4())
+                    c.execute('''INSERT INTO learning_task_material
+                        (id,material_id,owner_id,scope_kind,scope_id,version,title,content,url,content_kind,
+                        provenance_json,created_at,purged_at) VALUES
+                        (?,?,?,?,?,?,?,?,NULL,'text',?,?,NULL)''',
+                        (version_id, material_id, owner, kind, scope_id, version, clean_title, content,
+                         json.dumps(provenance, ensure_ascii=False), utc_timestamp()))
+                    c.execute('''INSERT INTO learning_material_original
+                        (version_id,filename,media_type,content,sha256) VALUES (?,?,?,?,?)''',
+                        (version_id, filename, 'text/markdown', raw, byte_sha256))
+                c.execute('''INSERT INTO learning_material_library(owner_id,material_id,created_at)
+                    VALUES (?,?,?) ON CONFLICT(owner_id,material_id) DO UPDATE SET removed_at=NULL''',
+                    (owner, material_id, utc_timestamp()))
+                c.execute('''INSERT OR IGNORE INTO learning_material_link
+                    (owner_id,scope_kind,scope_id,version_id,created_at) VALUES (?,?,?,?,?)''',
+                    (owner, kind, scope_id, version_id, utc_timestamp()))
+                row = c.execute('''SELECT id,material_id,version,title,content,url,content_kind,
+                    provenance_json,created_at,purged_at FROM learning_task_material WHERE id=?''',
+                    (version_id,)).fetchone()
+            return self.with_original(dict(row))
