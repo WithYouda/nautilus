@@ -315,7 +315,7 @@ def test_default_acceptance_replay_and_regeneration_freeze_mode_and_next_action(
         first, _, payload = send(client, cid, '写一个箱子计数程序')
         endpoint = f'/api/ai/conversations/{cid}/messages'
         frozen = copy.deepcopy(saved(client, first['id'])['teaching'])
-        assert frozen['protocol'] == 'teaching-v8' and frozen['output']['version'] == 3
+        assert frozen['protocol'] == 'teaching-v9' and frozen['output']['version'] == 4
         defaults(client, 'stepwise')
         calls = len(provider.calls)
         replayed = client.post(endpoint, json=payload)
@@ -368,7 +368,7 @@ def test_old_capability_check_requires_recheck_before_recording_project_or_expli
         start_project(provider)
         initial = chat_turn(client, cid, '写一个箱子计数程序')
         assert initial['teaching']['status'] == 'applied' and state(initial)['project']['id'] == initial['id']
-        assert saved(client, initial['id'])['teaching']['output']['version'] == 3
+        assert saved(client, initial['id'])['teaching']['output']['version'] == 4
         assert len(provider.checks) == 4 and len(provider.calls) == 2
 
 

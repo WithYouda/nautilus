@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ApiError, correctAiTeachingAttempt, correctDiscussionTeachingAttempt,
+  ApiError, correctAiTeachingAttempt, correctDiscussionTeachingAttempt, correctAiLearningObservation, correctDiscussionLearningObservation,
   getAiConversation, getQuestionDiscussion, type AiMessage, type QuestionDiscussion, type HelpRecord,
-  type TeachingAction, type TeachingMethod, type TeachingMode, type TeachingRecord, type TeachingSelection, type TeachingPracticeObservation,
+  type TeachingAction, type TeachingMethod, type TeachingMode, type TeachingRecord, type TeachingSelection, type TeachingPracticeObservation, type LearningObservation,
 } from './api';
+import LearningObservations from './LearningObservations';
 import './TeachingState.css';
 
 type TeachingEntry = { id: string; teaching: TeachingRecord | null; userContent: string | null; answerContent: string | null; helpRecord: HelpRecord | null };
@@ -120,6 +121,50 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
         setNotice({ id: entry.id, text: '纠正未确认，请刷新核对识别记录后再操作。' });
         setNeedsRefresh(true);
       }
+    } finally {
+      if (currentIdentity.current === identity && !controller.signal.aborted) setBusyId(null);
+      if (request.current === controller) request.current = null;
+    }
+  }
+
+  async function correctLearning(answerId: string, observation: LearningObservation, change: Pick<LearningObservation, 'topic' | 'state' | 'note' | 'excluded'>): Promise<boolean> {
+    if (disabledRef.current || request.current || needsRefresh) return false;
+    const controller = new AbortController();
+    request.current = controller;
+    setBusyId(observation.id); setNotice(null);
+    const active = () => !controller.signal.aborted && currentIdentity.current === identity && !disabledRef.current;
+    try {
+      const payload = {
+        observation_id: observation.id, expected_revision: observation.revision, ...change,
+        request_key: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+      };
+      const saved = await (kind === 'conversation'
+        ? correctAiLearningObservation(scopeId, answerId, payload, controller.signal)
+        : correctDiscussionLearningObservation(scopeId, answerId, payload, controller.signal));
+      if (!active()) return false;
+      onUpdated(answerId, saved);
+      return true;
+    } catch (reason) {
+      if (!active()) return false;
+      if (reason instanceof ApiError && reason.status === 409) {
+        try {
+          const latest = kind === 'conversation'
+            ? (await getAiConversation(scopeId, controller.signal)).messages.find(message => message.id === answerId)?.teaching
+            : (await getQuestionDiscussion(scopeId, controller.signal)).turns.find(turn => turn.id === answerId)?.teaching;
+          if (!active()) return false;
+          onUpdated(answerId, latest ?? null);
+          setNotice({ id: observation.id, text: '观察记录已更新。已读取最新记录，请核对后再操作。' });
+        } catch {
+          if (active()) {
+            setNeedsRefresh(true);
+            setNotice({ id: observation.id, text: '暂时无法读取最新观察，请刷新后再操作。' });
+          }
+        }
+      } else {
+        setNotice({ id: observation.id, text: '纠正未确认，请刷新核对观察记录后再操作。' });
+        setNeedsRefresh(true);
+      }
+      return false;
     } finally {
       if (currentIdentity.current === identity && !controller.signal.aborted) setBusyId(null);
       if (request.current === controller) request.current = null;
@@ -312,6 +357,7 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
         </article>;
       })}
     </details>}
+    <LearningObservations entries={entries} identity={identity} disabled={disabled || needsRefresh} busyId={busyId} notice={notice} onCorrect={correctLearning} />
   </div>;
   return standalone ? <section className="ai-room-brief teaching-arrangement" aria-label="本次学习安排"><details><summary>学习安排</summary>{body}</details></section> : body;
 }

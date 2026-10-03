@@ -1565,6 +1565,15 @@ class ConversationService:
 
     def correct_teaching_attempt(self, identity_id, conversation_id, message_id, **payload):
         from . import teaching_runtime as teaching
+        return self._correct_teaching_annotation(identity_id, conversation_id, message_id, teaching.correct, **payload)
+
+    def correct_learning_observation(self, identity_id, conversation_id, message_id, **payload):
+        from .learning_observations import correct
+        return self._correct_teaching_annotation(identity_id, conversation_id, message_id, correct, **payload)
+
+    @material_guard
+    def _correct_teaching_annotation(self, identity_id, conversation_id, message_id, correct, **payload):
+        from . import teaching_runtime as teaching
         with self.database.transaction() as connection:
             self.owned_conversation(identity_id, conversation_id)
             row = connection.execute('''SELECT r.id,r.config_snapshot_json,m.status
@@ -1575,14 +1584,14 @@ class ConversationService:
                 raise ConversationError('回答不存在')
             snapshot = json.loads(row['config_snapshot_json'] or '{}')
             if row['status'] != 'complete' or (snapshot.get('source_scope') or {}).get('purged'):
-                raise ConversationConflict('这条尝试记录已不可用，请重新加载')
+                raise ConversationConflict('这条学习记录已不可用，请重新加载')
             if connection.execute("SELECT 1 FROM ai_run WHERE conversation_id=? AND status IN ('queued','running')",
                                   (conversation_id,)).fetchone():
                 raise ConversationConflict('请等本轮回答结束后再纠正')
             try:
-                teaching.correct(snapshot, **payload, at=_now())
+                correct(snapshot, **payload, at=_now())
             except ValueError as error:
-                raise ConversationConflict('尝试记录已变化，请读取最新记录后重试') from error
+                raise ConversationConflict('学习记录已变化，请读取最新记录后重试') from error
             connection.execute('UPDATE ai_run SET config_snapshot_json=? WHERE id=?',
                                (json.dumps(snapshot, ensure_ascii=False), row['id']))
             return teaching.public(snapshot, row['status'])

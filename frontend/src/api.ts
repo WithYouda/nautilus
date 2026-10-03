@@ -437,6 +437,21 @@ export type TeachingPracticeObservation = {
   answer_id: string; feedback_start: number; feedback_end: number;
   eligible: boolean; needs_help: boolean | null; help_context?: unknown[];
 };
+export type LearningObservationState = 'progress' | 'difficulty' | 'uncertain';
+export type LearningObservation = {
+  id: string; point_id: string; topic: string; state: LearningObservationState;
+  source: { message_id: string; start: number; end: number };
+  feedback: TeachingTextRef;
+  at: string;
+  help_context: Array<HelpRecord & { answer_id: string; method?: string | null }>;
+  original: { topic: string; state: LearningObservationState };
+  note: string; excluded: boolean; revision: number; eligible: boolean;
+  corrections: Array<{ revision: number; topic: string; state: LearningObservationState; note: string; excluded: boolean; at: string }>;
+};
+export type LearningObservationCorrection = {
+  observation_id: string; expected_revision: number; topic: string; state: LearningObservationState;
+  note: string; excluded: boolean; request_key: string;
+};
 export type TeachingRecord = {
   status: 'running' | 'applied' | 'not_updated' | 'unavailable';
   recording?: { available: boolean; reason: 'not_checked' | 'not_supported' | 'native_search_unverified' | null };
@@ -458,6 +473,8 @@ export type TeachingRecord = {
   exercise_observation?: TeachingPracticeObservation | null;
   project_step?: TeachingProject | null;
   project_observation?: (TeachingPracticeObservation & { project_id: string }) | null;
+  learning_observations?: LearningObservation[];
+  learning_used?: string[];
   guidance?: { level: 0 | 1 | 2 | 3 | 4; reason: string } | null;
   mode_request: { mode: TeachingMode | 'adaptive'; scope: 'turn' | 'conversation'; start: number; end: number } | null;
   attempt: {
@@ -1187,6 +1204,9 @@ export function recordAiHelpDisplay(conversationId: string, messageId: string, c
 
 export function correctAiTeachingAttempt(conversationId: string, answerId: string, payload: TeachingAttemptCorrection, signal?: AbortSignal): Promise<TeachingRecord> {
   return request(`/api/ai/conversations/${conversationId}/messages/${answerId}/teaching-attempt`, { method: 'POST', body: JSON.stringify(payload), signal });
+}
+export function correctAiLearningObservation(conversationId: string, answerId: string, payload: LearningObservationCorrection, signal?: AbortSignal): Promise<TeachingRecord> {
+  return request(`/api/ai/conversations/${conversationId}/messages/${answerId}/learning-observation`, { method: 'POST', body: JSON.stringify(payload), signal });
 }
 
 export function cancelAiRun(runId: string): Promise<{ run: AiRun }> {
@@ -2302,6 +2322,9 @@ export function recordDiscussionHelpDisplay(discussionId: string, turnId: string
 }
 export function correctDiscussionTeachingAttempt(discussionId: string, turnId: string, payload: TeachingAttemptCorrection, signal?: AbortSignal): Promise<TeachingRecord> {
   return request(`/api/learning/discussions/${discussionId}/turns/${turnId}/teaching-attempt`, { method: 'POST', body: JSON.stringify(payload), signal });
+}
+export function correctDiscussionLearningObservation(discussionId: string, turnId: string, payload: LearningObservationCorrection, signal?: AbortSignal): Promise<TeachingRecord> {
+  return request(`/api/learning/discussions/${discussionId}/turns/${turnId}/learning-observation`, { method: 'POST', body: JSON.stringify(payload), signal });
 }
 export function recordReferenceHelpDisplay(verificationId: string, evaluationId: string, questionId: string): Promise<ReferenceHelpDisplay> {
   return request(`/api/learning/verifications/${verificationId}/evaluations/${evaluationId}/questions/${questionId}/help-display`, { method: 'POST' });

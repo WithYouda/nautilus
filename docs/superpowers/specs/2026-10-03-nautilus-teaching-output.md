@@ -5,7 +5,7 @@
 ## 能力检查与兼容
 
 - “设置 → 学习方式 → 教学记录”默认折叠，选择模型后可检查支持。检查只发送两次简短合成内容，分别测试普通流式回复和带外部工具声明的流式回复，不使用用户对话内容、不改默认模型。
-- 当前能力契约为version 3，覆盖新增adaptation对象；旧version 1/2结果须重新检查，已接受运行与历史记录不变。
+- 当前能力契约为version 4，覆盖adaptation及learning对象；旧version 1/2/3结果须重新检查，已接受运行与历史记录不变。
 - 检查结果保存在模型现有能力字段，绑定提供方配置版本、凭据版本、协议和模型名。相关配置变化后回到未检查；网络、超时、鉴权等临时失败保留此前结果；明确拒绝请求或格式不合约时该组合不可用。
 - 普通对话与外部搜索/知识库组合分别判断。模型内置搜索的原生轮次和引用尚未验证，本片保持普通聊天并提示当前联网方式不能记录教学状态，不隐式关闭搜索或更换模型。
 - 请求接受时冻结输出格式和能力绑定；已接受请求的幂等重放不重新判断。重新生成是新运行，读取当前实际模型/配置的检查结果，教学默认和原动作仍沿既有冻结规则。
@@ -13,7 +13,7 @@
 
 ## 同次输出与流式呈现
 
-结构化传输自教学协议v5引入；当前v8兼容v1–v7，新增教学语义见[练习优先契约](2026-10-03-nautilus-practice-first-runtime.md)、[项目实践契约](2026-10-04-nautilus-project-runtime.md)及[个人自适应契约](2026-10-04-nautilus-adaptive-runtime.md)。受支持请求的最终输出为一个对象：`{reply, teaching, token}`。`reply`是用户可见的Markdown正文；`teaching`保持`step / attempt / mode / help / practice / project / adaptation`语义；`token`与本轮服务端冻结值一致。仍只用原教学调用，不增加每轮识别、修复或分类调用；原有标题和已授权工具续答沿原流程。
+结构化传输自教学协议v5引入；当前v9兼容v1–v8，新增教学语义见[练习优先契约](2026-10-03-nautilus-practice-first-runtime.md)、[项目实践契约](2026-10-04-nautilus-project-runtime.md)、[个人自适应契约](2026-10-04-nautilus-adaptive-runtime.md)及[细粒度学习情况契约](2026-10-04-nautilus-learning-observations.md)。受支持请求的最终输出为一个对象：`{reply, teaching, token}`。`reply`是用户可见的Markdown正文；`teaching`保持`step / attempt / mode / help / practice / project / adaptation / learning`语义；`token`与本轮服务端冻结值一致。仍只用原教学调用，不增加每轮识别、修复或分类调用；原有标题和已授权工具续答沿原流程。
 
 四协议使用各自原生请求参数：Chat的`response_format`、Responses的`text.format`、Google的`responseMimeType`、Anthropic的`output_config.format`。请求约束不等于语义正确，完成信号、逐字原文引用、活动与步骤转换仍由应用校验。
 
@@ -38,3 +38,5 @@
 更新记录：2026-10-04 项目实践扩展至v7及六字段教学对象，能力检查升至version 2；项目目标、步骤、反馈同样受最终轮原文范围约束。
 
 更新记录：2026-10-04 个人自适应扩展至v8及七字段教学对象，能力检查升至version 3；同次选择具体方法及有原话依据的待确认偏好，未经确认不写个人规则。
+
+更新记录：2026-10-04 细粒度学习情况扩展至v9及八字段教学对象，能力检查升至version 4；同次记录实际尝试内的知识点观察、最终回复反馈及本轮使用的既有观察引用。

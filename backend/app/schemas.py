@@ -345,6 +345,17 @@ class TeachingAttemptCorrectionRequest(BaseModel):
     request_key: str = Field(min_length=1, max_length=100)
 
 
+class LearningObservationCorrectionRequest(BaseModel):
+    model_config = {'extra': 'forbid', 'str_strip_whitespace': True}
+    observation_id: str = Field(min_length=1, max_length=150)
+    expected_revision: int = Field(ge=0)
+    topic: str = Field(min_length=1, max_length=120)
+    state: Literal['progress', 'difficulty', 'uncertain']
+    note: str = Field(max_length=600)
+    excluded: bool = Field(strict=True)
+    request_key: str = Field(min_length=1, max_length=100)
+
+
 class LearningActionCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     context_key: str = Field(min_length=1, max_length=200)

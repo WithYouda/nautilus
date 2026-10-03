@@ -31,7 +31,7 @@ MATH_TEXT = (
 
 
 def teaching_chunks(body: list[str], proposal: dict[str, Any], context: dict[str, Any]) -> list[str]:
-    proposal = {key: proposal.get(key) for key in ('step', 'attempt', 'mode', 'help', 'practice', 'project', 'adaptation')}
+    proposal = {key: proposal.get(key) for key in ('step', 'attempt', 'mode', 'help', 'practice', 'project', 'adaptation', 'learning')}
     proposal['adaptation'] = context.get('_mock_adaptation', proposal['adaptation'])
     if context.get('output_format') == 'json':
         chunks = ['{"reply":"', *(json.dumps(piece, ensure_ascii=False)[1:-1] for piece in body)]
@@ -379,7 +379,46 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     break
             if practice_context:
                 practice_context['_mock_adaptation'] = adaptive_proposal(practice_context, c1_request, requested_mode, requested_help)
-            if practice_context and practice_context.get('action') == 'retell':
+            if practice_context and ('[LEARN' in c1_request or practice_context.get('help_kind')
+                    and any('[LEARN' in str(message.get('content', '')) for message in messages if message.get('role') == 'user')):
+                proposal = dict(step=None, attempt=None, mode=requested_mode, help=requested_help,
+                                practice=None, project=None, learning=None)
+                points = practice_context.get('learning_context', [])
+                if '[LEARN开始]' in c1_request:
+                    point = '检查空输入与缺失编号。'
+                    body = point + '请写出两种输入的处理方法。'
+                    proposal['step'] = point
+                elif practice_context.get('help_kind'):
+                    body = '合成提示：先分别检查空输入与缺失编号。'
+                elif '[LEARN尝试]' in c1_request:
+                    first_quote = '🧩我先检查空输入。'
+                    second_quote = '缺失编号时我还不知道返回什么。'
+                    first_feedback = '💬你说明了先检查空输入，这次有进展。'
+                    second_feedback = '缺失编号的返回值仍不明确，需要继续核对。'
+                    body = first_feedback + '\n\n' + second_feedback
+                    proposal['attempt'] = dict(quote=c1_request, needs_help=True)
+                    proposal['learning'] = dict(observations=[
+                        dict(point_id=None, topic='空输入检查', state='progress', quote=first_quote, feedback=first_feedback),
+                        dict(point_id=None, topic='缺失编号返回值', state='difficulty', quote=second_quote, feedback=second_feedback),
+                    ], used=[])
+                elif '[LEARN再试]' in c1_request and points:
+                    point = points[0]
+                    body = '🧩这次空输入处理仍有困难，需要核对返回值。'
+                    proposal['attempt'] = dict(quote=c1_request, needs_help=True)
+                    proposal['learning'] = dict(observations=[dict(point_id=point['point_id'], topic=point['topic'],
+                        state='difficulty', quote=c1_request, feedback=body)], used=[point['observations'][-1]['id']])
+                elif '[LEARN参考]' in c1_request and points:
+                    observation = next((point['observations'][-1] for point in points
+                        if point['observations'][-1].get('revision', 0) > 0), points[0]['observations'][-1])
+                    state_label = {'progress': '有进展', 'difficulty': '仍有困难', 'uncertain': '尚不明确'}[observation['state']]
+                    body = f"这轮继续处理{observation['topic']}：{state_label}。"
+                    if observation.get('note'):
+                        body += '按你的说明：' + observation['note']
+                    proposal['learning'] = dict(observations=[], used=[observation['id']])
+                else:
+                    body = '当前没有可参考的学习观察，先核对你这次的处理。'
+                practice_reply = (body, proposal)
+            elif practice_context and practice_context.get('action') == 'retell':
                 invitation = '请用自己的话说说，为什么要先检查输入边界；也可以举一个简单例子。'
                 practice_reply = (invitation, {'step': None, 'attempt': None, 'mode': None, 'help': None,
                     'practice': {'question': invitation, 'feedback': None}})

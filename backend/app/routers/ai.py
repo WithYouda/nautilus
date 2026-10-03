@@ -19,6 +19,7 @@ from ..schemas import (
     MessageSendRequest,
     HelpDisplayRequest,
     TeachingAttemptCorrectionRequest,
+    LearningObservationCorrectionRequest,
     ProviderModelsRequest,
     ProviderCreateRequest,
     ProviderSaveRequest,
@@ -610,6 +611,17 @@ def correct_teaching_attempt(conversation_id: str, message_id: str,
     try:
         return conversation_service(request).correct_teaching_attempt(
             identity['id'], conversation_id, message_id, **payload.model_dump(exclude_unset=True))
+    except ConversationError as error:
+        _raise(error)
+
+
+@router.post('/conversations/{conversation_id}/messages/{message_id}/learning-observation')
+def correct_learning_observation(conversation_id: str, message_id: str,
+                                 payload: LearningObservationCorrectionRequest, request: Request,
+                                 identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        return conversation_service(request).correct_learning_observation(
+            identity['id'], conversation_id, message_id, **payload.model_dump())
     except ConversationError as error:
         _raise(error)
 

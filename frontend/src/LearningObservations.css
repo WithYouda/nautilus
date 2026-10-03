@@ -1,0 +1,20 @@
+.learning-observations { margin-top: .8rem; }
+.learning-observations__point { margin-top: .65rem; border-top: 1px solid var(--line); padding-top: .75rem; }
+.learning-observation { min-width: 0; }
+.learning-observation__heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: .35rem .7rem; margin-bottom: .4rem; overflow-wrap: anywhere; }
+.learning-observation__state { flex-shrink: 0; color: var(--muted); font-size: .78rem; }
+.learning-observation__label { margin: .45rem 0; color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
+.learning-observation__note { margin: .4rem 0; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.learning-observation__evidence, .learning-observation__corrections, .learning-observations__history, .learning-observations__used { margin-top: .65rem; font-size: .78rem; }
+.learning-observation blockquote { margin: .4rem 0 .65rem; padding: .45rem .7rem; border-left: 2px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.learning-observation__time { display: block; margin-top: .65rem; color: var(--muted); }
+.learning-observation__help, .learning-observation__corrections ul, .learning-observations__used ul { margin: .5rem 0; padding-left: 1.2rem; }
+.learning-observation__corrections li { padding: .25rem 0; overflow-wrap: anywhere; }
+.learning-observation__corrections time { display: block; margin-bottom: .25rem; color: var(--muted); }
+.learning-observation__corrections p { margin: .25rem 0; white-space: pre-wrap; }
+.learning-observation__actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .65rem; }
+.learning-observation__form { display: grid; gap: .65rem; margin-top: .75rem; padding: .7rem; border: 1px solid var(--line); border-radius: .5rem; }
+.learning-observation__form label { display: grid; min-width: 0; gap: .35rem; }
+.learning-observation__form input, .learning-observation__form textarea, .learning-observation__form select { box-sizing: border-box; width: 100%; min-width: 0; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: .4rem; background: var(--surface); color: inherit; font: inherit; }
+.learning-observation__form textarea { resize: vertical; }
+.learning-observation--historical { margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--line); }

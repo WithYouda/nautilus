@@ -232,6 +232,14 @@ class QuestionDiscussionService:
             return public_help(snapshot, row['assistant_content'], row['status'], row['finished_at'])
 
     def correct_teaching_attempt(self, identity, discussion_id, turn_id, **payload):
+        return self._correct_teaching_annotation(identity, discussion_id, turn_id, teaching.correct, **payload)
+
+    def correct_learning_observation(self, identity, discussion_id, turn_id, **payload):
+        from .learning_observations import correct
+        return self._correct_teaching_annotation(identity, discussion_id, turn_id, correct, **payload)
+
+    @material_guard
+    def _correct_teaching_annotation(self, identity, discussion_id, turn_id, correct, **payload):
         owner = self.learning.principal(identity).owner_id
         with self.db.transaction(immediate=True) as c:
             discussion = self._owned(owner, discussion_id)
@@ -246,7 +254,7 @@ class QuestionDiscussionService:
             if c.execute("SELECT 1 FROM learning_discussion_turn WHERE discussion_id=? AND status='running'", (discussion_id,)).fetchone():
                 raise DomainError('discussion_busy', 409)
             try:
-                teaching.correct(snapshot, **payload, at=utc_timestamp())
+                correct(snapshot, **payload, at=utc_timestamp())
             except ValueError as error:
                 raise DomainError(str(error), 409) from error
             c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
@@ -614,19 +622,22 @@ class QuestionDiscussionService:
                     messages[0] = {**messages[0], 'content': messages[0]['content'] + '\n' + HELP_PROMPTS[help_kind]}
                 teaching_stream = None
                 if snapshot.get('teaching'):
-                    attempt_texts = {}
-                    for observation in snapshot['teaching']['attempt_context']:
-                        original = self.db.fetchone('SELECT user_content FROM learning_discussion_turn WHERE discussion_id=? AND id=? AND status<>?',
-                            (discussion_id, observation['message_id'], 'purged'))
-                        if original:
-                            attempt_texts[observation['message_id']] = original['user_content'] or ''
-                    answer_texts = {}
-                    practice = snapshot['teaching']['before'].get('practice')
-                    if practice:
-                        original = self.db.fetchone('SELECT assistant_content FROM learning_discussion_turn WHERE discussion_id=? AND id=? AND status<>?',
-                            (discussion_id, practice['question']['answer_id'], 'purged'))
-                        if original:
-                            answer_texts[practice['question']['answer_id']] = original['assistant_content'] or ''
+                    record = snapshot['teaching']
+                    source_ids = {item['message_id'] for item in record['attempt_context']}
+                    for point in record.get('learning_context', []):
+                        for observation in point['observations']:
+                            source_ids.update((observation['source']['message_id'], observation['feedback']['answer_id']))
+                    before = record['before']
+                    for activity in (before.get('practice'), before.get('exercise')):
+                        if activity:
+                            source_ids.add(activity['question']['answer_id'])
+                    if before.get('project'):
+                        source_ids.update((before['project']['goal']['answer_id'], before['project']['step']['instruction']['answer_id']))
+                    originals = self.db.fetchall('SELECT id,user_content,assistant_content FROM learning_discussion_turn '
+                        'WHERE discussion_id=? AND status<>? AND id IN (' + ','.join('?' for _ in source_ids) + ')',
+                        (discussion_id, 'purged', *sorted(source_ids))) if source_ids else []
+                    attempt_texts = {item['id']: item['user_content'] or '' for item in originals}
+                    answer_texts = {item['id']: item['assistant_content'] or '' for item in originals}
                     messages = teaching.add_prompt(messages, snapshot['teaching'], attempt_texts, answer_texts)
                     teaching_stream = teaching.TeachingStream(snapshot['teaching'])
                 def active():

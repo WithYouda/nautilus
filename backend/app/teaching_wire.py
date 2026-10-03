@@ -60,6 +60,16 @@ ENVELOPE_SCHEMA = _object({
                 "reason": {"type": "string"},
             }),
         }),
+        "learning": _nullable_object({
+            "observations": {"type": "array", "items": _object({
+                "point_id": {"type": ["string", "null"]},
+                "topic": {"type": "string"},
+                "state": {"type": "string", "enum": ["progress", "difficulty", "uncertain"]},
+                "quote": {"type": "string"},
+                "feedback": {"type": "string"},
+            })},
+            "used": {"type": "array", "items": {"type": "string"}},
+        }),
     }),
     "token": {"type": "string"},
 })
