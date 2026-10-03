@@ -13,6 +13,7 @@ from test_ai_conversations import make_client, read_sse
 from test_learning_domain_schema import learning_database  # noqa: F401
 from test_learning_verifications import IDENTITY, response_transport
 from test_material_image_runtime import setup, upload, capability
+from test_material_file_inputs import image_bytes
 from test_material_runtime import body_response
 from test_verification_review import attempt
 
@@ -55,9 +56,31 @@ def test_explicit_attachments_persist_on_message_without_clearing_scope(tmp_path
         read_sse(client, followup.json()['run']['id'])
         messages = client.get(f'/api/ai/conversations/{cid}').json()['messages']
         assert [item['attachment_version_ids'] for item in messages if item['role'] == 'user'] == [[saved['id']], []]
-        # The previous image remains available to the model despite no new chip.
-        assert calls[-1]['messages'][-1]['content'][1]['type'] == 'image_url'
+        # Continue using the original image as history, not a new attachment.
+        assert calls[-1]['messages'][-1]['content'] == 'Explain more'
+        assert calls[-1]['messages'][1]['content'][1]['type'] == 'image_url'
         assert client.get(state_url).json()['source_scope'] == scope
+
+        newer = upload(client, base, image_bytes(color='blue'), 'new-image.png')
+        state = client.get(state_url).json()
+        scope = {'mode': 'reference', 'version_ids': [saved['id'], newer['id']]}
+        updated = client.put(state_url, json={'expected_revision': state['revision'],
+            'leaf_id': state['leaf_id'], 'paths': state['paths'], 'source_scope': scope})
+        assert updated.status_code == 200
+        state = updated.json()
+        for key, ids in [('new-image-only', [newer['id']]), ('explicitly-select-both', [saved['id'], newer['id']])]:
+            sent = client.post(message_url, json={'content': '解析图片', 'client_message_id': key,
+                'source_scope': scope, 'attachment_version_ids': ids,
+                'current_state_revision': state['revision'], 'parent_message_id': state['leaf_id']})
+            assert sent.status_code == 202, sent.text
+            read_sse(client, sent.json()['run']['id'])
+            body = calls[-1]['messages']
+            assert len([part for part in body[-1]['content'] if part['type'] == 'image_url']) == len(ids)
+            assert all('_attachment_version_ids' not in message for message in body)
+            if len(ids) == 1:
+                assert body[-1]['content'][1]['image_url']['url'] != body[1]['content'][1]['image_url']['url']
+                assert '默认只针对用户最新消息实际附上的图片' in body[0]['content']
+            state = client.get(state_url).json()
 
         fork = client.post(f'/api/ai/conversations/{cid}/branches', json={
             'message_id': first['run']['response_message_id'], 'request_key': 'file-branch'})

@@ -375,8 +375,19 @@ async def test_question_discussion_receives_real_image_and_snapshot_only_keeps_l
         original_runtime = verification._runtime
         verification._runtime = lambda owner, session: ({**original_runtime(owner, session)[0], 'id': 'synthetic'}, original_runtime(owner, session)[1])
         result = await service.send(IDENTITY, discussion['id'], '请解释图中关系', 'image-question',
-            source_scope={'mode': 'only', 'version_ids': [saved['id']]}, search={'mode': 'off'})
+            source_scope={'mode': 'reference', 'version_ids': [saved['id']]},
+            attachment_version_ids=[saved['id']], search={'mode': 'off'})
         capability_check.assert_called_once()
+        newer_raw = image_bytes(color='blue')
+        newer = materials.create(IDENTITY, 'discussion', discussion['id'], title='new.png',
+            original=(newer_raw, 'new.png', 'image/png'), file_metadata=prepare_material_file('new.png', newer_raw))
+        await service.send(IDENTITY, discussion['id'], '解析新图片', 'new-image-question',
+            parent_turn_id=result['turns'][-1]['id'], attachment_version_ids=[newer['id']],
+            source_scope={'mode': 'reference', 'version_ids': [saved['id'], newer['id']]}, search={'mode': 'off'})
+        assert len([part for part in calls[-1]['messages'][-1]['content'] if part['type'] == 'image_url']) == 1
+        earlier = next(message for message in calls[-1]['messages'][:-1]
+                       if isinstance(message.get('content'), list))
+        assert earlier['content'][1]['image_url']['url'] != calls[-1]['messages'][-1]['content'][1]['image_url']['url']
     assert result['turns'][-1]['status'] == 'succeeded'
     assert calls[0]['messages'][-1]['content'][1]['type'] == 'image_url'
     snapshot = learning_database.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (result['turns'][-1]['id'],))[0]

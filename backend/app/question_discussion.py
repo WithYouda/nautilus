@@ -538,8 +538,11 @@ class QuestionDiscussionService:
                             and not (frozen and frozen['mode'] == 'only' and frozen.get('knowledge_base'))):
                         assistant['reasoning_content'] = previous['reasoning_content'] or ''
                         assistant['_model_turn'] = json.loads(previous['provider_snapshot_json']).get('model_turn')
-                    messages.extend([{'role': 'user', 'content': previous['user_content']}, assistant])
-                messages.append({'role': 'user', 'content': content})
+                    previous_snapshot = json.loads(previous['provider_snapshot_json'] or '{}')
+                    messages.extend([{'role': 'user', 'content': previous['user_content'],
+                                      '_attachment_version_ids': previous_snapshot.get('attachment_version_ids', [])}, assistant])
+                messages.append({'role': 'user', 'content': content,
+                                 '_attachment_version_ids': snapshot.get('attachment_version_ids', [])})
                 messages = await asyncio.to_thread(attach_material_images, getattr(self.chats, 'materials', None), identity,
                     'discussion', discussion_id, frozen, messages, check_running)
                 check_running()

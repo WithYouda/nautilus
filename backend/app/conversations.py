@@ -1906,7 +1906,8 @@ class ConversationService:
                 ) from error
             raise ConversationError("无法创建 AI 运行记录") from error
 
-        history.append({"role": "user", "content": text})
+        history.append({"role": "user", "content": text,
+                        "_attachment_version_ids": list(attachment_version_ids or [])})
         return {
             "created": True,
             "run": self.owned_run(identity_id, run_id),
@@ -1933,6 +1934,8 @@ class ConversationService:
     @staticmethod
     def _history_message(connection, item, with_tools):
         message = {"role": item["role"], "content": item["content"]}
+        if item['role'] == 'user':
+            message['_attachment_version_ids'] = item.get('attachment_version_ids', [])
         if with_tools and item["role"] == "assistant":
             message["reasoning_content"] = item.get("reasoning_content", "") or ""
             row = connection.execute("SELECT config_snapshot_json FROM ai_run WHERE response_message_id=?", (item["id"],)).fetchone()

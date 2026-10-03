@@ -40,11 +40,26 @@ def check_image_sources(materials, identity, kind, scope_id, frozen):
 
 
 def attach_material_images(materials, identity, kind, scope_id, frozen, messages, check=None):
+    result = [dict(message) for message in messages]
+    attachment_ids = [message.pop('_attachment_version_ids', None) for message in result]
     sources = image_materials(frozen)
     if not sources:
-        return messages
-    images, labels = [], []
+        return result
+    user_indexes = [index for index, message in enumerate(result) if message.get('role') == 'user']
+    if not user_indexes:
+        raise DomainError('image_input_message_missing', 422)
+    current = user_indexes[-1]
+    current_ids = attachment_ids[current]
+    # An image belongs to the message that attached it, not every subsequent
+    # question. Explicitly reattaching it moves its pixels to the current turn.
+    placements = {}
+    legacy_images, legacy_labels = [], []
     for item in sources:
+        if current_ids is None or item['id'] in current_ids or len(user_indexes) == 1 and not current_ids:
+            target = current
+        else:
+            target = next((index for index in reversed(user_indexes[:-1])
+                           if item['id'] in (attachment_ids[index] or [])), None)
         if check:
             check()
         with materials.lock:
@@ -57,13 +72,17 @@ def attach_material_images(materials, identity, kind, scope_id, frozen, messages
             raw, media_type = render_material_page(original['content'], original['media_type'], page)
             if check:
                 check()
+            images, labels = placements.setdefault(target, ([], [])) if target is not None else (legacy_images, legacy_labels)
             images.append({'media_type': media_type, 'data': base64.b64encode(raw).decode('ascii')})
             labels.append(f'附图 {len(images)} 对应【资料{marker}】第 {page} 页。')
     check_image_sources(materials, identity, kind, scope_id, frozen)
-    result = [dict(message) for message in messages]
-    for message in reversed(result):
-        if message.get('role') == 'user':
-            message['content'] = message['content'] + '\n\n' + '\n'.join(labels)
-            message['_images'] = images
-            return result
-    raise DomainError('image_input_message_missing', 422)
+    for target, (images, labels) in placements.items():
+        result[target]['content'] += '\n\n' + '\n'.join(labels)
+        result[target]['_images'] = images
+    if legacy_images:
+        # Older records or a truncated history may lack the original message.
+        # Keep their reference context separate; never call them new uploads.
+        result.insert(user_indexes[0], {'role': 'user', 'content':
+            '此前保存的历史图片参考（不是本轮新附件；仅在用户明确提及时使用）：\n' + '\n'.join(legacy_labels),
+            '_images': legacy_images})
+    return result
