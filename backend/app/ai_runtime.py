@@ -103,6 +103,7 @@ class AiRunManager:
         search: dict | None = None,
         public_search_query: str | None = None,
         help_request: str | None = None,
+        teaching_mode: str | None = None,
         source_scope: dict | None = None,
         attachment_version_ids: list[str] | None = None,
         current_state_revision: int | None = None,
@@ -115,6 +116,7 @@ class AiRunManager:
             search=search,
             public_search_query=public_search_query,
             help_request=help_request,
+            teaching_mode=teaching_mode,
             **({"source_scope": source_scope} if source_scope is not None else {}),
             attachment_version_ids=attachment_version_ids,
             current_state_revision=current_state_revision,
@@ -476,7 +478,7 @@ class AiRunManager:
                 reasoning_content=state.reasoning_text,
                 error_kind=kind,
                 error_message=message,
-                **({'teaching_proposal': state.teaching_stream.proposal()}
+                **(state.teaching_stream.outcome()
                    if state.teaching_stream and status == 'succeeded' else {}),
             )
         except Exception:  # noqa: BLE001 - 收敛失败不能再抛进后台 task

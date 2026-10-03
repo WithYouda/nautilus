@@ -16,7 +16,13 @@ def cfg(kind):
 
 
 def sse(*events):
-    return httpx.Response(200, text="".join(f"event: {name}\ndata: {json.dumps(body)}\n\n" for name, body in events))
+    wire = "".join(f"event: {name}\ndata: {json.dumps(body)}\n\n" for name, body in events)
+    # Complete Chat fixtures need both the model reason and transport terminal.
+    # Incomplete/truncated fixtures deliberately retain their missing terminal.
+    if any(any(choice.get("finish_reason") in {"stop", "tool_calls"} for choice in body.get("choices", []))
+           for _, body in events):
+        wire += "data: [DONE]\n\n"
+    return httpx.Response(200, text=wire)
 
 
 TOOL = {"name": "search", "description": "Search", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}}

@@ -555,6 +555,7 @@ async def send_message(
             search=payload.search,
             public_search_query=payload.public_search_query,
             help_request=payload.help_request,
+            teaching_mode=payload.teaching_mode,
             source_scope=payload.source_scope,
             attachment_version_ids=payload.attachment_version_ids,
             current_state_revision=payload.current_state_revision,
@@ -589,7 +590,7 @@ def correct_teaching_attempt(conversation_id: str, message_id: str,
                              identity: dict[str, Any] = Depends(current_identity)):
     try:
         return conversation_service(request).correct_teaching_attempt(
-            identity['id'], conversation_id, message_id, **payload.model_dump())
+            identity['id'], conversation_id, message_id, **payload.model_dump(exclude_unset=True))
     except ConversationError as error:
         _raise(error)
 

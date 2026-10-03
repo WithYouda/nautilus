@@ -3,6 +3,9 @@
 .ai-room > .teaching-arrangement, .ai-room > .ai-room-brief:has(.teaching-state) { max-height: min(45dvh, 28rem); overflow-y: auto; }
 .teaching-state { min-width: 0; padding-top: .65rem; font-size: .85rem; }
 .teaching-state__mode { margin: 0 0 .65rem; color: var(--muted); }
+.teaching-state__choice, .teaching-attempt__progress { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .8rem; margin: 0 0 .65rem; }
+.teaching-state select { max-width: 100%; min-width: 8rem; padding: .35rem .5rem; border: 1px solid var(--line); border-radius: .4rem; background: var(--surface); color: inherit; font: inherit; }
+.teaching-state select:disabled { opacity: .6; }
 .teaching-state__step p { margin: .35rem 0 .7rem; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
 .teaching-state summary { cursor: pointer; }
 .teaching-state__attempts { margin-top: .8rem; }

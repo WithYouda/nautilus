@@ -61,7 +61,10 @@ async def test_acceptance_freezes_model_before_requests_and_new_versions_use_new
     await service.tasks[turn_id]
     assert calls == [('first.example', 'first-model'), ('first.example', 'first-model')]
     original_snapshot = snapshot(learning_database, turn_id)
-    assert all(original_snapshot[key] == value for key, value in frozen.items())
+    assert all(original_snapshot[key] == value for key, value in frozen.items() if key != 'teaching')
+    assert {key: value for key, value in original_snapshot['teaching'].items()
+            if key != 'not_applied_reason'} == frozen['teaching']
+    assert original_snapshot['teaching']['not_applied_reason'] == 'completion_unknown'
 
     regenerated = await service.send(IDENTITY, discussion_id, '解释这一小点', 'regenerated', regenerate_turn_id=turn_id)
     next_id = regenerated['turns'][-1]['id']

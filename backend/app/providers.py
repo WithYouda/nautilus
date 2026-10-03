@@ -50,28 +50,62 @@ class ProviderChunk:
     text: str
 
 
+def _teaching_opening(messages: list[dict[str, Any]]) -> str | None:
+    """Read only the current, server-created teaching context's exact marker."""
+    for message in reversed(messages):
+        if message.get("_teaching_runtime") is not True:
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or "\n" not in content:
+            return None
+        try:
+            context = json.loads(content.split("\n", 1)[1])
+        except (ValueError, RecursionError):
+            return None
+        opening = context.get("opening") if isinstance(context, dict) else None
+        return opening if isinstance(opening, str) and re.fullmatch(r"<nautilus_teaching_[0-9a-f]{32}>", opening) else None
+    return None
+
+
 class _ThinkStreamParser:
     """把正文流里的 <think> 块拆成推理增量，并兼容标签跨 chunk。"""
 
-    def __init__(self) -> None:
+    def __init__(self, protected_opening: str | None = None) -> None:
         self.buffer = ""
         self.in_reasoning = False
+        self.protected_opening = protected_opening
+        self.in_metadata = False
 
     def feed(self, text: str) -> list[ProviderChunk]:
+        if self.in_metadata:
+            return [ProviderChunk("content", text)] if text else []
         self.buffer += text
         chunks: list[ProviderChunk] = []
         while self.buffer:
             marker = "</think>" if self.in_reasoning else "<think>"
             index = self.buffer.find(marker)
+            protected = self.buffer.find(self.protected_opening) if self.protected_opening else -1
+            if protected >= 0 and (index < 0 or protected < index):
+                self._emit(chunks, self.buffer[:protected])
+                # Metadata quotes can contain literal think tags. Keep the
+                # exact trailer as content for TeachingStream to remove before
+                # it reaches SSE, reasoning, or generation observations.
+                chunks.append(ProviderChunk("content", self.buffer[protected:]))
+                self.buffer = ""
+                self.in_reasoning = False
+                self.in_metadata = True
+                break
             if index >= 0:
                 self._emit(chunks, self.buffer[:index])
                 self.buffer = self.buffer[index + len(marker) :]
                 self.in_reasoning = not self.in_reasoning
                 continue
             keep = 0
-            for size in range(1, len(marker)):
-                if self.buffer.endswith(marker[:size]):
-                    keep = size
+            for boundary in (marker, self.protected_opening):
+                if boundary:
+                    for size in range(1, len(boundary)):
+                        if self.buffer.endswith(boundary[:size]):
+                            keep = max(keep, size)
             ready = self.buffer[:-keep] if keep else self.buffer
             self._emit(chunks, ready)
             self.buffer = self.buffer[-keep:] if keep else ""
@@ -214,7 +248,7 @@ class OpenAICompatibleProvider:
                     terminal = False
                     finish_reason = None
                     saw_content = False
-                    think_parser = _ThinkStreamParser()
+                    think_parser = _ThinkStreamParser(_teaching_opening(messages))
                     async for line in response.aiter_lines():
                         chunks, line_terminal, line_finish = self._parse_stream_event(
                             line, secret=self.config.api_key, include_error_detail=include_error_detail

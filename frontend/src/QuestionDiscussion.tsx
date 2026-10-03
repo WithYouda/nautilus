@@ -18,7 +18,7 @@ import ComposerAttachments from './ComposerAttachments';
 import MessageAttachments from './MessageAttachments';
 import { attachmentError } from './AttachmentSupport';
 import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
-import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
+import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type TeachingMethod, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
 
 const requestId = (): string => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: string; onBack: () => void; onNavigate: (id: string) => void }) {
@@ -38,7 +38,8 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [busy, setBusy] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const [error, setError] = useState('');
-  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; sourceScope: SourceScope; attachmentVersionIds: string[] } | null>(null);
+  const [pending, setPending] = useState<{ content: string; key: string; failed: boolean; helpRequest: HelpRequestKind | null; teachingMode: TeachingMethod | null; sourceScope: SourceScope; attachmentVersionIds: string[] } | null>(null);
+  const [selectedTeachingMode, setSelectedTeachingMode] = useState<TeachingMethod | null>(null);
   const [materialVersions, setMaterialVersions] = useState<MaterialVersion[]>([]);
   const [attachmentDraftIds, setAttachmentDraftIds] = useState<string[]>([]);
   const [attachmentClearSignal, setAttachmentClearSignal] = useState(0);
@@ -49,7 +50,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editRequest = useRef<{ turnId: string; content: string; key: string } | null>(null);
   const key = useRef(requestId());
-  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
+  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; teachingMode: TeachingMethod | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
   const sending = useRef(false);
   const branching = useRef(false);
   const branchKeys = useRef(new Map<string, string>());
@@ -83,6 +84,8 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
 
   const replyHistory = useReplyHistory(`discussion:${id}`, (discussion?.turns ?? []).map(turn => ({id:turn.id, parentId:turn.parent_turn_id, groupId:turn.question_id})), runningTurn?.id, { leaf: sharedState.snapshot.leaf_id, paths: sharedState.snapshot.paths, ready: sharedState.ready, select: (leaf_id, paths) => sharedState.save({ leaf_id, paths }) });
   const visibleTurns = replyHistory.path.map(turnId => discussion!.turns.find(turn => turn.id === turnId)!);
+  const teachingPath = replyHistory.path.join(':');
+  useEffect(() => { setSelectedTeachingMode(null); }, [id, teachingPath]);
   useEffect(() => {
     if (!mapLocation || discussion?.id !== mapLocation.id || !discussion.turns.some(turn => turn.id === mapLocation.source)) return;
     if (!sharedState.ready) return;
@@ -144,14 +147,15 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     const currentGeneration = generation.current;
     sending.current = true; setBusy(true); setError('');
     const frozenHelp = searchByRequestKey.current.has(requestKey) ? searchByRequestKey.current.get(requestKey)!.helpRequest : (requestedHelp !== undefined ? requestedHelp : regenerateTurnId ? discussion?.turns.find(turn => turn.id === regenerateTurnId)?.help_record?.request?.kind ?? null : null);
+    const frozenTeachingMode = searchByRequestKey.current.has(requestKey) ? searchByRequestKey.current.get(requestKey)!.teachingMode : regenerateTurnId ? discussion?.turns.find(turn => turn.id === regenerateTurnId)?.teaching?.requested_mode ?? null : selectedTeachingMode;
     const frozenScope = searchByRequestKey.current.get(requestKey)?.sourceScope ?? sourceScope;
     const frozenAttachments = searchByRequestKey.current.get(requestKey)?.attachmentVersionIds ?? (regenerateTurnId || editTurnId ? [] : attachmentDraftIds.filter(id => frozenScope.version_ids.includes(id)));
-    if (!retry && !regenerateTurnId && !editTurnId) { setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: false, helpRequest: frozenHelp, sourceScope: frozenScope }); if (!preserveDraft) { setContent(''); drafts.current.set(id, ''); } }
+    if (!retry && !regenerateTurnId && !editTurnId) { setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: false, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, sourceScope: frozenScope }); if (!preserveDraft) { setContent(''); drafts.current.set(id, ''); } }
     try {
       const frozenSearch = searchByRequestKey.current.get(requestKey)?.search ?? structuredClone(searchSelection);
       const frozenPublicQuery = searchByRequestKey.current.get(requestKey)?.publicQuery ?? (!regenerateTurnId && !editTurnId && frozenSearch.mode === 'external' ? publicQuery.trim() : '');
-      searchByRequestKey.current.set(requestKey, { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, content: text, helpRequest: frozenHelp, sourceScope: frozenScope });
-      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
+      searchByRequestKey.current.set(requestKey, { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, content: text, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, sourceScope: frozenScope });
+      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, teaching_mode: frozenTeachingMode, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (generation.current !== currentGeneration) return false;
       if (!regenerateTurnId && !editTurnId) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
@@ -168,7 +172,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         if (editRequest.current?.key === requestKey) editRequest.current = null;
         if (key.current === requestKey) key.current = requestId();
         if (!retry && !regenerateTurnId && !editTurnId) { setPending(null); if (!preserveDraft) { setContent(text); drafts.current.set(id, text); } }
-      } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: true, helpRequest: frozenHelp, sourceScope: frozenScope });
+      } else if (!retry && !regenerateTurnId && !editTurnId) setPending({ attachmentVersionIds: frozenAttachments, content: text, key: requestKey, failed: true, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, sourceScope: frozenScope });
       setError(stateRejected ? '消息未发送，请核对最新状态后重新发送。' : attachmentError(reason));
       return false;
     } finally {
@@ -216,8 +220,9 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
       </div>
       <span className="question-discussion-context">题目讨论</span>
     </header>
-    {discussion?.id === id && !discussion.purged && <TeachingState key={id} kind="discussion" scopeId={id} pathKey={replyHistory.path.join(':')}
+    {discussion?.id === id && !discussion.purged && <TeachingState key={id} kind="discussion" scopeId={id} pathKey={teachingPath}
       entries={discussionTeachingEntries(visibleTurns)} standalone
+      selectedMode={pending ? pending.teachingMode : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
       disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
       onUpdated={(answerId, record) => setDiscussion(previous => previous?.id === id
         ? { ...previous, turns: previous.turns.map(turn => turn.id === answerId ? { ...turn, teaching: record } : turn) } : previous)} />}

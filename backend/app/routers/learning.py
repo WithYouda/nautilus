@@ -558,7 +558,7 @@ def correct_teaching_attempt(discussion_id: str, turn_id: str,
                              identity: dict[str, Any] = Depends(current_identity)):
     try:
         return request.app.state.discussions.correct_teaching_attempt(
-            identity, discussion_id, turn_id, **payload.model_dump())
+            identity, discussion_id, turn_id, **payload.model_dump(exclude_unset=True))
     except DomainError as error:
         _raise_learning_error(error)
 

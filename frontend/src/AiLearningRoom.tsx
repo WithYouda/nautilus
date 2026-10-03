@@ -45,6 +45,7 @@ import {
   type AiConversationDetail,
   type AiMessage,
   type HelpRequestKind,
+  type TeachingMethod,
   type AiProvider,
   type AiProviderModel,
   type AiConversationConfig,
@@ -81,6 +82,7 @@ type PendingSubmission = {
   sourceScope?: SourceScope;
   attachmentVersionIds?: string[];
   helpRequest?: HelpRequestKind | null;
+  teachingMode?: TeachingMethod | null;
   regenerateMessageId?: string;
   editMessageId?: string;
   parentMessageId?: string;
@@ -140,6 +142,7 @@ function readSession(): RoomSession | null {
             attachmentVersionIds: Array.isArray(parsed.pending.attachmentVersionIds) ? parsed.pending.attachmentVersionIds.filter((value): value is string => typeof value === 'string') : [],
             sourceScope: parsed.pending.sourceScope && ['unspecified', 'reference', 'only'].includes(parsed.pending.sourceScope.mode) && Array.isArray(parsed.pending.sourceScope.version_ids) ? parsed.pending.sourceScope : undefined,
             helpRequest: ["hint", "explain_step", "example", "try_first"].includes(parsed.pending.helpRequest ?? "") ? parsed.pending.helpRequest : null,
+            teachingMode: ['stepwise', 'socratic'].includes(parsed.pending.teachingMode ?? '') ? parsed.pending.teachingMode : null,
           }
         : undefined,
       learningBrief: parsed.learningBrief,
@@ -352,6 +355,7 @@ export default function AiLearningRoom({
   const [attachmentDraftIds, setAttachmentDraftIds] = useState<string[]>([]);
   const [attachmentClearSignal, setAttachmentClearSignal] = useState(0);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [selectedTeachingMode, setSelectedTeachingMode] = useState<TeachingMethod | null>(null);
 
   const dismissLayer = useCallback(() => setOpenLayer(null), []);
   const closeHelpHistory = useCallback(() => setHelpHistoryOpen(false), []);
@@ -380,6 +384,8 @@ export default function AiLearningRoom({
   const searchSelection = searchChoice.value;
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id, { leaf: sharedState.snapshot.leaf_id, paths: sharedState.snapshot.paths, ready: sharedState.ready, select: (leaf_id, paths) => sharedState.save({ leaf_id, paths }) });
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
+  const teachingPath = replyHistory.path.join(':');
+  useEffect(() => { setSelectedTeachingMode(null); }, [conversationId, teachingPath]);
   useEffect(() => {
     if (!mapLocation || conversationId !== mapLocation.id || !detail?.messages.some(item => item.id === mapLocation.source)) return;
     if (!sharedState.ready) return;
@@ -832,6 +838,11 @@ export default function AiLearningRoom({
     setStatus("submitting");
     sendingRef.current = true;
     const sendEpoch = creationEpoch.current;
+    // Creating the first conversation changes the displayed path. Capture the
+    // user's choice before that asynchronous change clears the unsent choice.
+    const requestedTeachingMode = regenerateMessageId
+      ? detail?.messages.find(message => message.id === regenerateMessageId)?.teaching?.requested_mode ?? null
+      : selectedTeachingMode;
     const stillCurrent = () => mountedRef.current && creationEpoch.current === sendEpoch;
     let conversation: AiConversationDetail;
     try {
@@ -853,14 +864,15 @@ export default function AiLearningRoom({
       const frozenSearch = canReusePending ? savedPending!.search ?? { mode: "off" as const } : automatic ? { mode: "off" as const } : structuredClone(searchSelection);
       const frozenPublicQuery = canReusePending ? savedPending!.publicQuery ?? publicQuery.trim() : !automatic && !regenerateMessageId && !editMessageId && frozenSearch.mode === 'external' ? publicQuery.trim() : '';
       const frozenHelp = canReusePending ? savedPending!.helpRequest ?? null : requestedHelp !== undefined ? requestedHelp : regenerateMessageId ? detail?.messages.find(message => message.id === regenerateMessageId)?.help_record?.request?.kind ?? null : null;
+      const frozenTeachingMode = canReusePending ? savedPending!.teachingMode ?? null : requestedTeachingMode;
       const frozenScope = canReusePending ? savedPending!.sourceScope ?? emptySourceScope() : sourceScope;
       const frozenAttachments = canReusePending ? savedPending!.attachmentVersionIds ?? [] : regenerateMessageId || editMessageId || automatic ? [] : attachmentDraftIds.filter(id => frozenScope.version_ids.includes(id));
-      const pending: PendingSubmission = { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, sourceScope: frozenScope, helpRequest: frozenHelp, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
+      const pending: PendingSubmission = { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, sourceScope: frozenScope, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, teaching_mode: frozenTeachingMode, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (!stillCurrent() || conversationIdRef.current !== conversation.conversation.id) return false;
       if (!regenerateMessageId && !editMessageId && !automatic) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
@@ -905,6 +917,7 @@ export default function AiLearningRoom({
         pendingSubmissionRef.current = null;
         pendingContentRef.current = null;
         persistSession({ pending: undefined });
+        if (!regenerateMessageId) setSelectedTeachingMode(requestedTeachingMode);
       }
       if (!preserveDraft) setDraft(content);
       setStatus("failed");
@@ -954,7 +967,7 @@ export default function AiLearningRoom({
   }
 
   function handleNewConversation() {
-    if (branchBusyRef.current) return;
+    if (!entryReady || branchBusyRef.current) return;
     creationEpoch.current++; creatingConversation.current = null; sendingRef.current = false; setAttachmentContext(value => value + 1);
     abortRef.current?.abort();
     runIdRef.current = null;
@@ -972,6 +985,7 @@ export default function AiLearningRoom({
     setError("");
     setDraft("");
     setPublicQuery('');
+    setSelectedTeachingMode(null);
     setStatus("idle");
     persistSession({ conversationId: null, runId: null, draftConfig: null });
   }
@@ -1113,9 +1127,10 @@ export default function AiLearningRoom({
   const canSend = entryReady && !branchBusy && !sharedState.blocked && Boolean(
     activeProvider?.has_api_key && activeProvider.enabled && (!selectedModelId || (activeModel?.enabled && activeModel.discovery_status !== "unavailable")),
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
-  const teaching = conversationId && detail?.conversation.id === conversationId && <TeachingState
-    key={conversationId} kind="conversation" scopeId={conversationId} pathKey={replyHistory.path.join(':')}
+  const teaching = <TeachingState
+    key={conversationId ?? 'new'} kind="conversation" scopeId={conversationId ?? ''} pathKey={teachingPath}
     entries={conversationTeachingEntries(visibleMessages)} standalone={!learningBrief}
+    selectedMode={pendingSubmissionRef.current ? pendingSubmissionRef.current.teachingMode ?? null : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
     disabled={!entryReady || sharedState.blocked || branchBusy || Boolean(currentRun) || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
     onUpdated={(answerId, record) => setDetail(previous => previous?.conversation.id === conversationId
       ? { ...previous, messages: previous.messages.map(message => message.id === answerId ? { ...message, teaching: record } : message) } : previous)} />;
@@ -1275,7 +1290,7 @@ export default function AiLearningRoom({
               {learningBrief?.action_id && learningBrief.delegation_id && <button className="button button--accent button--compact button--with-icon" type="button" disabled={branchBusy} aria-label={verificationCompleted ? "查看验证结果" : "进入验证"} onClick={() => setVerificationOpen(true)}>
             <ShieldCheck size={15} /><span>{verificationCompleted ? "查看验证结果" : "进入验证"}</span>
           </button>}
-          <button className="icon-button icon-button--bordered" onClick={handleNewConversation} disabled={branchBusy} title="新建对话" aria-label="新建对话"><Plus size={16} /></button>
+          <button className="icon-button icon-button--bordered" onClick={handleNewConversation} disabled={!entryReady || branchBusy} title="新建对话" aria-label="新建对话"><Plus size={16} /></button>
         </div>
       </header>
 

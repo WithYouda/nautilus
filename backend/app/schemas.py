@@ -310,6 +310,7 @@ class ConversationUpdateRequest(BaseModel):
 
 
 class MessageSendRequest(BaseModel):
+    teaching_mode: Literal['stepwise', 'socratic'] | None = None
     public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None
@@ -339,6 +340,7 @@ class TeachingAttemptCorrectionRequest(BaseModel):
     model_config = {'extra': 'forbid'}
     expected_revision: int = Field(ge=0)
     is_attempt: bool = Field(strict=True)
+    needs_help: bool | None = Field(default=None, strict=True)
     request_key: str = Field(min_length=1, max_length=100)
 
 
@@ -643,6 +645,7 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 
 class QuestionDiscussionMessageRequest(BaseModel):
+    teaching_mode: Literal['stepwise', 'socratic'] | None = None
     public_search_query: str | None = None
     current_state_revision: int | None = Field(default=None, ge=0)
     source_scope: dict[str, Any] | None = None

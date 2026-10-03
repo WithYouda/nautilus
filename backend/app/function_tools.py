@@ -12,7 +12,7 @@ from typing import Any, AsyncIterator, Literal
 
 import httpx
 
-from .providers import ProviderChunk, ProviderError, _ThinkStreamParser
+from .providers import ProviderChunk, ProviderError, _ThinkStreamParser, _teaching_opening
 from .provider_messages import encode_message, message_images
 
 MAX_CALLS = 8
@@ -262,11 +262,13 @@ class ToolSession:
         reasoning_seen = False
         finish = None
         terminal = False
-        think_parser = _ThinkStreamParser()
+        think_parser = _ThinkStreamParser(_teaching_opening(self.messages))
         async for event in self._chat_events(payload):
             if event is None:
                 terminal = True
                 continue
+            if "error" in event:
+                raise ProviderError("提供方流式请求失败", kind="upstream_error")
             choices = event.get("choices")
             if not isinstance(choices, list) or not choices:
                 continue
@@ -312,7 +314,11 @@ class ToolSession:
                 finish = choice["finish_reason"]
         if finish == "length":
             raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
-        if finish not in {"stop", "tool_calls"}:
+        if finish == "content_filter":
+            raise ProviderError("提供方未返回可用内容", kind="content_filtered")
+        if not terminal:
+            raise _bad("提供方流式响应未正常结束")
+        if finish not in {None, "stop", "tool_calls"}:
             raise _bad("提供方流式响应未正常结束")
         if bool(indexed) != (finish == "tool_calls"):
             raise _bad()
@@ -325,7 +331,7 @@ class ToolSession:
         if calls:
             assistant["tool_calls"] = [{"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}} for call in calls]
         yield self._finish(calls, assistant,
-                           completion="complete" if terminal or calls else "unknown")
+                           completion="complete" if finish is not None else "unknown")
 
     async def _responses(self, tools: list[dict], allow_tools: bool) -> AsyncIterator[ProviderChunk | ToolTurn]:
         payload = {"model": self.provider.config.model, "input": self._history, "stream": True, "store": False,
@@ -421,9 +427,7 @@ class ToolSession:
             if not isinstance(candidate, dict):
                 raise _bad()
             reason = candidate.get("finishReason")
-            if reason == "MAX_TOKENS":
-                raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
-            if reason not in {None, "STOP"}:
+            if reason not in {None, "STOP", "MAX_TOKENS"}:
                 raise _bad("提供方未完成回复")
             finished = finished or reason == "STOP"
             for part in (candidate.get("content") or {}).get("parts") or []:
@@ -437,6 +441,8 @@ class ToolSession:
                 value = part.get("text")
                 if isinstance(value, str) and value:
                     yield ProviderChunk("reasoning" if part.get("thought") else "content", value)
+            if reason == "MAX_TOKENS":
+                raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
         if not finished:
             raise _bad("提供方流式响应未正常结束")
         calls = []
@@ -497,14 +503,22 @@ class ToolSession:
                 if len(json.dumps(block, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
                     raise _bad("提供方响应过大")
             elif kind == "message_delta":
-                reason = (body.get("delta") or {}).get("stop_reason") or reason
-                if reason == "max_tokens":
+                current_reason = (body.get("delta") or {}).get("stop_reason")
+                if current_reason is not None:
+                    if not isinstance(current_reason, str):
+                        raise _bad("提供方返回了无效的结束原因")
+                    reason = current_reason
+                if reason in {"max_tokens", "model_context_window_exceeded"}:
                     raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")
+                if reason == "refusal":
+                    raise ProviderError("提供方拒绝生成本次内容", kind="content_filtered")
+                if reason == "pause_turn":
+                    raise ProviderError("提供方工具执行暂停，回复尚未完成", kind="upstream_error")
             elif kind == "message_stop":
                 stopped = True
             elif kind == "error":
                 raise ProviderError("提供方流式请求失败", kind="upstream_error")
-        if not stopped or reason not in {"end_turn", "tool_use"}:
+        if not stopped or reason not in {None, "end_turn", "tool_use"}:
             raise _bad("提供方流式响应未正常结束")
         ordered = [blocks[i] for i in sorted(blocks)]
         calls = []
@@ -519,4 +533,4 @@ class ToolSession:
                 calls.append(_call(block.get("id"), block.get("name"), raw))
         if bool(calls) != (reason == "tool_use"):
             raise _bad()
-        yield self._finish(calls, ordered)
+        yield self._finish(calls, ordered, completion="complete" if reason is not None else "unknown")

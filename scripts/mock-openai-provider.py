@@ -286,6 +286,53 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                               else ['正在分析输入边界。', *SLOW_CHUNKS, point])
                     chunks += [trailer[index:index + 17] for index in range(0, len(trailer), 17)]
                     delay = .08 if '[C1慢流]' in c1_request else .005
+            elif any('[C2' in str(message.get('content', '')) for message in messages if message.get('role') == 'user'):
+                runtime = next((str(message.get('content', '')) for message in reversed(messages)
+                    if str(message.get('content', '')).startswith('Nautilus 本轮执行上下文')), None)
+                if runtime:
+                    context = json.loads(runtime.split('\n', 1)[1])
+                    before = context['before']
+                    mode = None
+                    for phrase, value in [('完整讲解', 'full_explanation'), ('直接给答案', 'direct_answer'),
+                                          ('提问引导', 'socratic'), ('分步讲解', 'stepwise')]:
+                        if phrase in c1_request:
+                            persistent = any(word in c1_request for word in ['以后', '今后', '接下来都'])
+                            mode = {'value': value, 'scope': 'conversation' if persistent else 'turn',
+                                    'quote': c1_request, 'persistence_quote': c1_request if persistent else None}
+                            break
+                    help_request = None
+                    for phrase, kind in [('给个提示', 'hint'), ('给我提示', 'hint'), ('只解释这一步', 'explain_step'),
+                                         ('换个例子', 'example'), ('让我先试试', 'try_first')]:
+                        if phrase in c1_request:
+                            help_request = {'kind': kind, 'quote': c1_request}
+                            break
+                    attempt = None
+                    if before['step'] and ('[C2尝试]' in c1_request or '[C2卡住]' in c1_request):
+                        attempt = {'quote': c1_request, 'needs_help': '[C2卡住]' in c1_request}
+                    point = (before.get('step') or {}).get('text') or '输入边界检查（合成C2）。'
+                    new_step = point if not before['step'] else None
+                    if '[C2新点]' in c1_request:
+                        point = '正常输入检查（合成C2）。'
+                        new_step = point
+                    level = (before.get('guidance') or {}).get('level', 0)
+                    stuck_count = (before.get('guidance') or {}).get('stuck_count', 0)
+                    kind = context.get('help_kind') or (help_request or {}).get('kind')
+                    if kind == 'hint':
+                        level = min(4, level + 1)
+                    elif kind == 'explain_step':
+                        level = 4
+                    elif kind is None and stuck_count + int(bool(attempt and attempt['needs_help'])) >= 2:
+                        level = min(4, level + 1)
+                    effective_mode = (mode or {}).get('value', before['mode'])
+                    body = ('合成完整讲解：先检查空输入，再逐个检查正常输入。' if effective_mode in {'full_explanation', 'direct_answer'}
+                            else ['你会先检查哪一种输入？', '想想空输入和输入边界。', '先只考虑空输入时应返回什么。',
+                                  '局部例子：输入为空时，先走空输入分支。', '直接解释：先判断输入是否为空，再检查正常输入。'][level])
+                    proposal = {'step': new_step, 'attempt': attempt, 'mode': mode, 'help': help_request}
+                    trailer = '\n' + context['opening'] + json.dumps(proposal, ensure_ascii=False) + context['closing']
+                    chunks = ([point, body] if '[C2慢流]' not in c1_request
+                              else ['正在分析输入边界。', *SLOW_CHUNKS, point, body])
+                    chunks += [trailer[index:index + 17] for index in range(0, len(trailer), 17)]
+                    delay = .08 if '[C2慢流]' in c1_request else .005
             if scenario == "mock-reasoning" or discussion_stream:
                 for reasoning in ["先识别题目条件。", "再核对推导路径。"]:
                     event = json.dumps(

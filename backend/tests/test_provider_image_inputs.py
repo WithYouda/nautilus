@@ -70,7 +70,8 @@ def json_reply(kind):
 
 def tool_reply(kind):
     if kind == "openai_compatible":
-        return sse(("", {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-1", "function": {"name": "search", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]}))
+        response = sse(("", {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-1", "function": {"name": "search", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]}))
+        return httpx.Response(200, text=response.text + "data: [DONE]\n\n")
     if kind == "openai_responses":
         return sse(("response.completed", {"type": "response.completed", "response": {"output": [
             {"type": "reasoning", "id": "rs-1", "encrypted_content": "signed-output"},

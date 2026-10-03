@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from app.providers import ProviderConfig, ProviderError, build_provider
+from app.providers import ProviderChunk, ProviderConfig, ProviderError, build_provider
 from app.function_tools import ToolSession, ToolTurn
 
 
@@ -211,16 +211,118 @@ async def test_responses_function_turn_rejects_conflicting_terminal_status():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("done,completion", [(True, "complete"), (False, "unknown")])
-async def test_chat_function_final_turn_requires_done_for_explicit_completion(done, completion):
+@pytest.mark.parametrize("done", [True, False])
+async def test_chat_function_final_turn_requires_done_for_explicit_completion(done):
     wire = content("openai_compatible") + event("", {"choices": [{"delta": {}, "finish_reason": "stop"}]})
     if done:
         wire += "data: [DONE]\n\n"
     session = ToolSession(provider("openai_compatible", httpx.Response(200, text=wire)), [{"role": "user", "content": "继续"}])
+    chunks = []
+    if done:
+        chunks = [chunk async for chunk in session.stream_turn([])]
+        assert isinstance(chunks[-1], ToolTurn) and chunks[-1].calls == []
+        assert chunks[-1].completion == "complete"
+    else:
+        with pytest.raises(ProviderError) as error:
+            async for chunk in session.stream_turn([]):
+                chunks.append(chunk)
+        assert error.value.kind == "protocol_error"
+        assert not any(isinstance(chunk, ToolTurn) for chunk in chunks)
+    assert "".join(chunk.text for chunk in chunks if isinstance(chunk, ProviderChunk) and chunk.kind == "content") == PARTIAL
+
+
+def function_content(kind):
+    if kind == "openai_compatible":
+        return content(kind)
+    return (event("content_block_start", {"type": "content_block_start", "index": 0,
+                                          "content_block": {"type": "text", "text": ""}})
+            + event("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                              "delta": {"type": "text_delta", "text": PARTIAL}}))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["openai_compatible", "anthropic"])
+async def test_function_transport_terminal_without_reason_preserves_text_as_unknown(kind):
+    terminal = "data: [DONE]\n\n" if kind == "openai_compatible" else event("message_stop", {"type": "message_stop"})
+    session = ToolSession(provider(kind, httpx.Response(200, text=function_content(kind) + terminal)), [])
     chunks = [chunk async for chunk in session.stream_turn([])]
     assert isinstance(chunks[-1], ToolTurn) and chunks[-1].calls == []
-    assert chunks[-1].completion == completion
+    assert chunks[-1].completion == "unknown"
     assert "".join(chunk.text for chunk in chunks[:-1] if chunk.kind == "content") == PARTIAL
+
+
+@pytest.mark.asyncio
+async def test_anthropic_function_reason_without_message_stop_remains_failure():
+    wire = function_content("anthropic") + event("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn"}})
+    session = ToolSession(provider("anthropic", httpx.Response(200, text=wire)), [])
+    chunks = []
+    with pytest.raises(ProviderError) as error:
+        async for chunk in session.stream_turn([]):
+            chunks.append(chunk)
+    assert error.value.kind == "protocol_error"
+    assert not any(isinstance(chunk, ToolTurn) for chunk in chunks)
+    assert "".join(chunk.text for chunk in chunks if chunk.kind == "content") == PARTIAL
+
+
+@pytest.mark.asyncio
+async def test_chat_tool_call_reason_without_done_remains_failure():
+    wire = event("", {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-fixture", "type": "function",
+            "function": {"name": "search", "arguments": '{"q":"fixture"}'}}]}, "finish_reason": "tool_calls"}]})
+    session = ToolSession(provider("openai_compatible", httpx.Response(200, text=wire)), [])
+    with pytest.raises(ProviderError) as error:
+        _ = [chunk async for chunk in session.stream_turn([])]
+    assert error.value.kind == "protocol_error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,reason,error_kind", [
+    ("openai_compatible", "length", "output_truncated"),
+    ("openai_compatible", "content_filter", "content_filtered"),
+    ("anthropic", "model_context_window_exceeded", "output_truncated"),
+    ("anthropic", "refusal", "content_filtered"),
+    ("anthropic", "pause_turn", "upstream_error"),
+])
+async def test_function_explicit_failure_reason_is_not_unknown(kind, reason, error_kind):
+    terminal = (event("", {"choices": [{"delta": {}, "finish_reason": reason}]}) + "data: [DONE]\n\n"
+                if kind == "openai_compatible" else
+                event("message_delta", {"type": "message_delta", "delta": {"stop_reason": reason}})
+                + event("message_stop", {"type": "message_stop"}))
+    session = ToolSession(provider(kind, httpx.Response(200, text=function_content(kind) + terminal)), [])
+    chunks = []
+    with pytest.raises(ProviderError) as error:
+        async for chunk in session.stream_turn([]):
+            chunks.append(chunk)
+    assert error.value.kind == error_kind
+    assert not any(isinstance(chunk, ToolTurn) for chunk in chunks)
+    assert "".join(chunk.text for chunk in chunks if chunk.kind == "content") == PARTIAL
+
+
+@pytest.mark.asyncio
+async def test_chat_function_upstream_error_after_stop_cannot_complete():
+    wire = (content("openai_compatible")
+            + event("", {"choices": [{"delta": {}, "finish_reason": "stop"}]})
+            + event("", {"error": {"message": "fixture failure"}}) + "data: [DONE]\n\n")
+    session = ToolSession(provider("openai_compatible", httpx.Response(200, text=wire)), [])
+    chunks = []
+    with pytest.raises(ProviderError) as error:
+        async for chunk in session.stream_turn([]):
+            chunks.append(chunk)
+    assert error.value.kind == "upstream_error"
+    assert not any(isinstance(chunk, ToolTurn) for chunk in chunks)
+    assert "".join(chunk.text for chunk in chunks if chunk.kind == "content") == PARTIAL
+
+
+@pytest.mark.asyncio
+async def test_google_function_keeps_partial_text_in_max_tokens_candidate():
+    wire = event("", {"candidates": [{"content": {"parts": [{"text": PARTIAL}]}, "finishReason": "MAX_TOKENS"}]})
+    session = ToolSession(provider("google", httpx.Response(200, text=wire)), [])
+    chunks = []
+    with pytest.raises(ProviderError) as error:
+        async for chunk in session.stream_turn([]):
+            chunks.append(chunk)
+    assert error.value.kind == "output_truncated"
+    assert not any(isinstance(chunk, ToolTurn) for chunk in chunks)
+    assert "".join(chunk.text for chunk in chunks if chunk.kind == "content") == PARTIAL
 
 
 @pytest.mark.asyncio

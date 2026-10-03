@@ -256,7 +256,7 @@ class QuestionDiscussionService:
     @material_guard
     def start(self, identity, discussion_id, content, request_key, retry=False,
               regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None, help_request=None, source_scope=None,
-              current_state_revision=None, public_search_query=None, attachment_version_ids=None):
+              current_state_revision=None, public_search_query=None, attachment_version_ids=None, teaching_mode=None):
         if retry:
             raise DomainError('discussion_regeneration_required', 422)
         if edit_turn_id and (regenerate_turn_id or parent_turn_id):
@@ -287,11 +287,15 @@ class QuestionDiscussionService:
             image_runtime = self.verification._runtime(owner, discussion['session_id'])
             require_image_capability(self.chats, owner, image_runtime[0]['id'], image_runtime[1].model, frozen)
         material_bound = bool(frozen and frozen['mode'] != 'unspecified')
-        if regenerate_turn_id and help_request is None:
+        if regenerate_turn_id and (help_request is None or teaching_mode is None):
             original = self.db.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE discussion_id=? AND id=?',
                 (discussion_id, regenerate_turn_id))
             if original:
-                help_request = (json.loads(original[0] or '{}').get('help_request') or {}).get('kind')
+                original_snapshot = json.loads(original[0] or '{}')
+                if help_request is None:
+                    help_request = (original_snapshot.get('help_request') or {}).get('kind')
+                if teaching_mode is None:
+                    teaching_mode = original_snapshot.get('teaching_mode')
         # Resolve once before accepting a new turn. The same immutable config
         # drives both model calls; later settings and duplicate requests cannot
         # replace the saved execution configuration.
@@ -331,6 +335,7 @@ class QuestionDiscussionService:
                         or saved_snapshot.get('source_request', {'mode': 'unspecified', 'version_ids': []}) != (source_scope or {'mode': 'unspecified', 'version_ids': []})
                         or saved_snapshot.get('attachment_version_ids', []) != attached
                         or saved_snapshot.get('search_request', {'mode': 'off'}) != (search or {'mode': 'off'})
+                        or saved_snapshot.get('teaching_mode') != teaching_mode
                         or (saved_snapshot.get('help_request') or {}).get('kind') != help_request):
                     raise DomainError('idempotency_conflict', 409)
                 turn_id = None
@@ -383,8 +388,10 @@ class QuestionDiscussionService:
                                        'attempt_id': attempt_id, 'reply': reply, 'search_request': search or {'mode': 'off'},
                                        'source_request': source_scope or {'mode': 'unspecified', 'version_ids': []},
                                        'source_scope': public_scope(frozen),
+                                       'teaching_mode': teaching_mode,
                                        'teaching': teaching.freeze([by_id[item] for item in history_path],
-                                           answer_id=turn_id, message_id=turn_id, kind='discussion', scope_id=discussion_id),
+                                           answer_id=turn_id, message_id=turn_id, kind='discussion', scope_id=discussion_id,
+                                           requested_mode=teaching_mode, help_kind=help_request),
                                        'attachment_version_ids': attached,
                                        **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
                 if self.current_state is not None:
@@ -683,12 +690,11 @@ class QuestionDiscussionService:
                 if teaching_stream:
                     current_snapshot = json.loads(c.execute(
                         'SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (turn_id,)).fetchone()[0])
-                    result = teaching.complete(current_snapshot.get('teaching'), teaching_stream.proposal(),
-                        body=reply, user_text=content, at=utc_timestamp())
-                    if result:
-                        current_snapshot['teaching']['result'] = result
-                        c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
-                            (json.dumps(current_snapshot, ensure_ascii=False), turn_id))
+                    proposal = teaching_stream.proposal()
+                    teaching.adopt(current_snapshot['teaching'], proposal,
+                        body=reply, user_text=content, at=utc_timestamp(), not_applied_reason=teaching_stream.not_applied_reason)
+                    c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
+                        (json.dumps(current_snapshot, ensure_ascii=False), turn_id))
                 from .branch_maps import name_new_discussion_turn
                 name_new_discussion_turn(c, discussion_id, turn_id)
         except BaseException as error:

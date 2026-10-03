@@ -387,10 +387,12 @@ export type HelpRecord = {
 };
 export type ReferenceHelpDisplay = { kind: 'reference_answer'; at: string; basis: 'client_report' };
 
-export type TeachingMode = 'stepwise' | 'direct_answer' | 'full_explanation';
+export type TeachingMethod = 'stepwise' | 'socratic';
+export type TeachingMode = TeachingMethod | 'direct_answer' | 'full_explanation';
 export type TeachingCheckpoint = {
   mode: TeachingMode | null;
   step: { id: string; source_answer_id: string; text: string; start: number; end: number } | null;
+  guidance?: { level: 0 | 1 | 2 | 3 | 4; stuck_count: number; reset_answer_id: string | null } | null;
 };
 export type TeachingRecord = {
   status: 'running' | 'applied' | 'not_updated';
@@ -398,14 +400,16 @@ export type TeachingRecord = {
   after: TeachingCheckpoint | null;
   current: TeachingCheckpoint;
   effective_mode: TeachingMode | null;
+  requested_mode?: TeachingMethod | null;
+  guidance?: { level: 0 | 1 | 2 | 3 | 4; reason: string } | null;
   mode_request: { mode: TeachingMode; scope: 'turn' | 'conversation'; start: number; end: number } | null;
   attempt: {
     message_id: string; step_id: string; source: 'ai'; start: number; end: number;
-    is_attempt: boolean; revision: number;
-    corrections: Array<{ revision: number; is_attempt: boolean; at: string }>;
+    is_attempt: boolean; revision: number; needs_help?: boolean | null;
+    corrections: Array<{ revision: number; is_attempt: boolean; needs_help?: boolean | null; at: string }>;
   } | null;
 };
-export type TeachingAttemptCorrection = { expected_revision: number; is_attempt: boolean; request_key: string };
+export type TeachingAttemptCorrection = { expected_revision: number; is_attempt: boolean; request_key: string; needs_help?: boolean | null };
 
 export type AiMessage = {
   id: string;
@@ -1042,7 +1046,7 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
-  versions: { current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {},
+  versions: { current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingMethod | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -2185,7 +2189,7 @@ export function getQuestionDiscussion(id: string, signal?: AbortSignal): Promise
 export function branchQuestionDiscussion(id: string, turnId: string, requestKey: string): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/branches`, { method: 'POST', body: JSON.stringify({ turn_id: turnId, request_key: requestKey }) });
 }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {}): Promise<QuestionDiscussion> {
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingMethod | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {}): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
 }
 export function recordDiscussionHelpDisplay(discussionId: string, turnId: string, characters: number): Promise<HelpRecord> {
