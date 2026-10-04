@@ -14,6 +14,7 @@ import httpx
 from .provider_network import ProviderHTTPClient
 from .provider_messages import encode_messages
 from .teaching_wire import apply_json_output, uses_json
+from .reasoning_wire import apply_reasoning_parameters
 
 logger = logging.getLogger("nautilus.providers")
 
@@ -43,6 +44,7 @@ class ProviderConfig:
     timeout_seconds: int = 60
     provider_kind: str = "openai_compatible"
     web_search: bool = False
+    reasoning_parameters_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -238,6 +240,7 @@ class OpenAICompatibleProvider:
             "stream": True,
         }
         apply_json_output(payload, self.kind, messages)
+        apply_reasoning_parameters(payload, self.config)
         json_output = uses_json(messages)
         include_error_detail = not any(message.get("_images") for message in messages)
         try:
@@ -317,6 +320,8 @@ class OpenAICompatibleProvider:
         include_error_detail = not any(message.get("_images") for message in messages)
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        apply_json_output(payload, self.kind, messages)
+        apply_reasoning_parameters(payload, self.config)
         try:
             async with self._client() as client:
                 response = await client.post(
@@ -494,6 +499,7 @@ class OpenAICompatibleProvider:
             "stream": False,
             "max_tokens": 1,
         }
+        apply_reasoning_parameters(payload, self.config)
         started = time.monotonic()
         try:
             async with self._client() as client:

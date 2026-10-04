@@ -9,6 +9,7 @@ import ObsidianSettings from './ObsidianSettings';
 import ImageModelSettings from './ImageModelSettings';
 import TeachingRecordSettings from './TeachingRecordSettings';
 import AdaptiveLearningSettings from './AdaptiveLearningSettings';
+import ReasoningSettings from './ReasoningSettings';
 
 export type SettingsSection = 'general' | 'search' | 'provider';
 const initial: UserPreferences = { teaching_mode: 'stepwise', conflict_policy: 'ask', search: { mode: 'off' } };
@@ -67,7 +68,7 @@ export default function Settings({ open, section, provider, onClose, onOpenSearc
             <div className="unified-search-choice"><span>默认模式</span><SearchControls value={draft.search} onChange={search => setDraft(current => ({ ...current, search }))} providerKind={provider?.api_protocol} onOpenSettings={onOpenSearchSettings} /></div>
             <button className="button button--quiet" type="button" onClick={onOpenSearchSettings}>管理搜索服务与高级设置</button>
           </section>
-          <section className={section === 'provider' ? 'is-target' : ''}><h3>AI 提供方</h3><p>配置模型、协议与凭据。</p><button className="button button--quiet" type="button" onClick={onOpenProviderSettings}>打开提供方设置</button></section>
+          <section className={section === 'provider' ? 'is-target' : ''}><h3>AI 提供方</h3><p>配置模型、协议与凭据。</p><button className="button button--quiet" type="button" onClick={onOpenProviderSettings}>打开提供方设置</button><ReasoningSettings /></section>
           <section><DiagnosticSettings onOpen={() => { if (!dirty || window.confirm('有未保存的设置，确定放弃修改吗？')) { onClose(); window.dispatchEvent(new Event('nautilus:open-diagnostics')); } }} /></section>
           <ImageModelSettings />
           <ObsidianSettings />

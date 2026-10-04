@@ -1,6 +1,7 @@
 import useConversationState, { isStateConflict, isStateRejected } from './useConversationState';
 import ConversationStateNotice from './ConversationStateNotice';
 import { ModelControlEditor, ModelControlNotice, ModelConfigHistory, useModelControl } from './ModelControl';
+import ReasoningControl from './ReasoningControl';
 import BranchMap from './BranchMap';
 import useReplyHistory from "./useReplyHistory";
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
@@ -1251,6 +1252,9 @@ export default function AiLearningRoom({
             <button className="button button--quiet ai-retry-button button--with-icon" onClick={() => void handleRetry()}><RefreshCw size={15} />重新生成</button>
           )}
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
+        sendSettings={<ReasoningControl control={modelControl} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`}
+          onPrepare={async () => (await ensureConversation()).conversation.id}
+          disabled={!entryReady || branchBusy || sharedState.blocked || Boolean(pendingSubmissionRef.current) || ['loading', 'submitting'].includes(status) || Boolean(editingMessageId)} />}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
         attachments={<ComposerAttachments kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} onEnsure={async () => (await ensureConversation()).conversation.id} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} />}

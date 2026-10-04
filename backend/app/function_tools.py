@@ -15,6 +15,7 @@ import httpx
 from .providers import ProviderChunk, ProviderError, _ThinkStreamParser, _teaching_opening
 from .provider_messages import encode_message, message_images
 from .teaching_wire import apply_json_output, output_kind, uses_json
+from .reasoning_wire import apply_reasoning_parameters
 
 MAX_CALLS = 8
 MAX_ARGUMENTS = 20_000
@@ -266,6 +267,7 @@ class ToolSession:
                    "tools": [{"type": "function", "function": t} for t in tools],
                    "tool_choice": "auto" if allow_tools else "none"}
         apply_json_output(payload, self.kind, self.messages)
+        apply_reasoning_parameters(payload, self.provider.config)
         json_output = uses_json(self.messages)
         indexed: dict[int, dict[str, str]] = {}
         content, reasoning = "", ""
@@ -349,6 +351,7 @@ class ToolSession:
                    "tool_choice": "auto" if allow_tools else "none",
                    "include": ["reasoning.encrypted_content"]}
         apply_json_output(payload, self.kind, self.messages)
+        apply_reasoning_parameters(payload, self.provider.config)
         items: dict[int, dict] = {}
         calls_delta: dict[str, str] = {}
         completed = False
@@ -427,6 +430,7 @@ class ToolSession:
         if self._system:
             payload["systemInstruction"] = {"parts": [{"text": self._system}]}
         apply_json_output(payload, self.kind, self.messages)
+        apply_reasoning_parameters(payload, self.provider.config)
         parts: list[dict] = []
         finished = False
         async for event, body in self.provider._events(self.provider._endpoint(True), payload):
@@ -473,6 +477,7 @@ class ToolSession:
         if self._system:
             payload["system"] = self._system
         apply_json_output(payload, self.kind, self.messages)
+        apply_reasoning_parameters(payload, self.provider.config)
         blocks: dict[int, dict] = {}
         raw_inputs: dict[int, str] = {}
         stopped = False

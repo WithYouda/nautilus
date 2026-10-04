@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, StrictBool
+from pydantic import BaseModel, StrictBool, ConfigDict, Field
 
 from ..ai_runtime import AiRunManager
 from ..conversations import ConversationConflict, ConversationError
@@ -28,6 +28,35 @@ from ..schemas import (
 )
 
 router = APIRouter(prefix="/api/ai")
+
+
+class ReasoningSupportSave(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: str = Field(min_length=1, max_length=100)
+    profile_id: str | None
+
+
+@router.get('/providers/{provider_id}/models/{model_id}/reasoning-support')
+def reasoning_support(provider_id: str, model_id: str, request: Request, response: Response,
+                      identity=Depends(current_identity)):
+    from ..reasoning_control import status as support_status
+    response.headers['Cache-Control'] = 'no-store'
+    try:
+        return support_status(conversation_service(request), identity['id'], provider_id, model_id)
+    except ConversationError as error:
+        _raise(error)
+
+
+@router.put('/providers/{provider_id}/models/{model_id}/reasoning-support')
+def save_reasoning_support(provider_id: str, model_id: str, body: ReasoningSupportSave,
+                           request: Request, response: Response, identity=Depends(current_identity)):
+    from ..reasoning_control import save_support
+    response.headers['Cache-Control'] = 'no-store'
+    try:
+        return save_support(conversation_service(request), identity['id'], provider_id, model_id,
+                            body.profile_id, body.expected_revision)
+    except ConversationError as error:
+        _raise(error)
 
 # SSE 经过 vite preview 代理时必须禁用缓冲，否则增量会被攒着一次性吐出。
 SSE_HEADERS = {

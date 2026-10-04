@@ -246,7 +246,7 @@ test('discussion controls its own model and exposes saved per-answer history aft
   const accepted = page.waitForResponse(response => response.url().endsWith(`/api/learning/discussions/${id}/messages`) && response.request().method() === 'POST');
   await input.fill('合成讨论模型提问'); await input.press('Enter');
   const response = await accepted; expect(response.ok()).toBeTruthy();
-  expect(response.request().postDataJSON().model_override).toEqual({ model: null, timeout_seconds: 38 });
+  expect(response.request().postDataJSON().model_override).toEqual({ model: null, timeout_seconds: 38, reasoning: null });
   await expect.poll(async () => {
     const data: QuestionDiscussion = await (await page.request.get(`/api/learning/discussions/${id}`)).json();
     return data.turns.at(-1)?.status;

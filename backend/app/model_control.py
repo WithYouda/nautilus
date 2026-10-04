@@ -8,12 +8,13 @@ from .conversations import ConversationConflict, ConversationError
 from .core.learning import utc_timestamp
 from .learning_domain import DomainError
 from .providers import ProviderConfig
+from .reasoning_control import normalize_choice, capability, compile_parameters
 
 
 def normalize_override(value):
     if value is None:
         value = {}
-    if not isinstance(value, dict) or set(value) - {'model', 'timeout_seconds'}:
+    if not isinstance(value, dict) or set(value) - {'model', 'timeout_seconds', 'reasoning'}:
         raise ConversationError('模型设置格式不正确')
     model = value.get('model')
     if model is not None:
@@ -24,7 +25,7 @@ def normalize_override(value):
     timeout = value.get('timeout_seconds')
     if timeout is not None and (type(timeout) is not int or not 5 <= timeout <= 600):
         raise ConversationError('超时须为5到600秒的整数')
-    return {'model': model, 'timeout_seconds': timeout}
+    return {'model': model, 'timeout_seconds': timeout, 'reasoning': normalize_choice(value.get('reasoning'))}
 
 
 def _tag(value):
@@ -99,12 +100,14 @@ class ModelControlService:
             WHERE identity_id=? AND is_default=1 AND deleted_at IS NULL''', (owner,))
         profile = dict(row) if row else None
         override = normalize_override(None)
+        reasoning = self.db.fetchone('SELECT * FROM learning_model_defaults WHERE owner_id=?', (owner,))
+        override['reasoning'] = json.loads(reasoning['reasoning_json']) if reasoning and reasoning['reasoning_json'] else None
         override['timeout_seconds'] = profile['request_timeout_seconds'] if profile else 60
         if profile:
             override['model'] = {'provider_profile_id': profile['id'], 'provider_model_id': profile['default_model_id']}
-        return {'kind': 'global', 'id': 'default', 'revision': _tag([
+        return {'kind': 'global', 'id': 'default', 'revision': _tag([reasoning['revision'] if reasoning else 0, [
             profile['id'], profile['config_version'], profile['credential_version'], override
-        ] if profile else None), 'override': override}
+        ] if profile else None]), 'override': override}
 
     def _layer(self, owner, kind, scope_id):
         row = self.db.fetchone('''SELECT * FROM learning_model_config
@@ -112,13 +115,14 @@ class ModelControlService:
         if row is not None:
             model = {'provider_profile_id': row['provider_profile_id'], 'provider_model_id': row['provider_model_id']} if row['provider_profile_id'] else None
             return {'kind': kind, 'id': scope_id, 'revision': str(row['revision']),
-                    'override': {'model': model, 'timeout_seconds': row['timeout_seconds']}}
+                    'override': {'model': model, 'timeout_seconds': row['timeout_seconds'],
+                                 'reasoning': json.loads(row['reasoning_json']) if row['reasoning_json'] else None}}
         if kind == 'conversation':
             legacy = self.chats.database.fetchone('SELECT * FROM conversation_config WHERE conversation_id=?', (scope_id,))
             if legacy:
                 return {'kind': kind, 'id': scope_id, 'revision': 'legacy:' + str(legacy['config_version']),
                         'override': {'model': {'provider_profile_id': legacy['provider_profile_id'], 'provider_model_id': legacy['provider_model_id']},
-                                     'timeout_seconds': legacy['timeout_override_seconds']}}
+                                     'timeout_seconds': legacy['timeout_override_seconds'], 'reasoning': None}}
         return {'kind': kind, 'id': scope_id, 'revision': '0', 'override': normalize_override(None)}
 
     def _layers(self, owner, kind, scope_id):
@@ -149,19 +153,35 @@ class ModelControlService:
             issues.append('所选模型已不可用，请重新选择或恢复继承')
         return profile, row, issues
 
-    def _resolve(self, owner, kind, scope_id, run_override=None):
+    def _resolve(self, owner, kind, scope_id, run_override=None, replacement=None):
         layers = self._layers(owner, kind, scope_id)
+        if replacement is not None:
+            layers[-1] = {**layers[-1], 'override': replacement}
         values = normalize_override(None)
-        sources = {'model': None, 'timeout': None}
+        sources = {'model': None, 'timeout': None, 'reasoning': None}
         for layer in layers:
             if layer['override']['model'] is not None:
                 values['model'] = layer['override']['model']
                 sources['model'] = {'kind': layer['kind'], 'id': layer['id']}
+            if layer['override'].get('reasoning') is not None:
+                values['reasoning'] = layer['override']['reasoning']
+                sources['reasoning'] = {'kind': layer['kind'], 'id': layer['id']}
         override = normalize_override(run_override)
         if override['model'] is not None:
             values['model'] = override['model']
             sources['model'] = {'kind': 'run', 'id': scope_id}
+        if override['reasoning'] is not None:
+            values['reasoning'] = override['reasoning']
+            sources['reasoning'] = {'kind': 'run', 'id': scope_id}
         profile, model, issues = self._selected(owner, values['model'])
+        protocol = self.chats._protocol(profile, model['model_id']) if profile and model else None
+        support = capability(profile, model, protocol) if profile and model else None
+        parameters = {}
+        if support:
+            try:
+                parameters = compile_parameters(values['reasoning'], support, protocol)
+            except ConversationError as error:
+                issues.append(str(error))
         timeout_policy = 'provider_default'
         if profile:
             values['timeout_seconds'] = int(profile['request_timeout_seconds'])
@@ -178,7 +198,7 @@ class ModelControlService:
                   if layer['kind'] != 'global' else layer for layer in layers]
         # Check both the inheritance chain and the selected one-run model. A
         # changed endpoint/capability must invalidate an already shown preview.
-        token = _tag(['provider-timeout-default', layers, override,
+        token = _tag(['native-reasoning', layers, override, support, parameters,
                       [profile.get(k) for k in ('id', 'enabled', 'config_version', 'credential_version')] if profile else None,
                       [model.get(k) for k in ('id', 'enabled', 'discovery_status', 'updated_at', 'overrides_json', 'capabilities_json')] if model else None])
         has_key = False
@@ -194,7 +214,8 @@ class ModelControlService:
             provider_model_id=values['model']['provider_model_id'] if values['model'] else None,
             provider_display_name=profile['display_name'] if profile else None,
             model_id=model['model_id'] if model else None, model_display_name=model['display_name'] if model else None,
-            provider_kind=self.chats._protocol(profile, model['model_id']) if profile and model else None,
+            provider_kind=protocol, reasoning=values['reasoning'] or {'mode': 'default'},
+            reasoning_capability=support, reasoning_parameters=parameters,
             timeout_seconds=values['timeout_seconds'], timeout_policy=timeout_policy,
             provider_config_version=profile['config_version'] if profile else None,
             supports_image_input=capabilities.get('supports_image_input'), supports_reasoning=capabilities.get('supports_reasoning'),
@@ -216,10 +237,19 @@ class ModelControlService:
             current = self._layers(owner, kind, scope_id)[-1]
             if current['revision'] != expected_revision:
                 raise ConversationConflict('模型设置已变化，请刷新后重新选择')
+            if kind == 'global':
+                # Global provider settings and learning defaults live in distinct
+                # databases. Keep their updates in the dedicated atomic APIs.
+                if 'reasoning' in (override or {}) and value['reasoning'] != current['override']['reasoning']:
+                    raise ConversationError('请在全局思考默认中单独保存思考设置')
+                value['reasoning'] = current['override']['reasoning']
             if value['model'] is not None:
                 profile, model, issues = self._selected(owner, value['model'])
                 if issues:
                     raise ConversationError(issues[0])
+            candidate, _, _ = self._resolve(owner, kind, scope_id, replacement=value)
+            if candidate['effective']['reasoning_capability']:
+                compile_parameters(candidate['effective']['reasoning'], candidate['effective']['reasoning_capability'], candidate['effective']['provider_kind'])
             if kind == 'global':
                 if value['model'] is None or value['timeout_seconds'] is None:
                     raise ConversationError('全局默认须选择模型并设置超时')
@@ -244,16 +274,38 @@ class ModelControlService:
         def write(c):
             model = value['model'] or {}
             c.execute('''INSERT INTO learning_model_config
-                (owner_id,scope_kind,scope_id,provider_profile_id,provider_model_id,timeout_seconds,revision,updated_at)
-                VALUES (?,?,?,?,?,?,1,?) ON CONFLICT(owner_id,scope_kind,scope_id) DO UPDATE SET
+                (owner_id,scope_kind,scope_id,provider_profile_id,provider_model_id,timeout_seconds,reasoning_json,revision,updated_at)
+                VALUES (?,?,?,?,?,?,?,1,?) ON CONFLICT(owner_id,scope_kind,scope_id) DO UPDATE SET
                 provider_profile_id=excluded.provider_profile_id,provider_model_id=excluded.provider_model_id,
+                reasoning_json=excluded.reasoning_json,
                 revision=learning_model_config.revision+1,updated_at=excluded.updated_at''',
-                (owner, kind, scope_id, model.get('provider_profile_id'), model.get('provider_model_id'), value['timeout_seconds'], utc_timestamp()))
+                (owner, kind, scope_id, model.get('provider_profile_id'), model.get('provider_model_id'), value['timeout_seconds'],
+                 json.dumps(value['reasoning']) if value.get('reasoning') is not None else None, utc_timestamp()))
         if connection is not None:
             write(connection)
         else:
             with self.db.transaction(immediate=True) as c:
                 write(c)
+
+    def _write_default(self, owner, choice):
+        with self.db.transaction(immediate=True) as c:
+            c.execute('''INSERT INTO learning_model_defaults(owner_id,reasoning_json,revision,updated_at)
+                VALUES (?,?,1,?) ON CONFLICT(owner_id) DO UPDATE SET reasoning_json=excluded.reasoning_json,
+                revision=learning_model_defaults.revision+1,updated_at=excluded.updated_at''',
+                (owner, json.dumps(choice) if choice is not None else None, utc_timestamp()))
+
+    def save_reasoning_default(self, owner, choice, expected_revision):
+        choice = normalize_choice(choice)
+        self._ensure_owner(owner)
+        with self.lock, self.chats._provider_lock:
+            current = self._global(owner)
+            if current['revision'] != expected_revision:
+                raise ConversationConflict('模型设置已变化，请刷新后重新选择')
+            candidate, _, _ = self._resolve(owner, 'global', 'default', replacement={**current['override'], 'reasoning': choice})
+            if candidate['effective']['reasoning_capability']:
+                compile_parameters(choice, candidate['effective']['reasoning_capability'], candidate['effective']['provider_kind'])
+            self._write_default(owner, choice)
+            return self.get(owner, 'global', 'default')
 
     def runtime(self, owner, kind, scope_id, run_override=None, expected_token=None):
         with self.lock, self.chats._provider_lock:
@@ -267,9 +319,10 @@ class ModelControlService:
                 raise ConversationError('所选提供方尚未保存API密钥')
             effective = view['effective']
             config = ProviderConfig(base_url=profile['base_url'], model=model['model_id'], api_key=key,
-                                    timeout_seconds=effective['timeout_seconds'], provider_kind=effective['provider_kind'])
+                                    timeout_seconds=effective['timeout_seconds'], provider_kind=effective['provider_kind'],
+                                    reasoning_parameters_json=json.dumps(effective['reasoning_parameters'], sort_keys=True) if effective['reasoning_parameters'] else None)
             public = {key: value for key, value in effective.items()
-                      if key not in {'has_api_key', 'available', 'supports_image_input', 'supports_reasoning'}}
+                      if key not in {'has_api_key', 'available', 'supports_image_input', 'supports_reasoning', 'reasoning_capability'}}
             public.update(sources=view['sources'], captured_at=utc_timestamp(), layers=view['layers'])
             snapshot = {'schema_version': 1,
                 'provider': {'id': profile['id'], 'kind': config.provider_kind, 'base_url': config.base_url, 'config_version': profile['config_version']},

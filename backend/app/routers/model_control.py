@@ -25,6 +25,17 @@ class Save(Preview):
     expected_revision: str = Field(min_length=1, max_length=100)
 
 
+class ReasoningDefault(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: str = Field(min_length=1, max_length=100)
+    reasoning: dict | None
+
+
+@router.put('/global/default/reasoning')
+def save_reasoning_default(body: ReasoningDefault, request: Request, identity=Depends(current_identity)):
+    return _call(request, identity, lambda service, owner: service.save_reasoning_default(owner, body.reasoning, body.expected_revision))
+
+
 def _call(request, identity, function):
     owner = request.app.state.learning.principal(identity).owner_id
     try:

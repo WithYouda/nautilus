@@ -268,14 +268,28 @@ export type AiConversationConfig = {
 };
 
 export type ModelScopeKind = 'global' | 'plan' | 'task' | 'conversation' | 'discussion';
-export type ModelOverride = { model?: { provider_profile_id: string; provider_model_id: string } | null; timeout_seconds?: number | null };
+export type ReasoningChoice = { mode: 'default' | 'off' | 'on' } | { mode: 'effort'; effort: string } | { mode: 'budget'; budget_tokens: number; effort?: string };
+export type ReasoningCapability = {
+  state: 'available' | 'unknown' | 'unsupported'; source: 'official' | 'manual' | 'unknown';
+  profile_id: string | null; label: string | null; style: string | null; version: number; stale?: boolean;
+  efforts: string[]; supports_off: boolean; supports_on: boolean;
+  budget: { min: number; max: number | null; dynamic: boolean; efforts: string[] } | null;
+  reference_urls: string[];
+};
+export type ReasoningSupport = {
+  provider_id: string; model_id: string; protocol: AiApiProtocol; capability: ReasoningCapability;
+  revision: string; configured_profile_id: string | null; profiles: Array<{ id: string; label: string }>;
+};
+export type ModelOverride = { model?: { provider_profile_id: string; provider_model_id: string } | null; timeout_seconds?: number | null; reasoning?: ReasoningChoice | null };
 export type ModelSource = { kind: ModelScopeKind | 'run'; id: string };
-export type ModelSources = { model: ModelSource | null; timeout: ModelSource | null };
+export type ModelSources = { model: ModelSource | null; timeout: ModelSource | null; reasoning?: ModelSource | null };
 export type ModelEffective = {
   provider_profile_id: string | null; provider_model_id: string | null;
   provider_display_name: string | null; model_id: string | null; model_display_name: string | null;
   provider_kind: string | null; timeout_seconds: number | null; provider_config_version: number | null;
   timeout_policy?: 'provider_default' | 'run_extension';
+  reasoning?: ReasoningChoice; reasoning_capability?: ReasoningCapability;
+  reasoning_parameters?: Record<string, unknown> | null;
   supports_image_input: boolean | null; supports_reasoning: boolean | null; has_api_key: boolean; available: boolean;
 };
 export type ModelConfig = {
@@ -291,6 +305,17 @@ export function putModelConfig(kind: ModelScopeKind, id: string, expected_revisi
 }
 export function previewModelConfig(kind: ModelScopeKind, id: string, override: ModelOverride): Promise<ModelConfig> {
   return request(`${modelConfigPath(kind, id)}/preview`, { method: 'POST', body: JSON.stringify({ override }) });
+}
+export function getReasoningSupport(providerId: string, modelId: string): Promise<ReasoningSupport> {
+  return request(`/api/ai/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}/reasoning-support`);
+}
+export function saveReasoningSupport(providerId: string, modelId: string, expected_revision: string, profile_id: string | null): Promise<ReasoningSupport> {
+  return request(`/api/ai/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}/reasoning-support`, {
+    method: 'PUT', body: JSON.stringify({ expected_revision, profile_id }),
+  });
+}
+export function setReasoningDefault(expected_revision: string, reasoning: ReasoningChoice | null): Promise<ModelConfig> {
+  return request('/api/model-config/global/default/reasoning', { method: 'PUT', body: JSON.stringify({ expected_revision, reasoning }) });
 }
 
 export type AiProviderInput = {

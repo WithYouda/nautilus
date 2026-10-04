@@ -205,14 +205,14 @@ def test_five_model_layers_use_final_provider_timeout_and_inheritance_stays_live
         assert current['override']['timeout_seconds'] is None
         assert current['effective']['timeout_policy'] == 'provider_default'
         assert current['sources'] == {'model': {'kind': kind, 'id': scope_id},
-                                      'timeout': {'kind': 'global', 'id': 'default'}}
+                                      'timeout': {'kind': 'global', 'id': 'default'}, 'reasoning': None}
         assert [(layer['kind'], layer['id']) for layer in current['layers']] == [
             ('global', 'default'), ('plan', context['plan_id']), ('task', context['action_id']), (kind, scope_id)]
         transient = preview(client, kind, scope_id, {'model': selection(default), 'timeout_seconds': 75})
         assert transient['effective']['model_id'] == 'gpt-4o'
         assert transient['effective']['timeout_seconds'] == 75
         assert transient['effective']['timeout_policy'] == 'run_extension'
-        assert transient['sources'] == {field: {'kind': 'run', 'id': scope_id} for field in ('model', 'timeout')}
+        assert transient['sources'] == {**{field: {'kind': 'run', 'id': scope_id} for field in ('model', 'timeout')}, 'reasoning': None}
         assert transient['revision'] == current['revision']
         model_only = preview(client, kind, scope_id, {'model': selection(default)})
         assert model_only['effective']['timeout_seconds'] == 61
@@ -234,7 +234,7 @@ def test_five_model_layers_use_final_provider_timeout_and_inheritance_stays_live
         save(client, 'plan', context['plan_id'], {})
         final = view(client, kind, scope_id)
         assert final['effective']['model_id'] == 'gpt-4o' and final['effective']['timeout_seconds'] == 61
-        assert final['sources'] == {field: {'kind': 'global', 'id': 'default'} for field in ('model', 'timeout')}
+        assert final['sources'] == {**{field: {'kind': 'global', 'id': 'default'} for field in ('model', 'timeout')}, 'reasoning': None}
         assert len(provider.calls) == before_calls
         assert FAKE_API_KEY not in json.dumps(transient)
         assert all(secret not in transient['effective'] for secret in ('api_key', 'credential_key', 'base_url'))
@@ -422,7 +422,7 @@ def test_real_requests_freeze_one_run_config_and_replay_exact_override(tmp_path,
         saved = answer['model_config']
         assert saved['model_id'] == 'second-model' and saved['timeout_seconds'] == 97
         assert saved['provider_display_name'] == 'second'
-        assert saved['sources'] == {field: {'kind': 'run', 'id': scope_id} for field in ('model', 'timeout')}
+        assert saved['sources'] == {**{field: {'kind': 'run', 'id': scope_id} for field in ('model', 'timeout')}, 'reasoning': None}
         answer_calls = provider.calls if kind == 'discussion' else [call for call in provider.calls if call['stream']]
         assert answer_calls
         assert all(call['model'] == 'second-model' and call['timeout'] == 97 for call in answer_calls), answer_calls
@@ -541,7 +541,7 @@ def test_branches_copy_current_override_and_ownership_but_keep_original_run_hist
         copied = fork['messages'][-1] if kind == 'conversation' else fork['turns'][-1]
         assert copied['model_config'] == answer['model_config']
         branch_config = view(client, kind, bid)
-        assert branch_config['override'] == {'model': selection(default), 'timeout_seconds': None}
+        assert branch_config['override'] == {'model': selection(default), 'timeout_seconds': None, 'reasoning': None}
         assert stored_timeout(client, kind, bid) == 44
         assert [layer['id'] for layer in branch_config['layers'][:-1]] == ['default', context['plan_id'], context['action_id']]
         if kind == 'discussion':
@@ -552,7 +552,7 @@ def test_branches_copy_current_override_and_ownership_but_keep_original_run_hist
         assert view(client, kind, scope_id)['effective']['timeout_seconds'] == 83
         repeated = checked(client.post(base + '/branches', json=branch_payload), 201)
         assert (repeated['conversation']['id'] if kind == 'conversation' else repeated['id']) == bid
-        assert view(client, kind, bid)['override'] == {'model': None, 'timeout_seconds': None}
+        assert view(client, kind, bid)['override'] == {'model': None, 'timeout_seconds': None, 'reasoning': None}
         assert stored_timeout(client, kind, bid) == 44
         assert len(provider.calls) == before_calls
 
@@ -627,7 +627,7 @@ def test_interrupted_branch_copy_replays_creation_template_after_source_changes(
         copied = checked(client.post(f'/api/ai/conversations/{cid}/branches', json=payload), 201)
         bid = copied['conversation']['id']
         config = view(client, 'conversation', bid)
-        assert config['override'] == {'model': selection(second), 'timeout_seconds': None}
+        assert config['override'] == {'model': selection(second), 'timeout_seconds': None, 'reasoning': None}
         assert stored_timeout(client, 'conversation', bid) == 31
         assert [layer['id'] for layer in config['layers'][:-1]] == ['default', context['plan_id'], context['action_id']]
         assert copied['messages'][-1]['model_config'] == answer['model_config']

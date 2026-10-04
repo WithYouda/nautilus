@@ -18,6 +18,7 @@ from .providers import ProviderChunk, ProviderConfig, ProviderError, normalize_b
 from .provider_network import ProviderHTTPClient
 from .provider_messages import encode_messages
 from .teaching_wire import apply_json_output
+from .reasoning_wire import apply_reasoning_parameters
 
 MAX_EVENT_BYTES = 512 * 1024
 MAX_EVENTS = 10000
@@ -221,6 +222,7 @@ class OpenAIResponsesProvider(_NativeProvider):
         if stream and getattr(self.config, "web_search", False):
             payload["tools"] = [{"type": "web_search"}]
         apply_json_output(payload, self.kind, messages)
+        apply_reasoning_parameters(payload, self.config)
         return payload
 
     async def stream_chat(self, messages: list[dict[str, Any]]) -> AsyncIterator[ProviderChunk]:
@@ -343,6 +345,7 @@ class GoogleProvider(_NativeProvider):
         if stream and getattr(self.config, "web_search", False):
             payload["tools"] = [{"googleSearch": {}}]
         apply_json_output(payload, self.kind, messages)
+        apply_reasoning_parameters(payload, self.config)
         return payload
 
     @staticmethod
@@ -451,6 +454,7 @@ class AnthropicProvider(_NativeProvider):
         if stream and getattr(self.config, "web_search", False):
             payload["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
         apply_json_output(payload, self.kind, messages)
+        apply_reasoning_parameters(payload, self.config)
         return payload
 
     async def stream_chat(self, messages: list[dict[str, Any]]) -> AsyncIterator[ProviderChunk]:

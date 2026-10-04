@@ -1,6 +1,7 @@
 import useConversationState, { isStateConflict, isStateRejected } from './useConversationState';
 import ConversationStateNotice from './ConversationStateNotice';
 import { ModelControlEditor, ModelControlNotice, ModelConfigHistory, useModelControl } from './ModelControl';
+import ReasoningControl from './ReasoningControl';
 import BranchMap from './BranchMap';
 import useReplyHistory from './useReplyHistory';
 import { useEffect, useRef, useState } from 'react';
@@ -245,6 +246,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     <LearningChatPanel title={discussion?.title ?? "讨论这道题"} autoFollow={!editingTurnId && (replyHistory.following || busy) && Boolean(discussion?.turns.length || pending)} followToken={`${id}:${(discussion?.turns.length ?? 0) + (pending ? 1 : 0)}`}
       notice={<><ModelControlNotice control={modelControl} onOpen={() => { if (modelEntry.current) modelEntry.current.open = true; }} /><ConversationStateNotice state={sharedState} onSelectPath={() => { void sharedState.save({ leaf_id: discussion?.turns.filter(turn => turn.status !== 'purged').at(-1)?.id ?? null, paths: {} }); }} /><OutboundApproval kind="discussion" scopeId={id} active={running} />{searchChoice.error && <p role="status">{searchChoice.error}</p>}{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
       composer={discussion && !discussion.purged && <LearningComposer
+        sendSettings={<ReasoningControl control={modelControl} contextKey={id} disabled={sharedState.blocked || busy || branchBusy || Boolean(pending) || Boolean(editingTurnId)} />}
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
         onChange={value => { setContent(value); drafts.current.set(id, value); key.current = requestId(); }}
         onSubmit={event => { event.preventDefault(); void send(); }}
