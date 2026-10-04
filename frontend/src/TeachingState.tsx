@@ -274,10 +274,8 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
         {!method && <option value="" disabled>选择方式</option>}
         <option value="default">沿用设置（{modeLabels[defaultMode]}）</option>
         <option value="stepwise">分步讲解</option><option value="socratic">提问引导</option>
-        {method === 'feynman' && <option value="feynman" disabled>费曼复述（当前方式）</option>}
-        {method === 'practice_first' && <option value="practice_first" disabled>练习优先（当前方式）</option>}
-        {method === 'project' && <option value="project" disabled>项目实践（当前方式）</option>}
-        {method === 'adaptive' && <option value="adaptive" disabled>个人自适应（当前方式）</option>}
+        <option value="feynman">费曼复述</option><option value="practice_first">练习优先</option>
+        <option value="project">项目实践</option><option value="adaptive">个人自适应</option>
       </select>
     </label>
     {selectedMode && <p className="form-hint" role="status">下次发送时使用{modeLabels[selectedMode === 'default' ? defaultMode : selectedMode]}。</p>}
