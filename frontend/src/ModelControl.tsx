@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
-import { getModelConfig, getReasoningSupport, listAiProviders, previewModelConfig, putModelConfig, type AiProvider, type ModelConfig, type ModelOverride, type ModelRunConfig, type ModelScopeKind, type ModelSource, type ReasoningCapability, type ReasoningChoice } from './api';
-import { ReasoningFields, reasoningIssue, reasoningLabel } from './ReasoningControl';
+import { getModelConfig, listAiProviders, previewModelConfig, putModelConfig, type AiProvider, type ModelConfig, type ModelOverride, type ModelRunConfig, type ModelSource, type ModelScopeKind, type ReasoningChoice } from './api';
+import { reasoningLabel } from './ReasoningControl';
 import './ModelControl.css';
 
-const emptyOverride = (): ModelOverride => ({ model: null, timeout_seconds: null, reasoning: null });
-const scopeNames: Record<ModelScopeKind | 'run', string> = { global: '全局默认', plan: '计划', task: '任务', conversation: '当前对话', discussion: '当前对话', run: '仅本次' };
+const emptyOverride = (): ModelOverride => ({ model: null, timeout_seconds: null });
+const scopeNames: Record<ModelSource['kind'], string> = { global: '全局默认', plan: '计划', task: '任务', conversation: '当前对话', discussion: '当前对话', run: '仅本次', model: '模型配置' };
 const sourceName = (source?: ModelSource | null) => source ? scopeNames[source.kind] : null;
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : '模型配置暂时无法读取';
 
@@ -67,10 +67,12 @@ export function useModelControl(kind: ModelScopeKind, id: string) {
     finally { if (request.current === epoch) setBusy(false); }
   }
   function clearOnce() { setRunOverride(null); setPreview(null); }
-  async function changeReasoning(reasoning: ReasoningChoice | null, once: boolean) {
-    const next = { ...(once ? runOverride : saved?.override), reasoning };
-    if (once && Object.values(next).every(value => value == null)) { clearOnce(); return; }
-    await save(next, once);
+  async function changeReasoning(reasoning: ReasoningChoice) {
+    const effective = config?.effective;
+    if (!saved || !['conversation', 'discussion'].includes(kind) || !effective?.provider_profile_id || !effective.provider_model_id) throw new Error('请先准备当前对话的模型。');
+    await save({ ...saved.override, reasoning, reasoning_model: {
+      provider_profile_id: effective.provider_profile_id, provider_model_id: effective.provider_model_id,
+    } }, false);
   }
   async function forSend(targetKind: ModelScopeKind = kind, targetId = id) {
     if (targetKind === kind && targetId === id) {
@@ -109,9 +111,6 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
   const [once, setOnce] = useState(false);
   const [model, setModel] = useState('');
   const [timeout, setTimeout] = useState('');
-  const [reasoning, setReasoning] = useState<ReasoningChoice | null>(null);
-  const [capability, setCapability] = useState<ReasoningCapability | null>(null);
-  const [capabilityBusy, setCapabilityBusy] = useState(false);
   const [message, setMessage] = useState('');
   const previousScope = useRef('');
   const config = control.config;
@@ -130,32 +129,17 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
   useEffect(() => {
     setModel(override?.model ? `${override.model.provider_profile_id}::${override.model.provider_model_id}` : '');
     setTimeout((once || global) && override?.timeout_seconds != null ? String(override.timeout_seconds) : '');
-    setReasoning(override?.reasoning ?? null);
     setMessage('');
   }, [override, once, global]);
-  const parentModel = once ? control.saved?.effective : [...(control.saved?.layers ?? [])].slice(0, -1).reverse().find(layer => layer.override.model)?.override.model;
-  const [draftProvider, draftModel] = model.split('::');
-  const selectedProviderId = draftProvider || parentModel?.provider_profile_id;
-  const selectedModelId = draftModel || parentModel?.provider_model_id;
-  useEffect(() => {
-    let active = true; setCapability(null);
-    if (!selectedProviderId || !selectedModelId) { setCapabilityBusy(false); return; }
-    setCapabilityBusy(true);
-    getReasoningSupport(selectedProviderId, selectedModelId).then(result => { if (active) setCapability(result.capability); })
-      .catch(reason => { if (active) setMessage(errorText(reason)); })
-      .finally(() => { if (active) setCapabilityBusy(false); });
-    return () => { active = false; };
-  }, [selectedProviderId, selectedModelId, control.saved?.token]);
+  const selectedProviderId = model ? model.split('::')[0] : control.saved?.effective.provider_profile_id;
   const defaultTimeout = providers.find(provider => provider.id === selectedProviderId)?.request_timeout_seconds ?? control.saved?.effective.timeout_seconds ?? 5;
   async function apply(reset = false) {
     const value = (once || global) && timeout.trim() ? Number(timeout) : null;
     if (!reset && value !== null && (!Number.isInteger(value) || value < 5 || value > 600)) { setMessage('超时请填写 5–600 秒。'); return; }
     if (!reset && once && value !== null && value < defaultTimeout) { setMessage(`仅本次超时不能少于提供方默认的 ${defaultTimeout} 秒。`); return; }
-    const issue = !reset ? reasoningIssue(reasoning, capability) : null;
-    if (issue) { setMessage(issue); return; }
     const [provider_profile_id, provider_model_id] = model.split('::');
     try {
-      await control.save(reset ? emptyOverride() : { model: model ? { provider_profile_id, provider_model_id } : null, timeout_seconds: value, reasoning }, once);
+      await control.save(reset ? emptyOverride() : { model: model ? { provider_profile_id, provider_model_id } : null, timeout_seconds: value }, once);
       setMessage(once ? '已用于本次发送' : '已保存');
     } catch { /* The hook keeps the server error visible and the draft intact. */ }
   }
@@ -173,7 +157,6 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
       {providers.flatMap(provider => (provider.models ?? []).map(item => <option key={item.id} value={`${provider.id}::${item.id}`} disabled={!provider.enabled || !item.enabled || item.discovery_status === 'unavailable'}>{provider.display_name} · {item.display_name}</option>))}
     </select></label>
     {(once || global) && <label><span>{once ? '仅本次延长（秒）' : '提供方默认超时（秒）'}</span><input aria-label="模型配置超时" type="number" min={once ? defaultTimeout : 5} max={600} step={1} placeholder={`提供方默认（${defaultTimeout} 秒）`} value={timeout} onChange={event => { setTimeout(event.target.value); setMessage(''); }} disabled={blocked} /></label>}
-    <ReasoningFields value={reasoning} capability={capability} onChange={value => { setReasoning(value); setMessage(''); }} disabled={blocked || capabilityBusy} allowInherit={!global} />
     <div className="model-control__actions">
       <button type="button" className="button button--quiet" disabled={blocked} onClick={() => void apply()}>{once ? '用于本次' : '保存配置'}</button>
       <button type="button" className="text-button" disabled={blocked} onClick={() => { if (once) { control.clearOnce(); setMessage(''); } else void apply(true); }}>{once ? '取消本次覆盖' : '恢复继承'}</button>

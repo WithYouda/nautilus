@@ -201,6 +201,7 @@ class ProviderSaveRequest(BaseModel):
 
 
 class ProviderModelsRequest(BaseModel):
+    provider_id: str | None = None
     api_protocol: Literal["openai_compatible", "openai_responses", "google", "anthropic"] | None = None
     base_url: str | None = Field(default=None, max_length=300)
     api_key: str | None = None
@@ -233,11 +234,13 @@ class ProviderTestRequest(BaseModel):
 
 
 class ProviderCreateRequest(ProviderSaveRequest):
+    reasoning_settings: dict | None = None
     provider_kind: Literal["openai_compatible"] = "openai_compatible"
     is_default: bool = False
 
 
 class ProviderUpdateRequest(BaseModel):
+    reasoning_settings: dict | None = None
     api_protocol: Literal["openai_compatible", "openai_responses", "google", "anthropic"] | None = None
     display_name: str | None = Field(default=None, max_length=80)
     base_url: str | None = Field(default=None, max_length=300)

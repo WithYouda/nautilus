@@ -1,7 +1,7 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, X } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { Brain, ChevronDown, Sparkles, X, Zap } from 'lucide-react';
 import DialogPortal from './DialogPortal';
-import { getReasoningSupport, saveReasoningSupport, type ReasoningCapability, type ReasoningChoice, type ReasoningSupport } from './api';
+import type { ReasoningCapability, ReasoningChoice } from './api';
 import type { ModelControlState } from './ModelControl';
 import './ReasoningControl.css';
 
@@ -13,22 +13,20 @@ export function reasoningLabel(choice?: ReasoningChoice | null): string {
   if (choice.mode === 'budget') return `${choice.budget_tokens} Token${choice.effort ? ` · ${effortLabel(choice.effort)}` : ''}`;
   return choice.mode === 'off' ? '关闭' : '开启';
 }
-const choiceKey = (choice?: ReasoningChoice | null) => !choice ? '' : choice.mode === 'effort' ? `effort:${choice.effort}` : choice.mode;
-const message = (error: unknown) => error instanceof Error ? error.message : '思考设置暂时无法读取';
-export function reasoningChoices(capability?: ReasoningCapability | null): Array<{ key: string; label: string; value: ReasoningChoice | null }> {
-  const choices: Array<{ key: string; label: string; value: ReasoningChoice | null }> = [
-    { key: '', label: '恢复继承', value: null }, { key: 'default', label: '模型默认', value: { mode: 'default' } },
-  ];
-  if (capability?.state !== 'available') return choices;
-  if (capability.supports_off) choices.push({ key: 'off', label: '关闭思考', value: { mode: 'off' } });
-  if (capability.supports_on) choices.push({ key: 'on', label: capability.budget?.dynamic ? '动态预算' : '开启思考', value: { mode: 'on' } });
+export const reasoningKey = (choice?: ReasoningChoice | null) => !choice ? '' : choice.mode === 'effort' ? `effort:${choice.effort}` : choice.mode;
+export type ReasoningOption = { key: string; label: string; value: ReasoningChoice };
+export function reasoningChoices(capability?: ReasoningCapability | null): ReasoningOption[] {
+  if (capability?.state !== 'available') return [];
+  const choices: ReasoningOption[] = [];
+  if (capability.supports_off) choices.push({ key: 'off', label: '关闭', value: { mode: 'off' } });
   for (const effort of capability.efforts) choices.push({ key: `effort:${effort}`, label: effortLabel(effort), value: { mode: 'effort', effort } });
-  if (capability.budget) choices.push({ key: 'budget', label: '自定义思考预算', value: { mode: 'budget', budget_tokens: capability.budget.min } });
+  if (!capability.efforts.length && capability.supports_on) choices.push({ key: 'on', label: capability.budget?.dynamic ? '动态预算' : '开启', value: { mode: 'on' } });
+  if (capability.budget) choices.push({ key: 'budget', label: '自定义预算', value: { mode: 'budget', budget_tokens: capability.budget.min } });
   return choices;
 }
 export function reasoningIssue(choice: ReasoningChoice | null, capability?: ReasoningCapability | null): string | null {
   if (!choice || choice.mode === 'default') return null;
-  if (capability?.state !== 'available') return '请先确认当前模型的思考规格，或选择模型默认。';
+  if (capability?.state !== 'available') return '请先确认当前模型的思考规格。';
   if ((choice.mode === 'off' && !capability.supports_off) || (choice.mode === 'on' && !capability.supports_on)
     || (choice.mode === 'effort' && !capability.efforts.includes(choice.effort))) return '当前模型不支持这个思考设置，请重新选择。';
   if (choice.mode === 'budget') {
@@ -38,7 +36,6 @@ export function reasoningIssue(choice: ReasoningChoice | null, capability?: Reas
   }
   return null;
 }
-
 export function ReasoningBudget({ value, capability, onChange, disabled = false }: {
   value: Extract<ReasoningChoice, { mode: 'budget' }>; capability?: ReasoningCapability | null;
   onChange: (choice: ReasoningChoice) => void; disabled?: boolean;
@@ -52,159 +49,120 @@ export function ReasoningBudget({ value, capability, onChange, disabled = false 
     }}><option value="">模型默认</option>{budget!.efforts.map(effort => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}</select></label>}
   </div>;
 }
-export function ReasoningFields({ value, capability, onChange, disabled = false, label = '思考设置', allowInherit = true }: {
-  value: ReasoningChoice | null; capability?: ReasoningCapability | null; onChange: (choice: ReasoningChoice | null) => void; disabled?: boolean; label?: string; allowInherit?: boolean;
-}) {
-  const choices = reasoningChoices(capability).filter(item => allowInherit || item.key !== '');
-  const key = choiceKey(!allowInherit && !value ? { mode: 'default' } : value);
-  return <div className="reasoning-fields">
-    <label><span>{label}</span><select aria-label={label} value={key} disabled={disabled} onChange={event => onChange(choices.find(item => item.key === event.target.value)?.value ?? null)}>
-      {key && !choices.some(item => item.key === key) && <option value={key}>{reasoningLabel(value)}（当前模型不支持）</option>}
-      {choices.map(item => <option key={item.key} value={item.key}>{item.key === '' ? '继承上级' : item.label}</option>)}
-    </select></label>
-    {value?.mode === 'budget' && <ReasoningBudget value={value} capability={capability} onChange={onChange} disabled={disabled} />}
-  </div>;
+function ReasoningIcon({ choice, size = 15 }: { choice?: ReasoningChoice | null; size?: number }) {
+  if (choice?.mode === 'off' || (choice?.mode === 'effort' && ['minimal', 'low'].includes(choice.effort))) return <Zap size={size} />;
+  if (choice?.mode === 'effort' && ['xhigh', 'max'].includes(choice.effort)) return <Sparkles size={size} />;
+  return <Brain size={size} />;
 }
-
-export function ReasoningModelDeclaration({ providerId, modelId, onSaved, autoFocus = false }: { providerId: string; modelId: string; onSaved?: () => void; autoFocus?: boolean }) {
-  const [support, setSupport] = useState<ReasoningSupport | null>(null);
-  const [profile, setProfile] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const epoch = useRef(0);
-  useEffect(() => {
-    const current = ++epoch.current; setSupport(null); setError(''); setNotice(''); setBusy(true);
-    getReasoningSupport(providerId, modelId).then(next => { if (epoch.current === current) { setSupport(next); setProfile(next.configured_profile_id ?? ''); } })
-      .catch(reason => { if (epoch.current === current) setError(message(reason)); })
-      .finally(() => { if (epoch.current === current) setBusy(false); });
-    return () => { epoch.current++; };
-  }, [providerId, modelId]);
-  async function save() {
-    if (!support || busy) return;
-    const current = ++epoch.current; setBusy(true); setError(''); setNotice('');
-    try {
-      const next = await saveReasoningSupport(providerId, modelId, support.revision, profile || null);
-      if (epoch.current !== current) return;
-      setSupport(next); setNotice('思考规格已保存。'); window.dispatchEvent(new Event('nautilus:model-settings-changed')); onSaved?.();
-    } catch (reason) { if (epoch.current === current) setError(message(reason)); }
-    finally { if (epoch.current === current) setBusy(false); }
-  }
-  return <div className="reasoning-model-declaration">
-    <p>按模型文档选择规格。保存不会调用模型。</p>
-    {support ? <>
-      <label><span>模型思考规格</span><select aria-label="模型思考规格" value={profile} disabled={busy} autoFocus={autoFocus} onChange={event => { setProfile(event.target.value); setNotice(''); }}>
-        <option value="">自动识别已登记型号</option><option value="unsupported">不提供思考控制</option>
-        {profile && profile !== 'unsupported' && !support.profiles.some(item => item.id === profile) && <option value={profile}>当前规格（接口已变化）</option>}
-        {support.profiles.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-      </select></label>
-      {support.capability.stale && <p role="status">接口或模型已变化，请重新确认规格。</p>}
-      <button className="button button--quiet" type="button" disabled={busy} onClick={() => void save()}>保存思考规格</button>
-      {support.capability.reference_urls.map(url => <a key={url} href={url} target="_blank" rel="noreferrer">模型文档</a>)}
-    </> : busy && <p role="status">正在读取模型规格…</p>}
-    {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-  </div>;
+function description(choice?: ReasoningChoice | null) {
+  if (choice?.mode === 'off') return '直接生成回答。';
+  if (choice?.mode === 'effort') return ({ minimal: '使用最少的思考投入。', low: '使用较少的思考投入。', medium: '使用适中的思考投入。', high: '投入更多思考。', xhigh: '使用较高的思考投入。', max: '使用模型支持的最高投入。' } as Record<string, string>)[choice.effort] ?? '使用这个模型的思考等级。';
+  if (choice?.mode === 'on') return '使用模型的动态思考方式。';
+  return '使用这个模型的思考预算。';
 }
 
 export default function ReasoningControl({ control, disabled = false, contextKey, onPrepare }: {
   control: ModelControlState; disabled?: boolean; contextKey: string; onPrepare?: () => Promise<string>;
 }) {
   const [open, setOpen] = useState(false);
-  const [once, setOnce] = useState(false);
-  const [budgetChoice, setBudgetChoice] = useState<Extract<ReasoningChoice, { mode: 'budget' }> | null>(null);
   const [target, setTarget] = useState('');
   const [position, setPosition] = useState({ left: 12, top: 12 });
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [previewChanged, setPreviewChanged] = useState(false);
+  const [budgetDraft, setBudgetDraft] = useState<ReasoningChoice | null>(null);
   const [error, setError] = useState('');
-  const [configure, setConfigure] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLElement>(null);
-  const modal = useRef<HTMLElement>(null);
+  const range = useRef<HTMLInputElement>(null);
   const epoch = useRef(0);
   const id = useId();
   const config = control.config;
-  const scope = config ? `${config.scope_kind}:${config.scope_id}` : '';
-  const ready = Boolean(config && target === scope && !control.busy && !disabled);
-  const activeEffective = once ? config?.effective : control.saved?.effective;
-  const capability = activeEffective?.reasoning_capability;
-  const chosen = once ? control.runOverride?.reasoning ?? null : control.saved?.override.reasoning ?? null;
-  const effectiveLabel = reasoningLabel(config?.effective.reasoning);
-  const source = config?.sources.reasoning?.kind;
+  const effective = config?.effective;
+  const capability = effective?.reasoning_capability;
   const choices = reasoningChoices(capability);
+  const savedIndex = choices.findIndex(item => item.key === reasoningKey(effective?.reasoning));
+  const current = choices[previewIndex]?.value;
+  const scope = config ? `${config.scope_kind}:${config.scope_id}` : '';
+  const modelKey = `${effective?.provider_profile_id}:${effective?.provider_model_id}`;
+  const ready = Boolean(config && target === scope && !control.busy && !disabled);
+  const budget = Boolean(capability?.budget && !capability.efforts.length);
+  useEffect(() => { setPreviewIndex(Math.max(0, savedIndex)); setPreviewChanged(false); setBudgetDraft(effective?.reasoning ?? null); setError(''); }, [modelKey, savedIndex, JSON.stringify(effective?.reasoning)]);
   function close(restoreFocus = true) {
-    epoch.current++; setOpen(false); setConfigure(false);
+    epoch.current++; setOpen(false);
     if (restoreFocus) window.requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
   }
-  useEffect(() => { epoch.current++; setOpen(false); setConfigure(false); setTarget(''); setError(''); }, [contextKey]);
+  useEffect(() => { epoch.current++; setOpen(false); setTarget(''); setError(''); }, [contextKey]);
   useEffect(() => { return () => { epoch.current++; }; }, []);
   useLayoutEffect(() => {
-    if (!open || configure) return;
+    if (!open) return;
     const place = () => {
       if (!trigger.current || !popup.current) return;
       const button = trigger.current.getBoundingClientRect(); const menu = popup.current.getBoundingClientRect();
       const left = Math.max(12, Math.min(button.right - menu.width, innerWidth - menu.width - 12));
       const above = button.top - menu.height - 8;
-      const top = Math.max(12, above >= 12 ? above : Math.min(button.bottom + 8, innerHeight - menu.height - 12));
-      setPosition({ left, top });
+      setPosition({ left, top: Math.max(12, above >= 12 ? above : Math.min(button.bottom + 8, innerHeight - menu.height - 12)) });
     };
     place(); window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
-  }, [open, configure, scope, capability, budgetChoice, ready, error]);
+  }, [open, scope, modelKey, budget, ready, error, reasoningKey(budgetDraft)]);
   useEffect(() => {
     if (!open) return;
-    if (!configure) window.requestAnimationFrame(() => popup.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus());
-    const outside = (event: PointerEvent) => { if (!configure && !popup.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) close(false); };
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); if (configure) setConfigure(false); else close(); } };
+    window.requestAnimationFrame(() => (range.current ?? popup.current?.querySelector<HTMLElement>('select:not(:disabled), button:not(:disabled)'))?.focus());
+    const outside = (event: PointerEvent) => { if (!popup.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) close(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); close(); } };
     document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
-  }, [open, configure]);
-  useEffect(() => {
-    if (configure) window.requestAnimationFrame(() => modal.current?.querySelector<HTMLSelectElement>('select')?.focus());
-  }, [configure]);
+  }, [open, ready]);
   async function show() {
     if (disabled) return;
     if (open) { close(); return; }
-    const current = ++epoch.current; setOpen(true); setError(''); setBudgetChoice(null); setOnce(false);
+    const currentEpoch = ++epoch.current; setOpen(true); setError(''); setPreviewIndex(Math.max(0, savedIndex)); setPreviewChanged(false); setBudgetDraft(effective?.reasoning ?? null);
     if (!onPrepare) { setTarget(scope); return; }
     setTarget('');
-    try { const conversationId = await onPrepare(); if (epoch.current === current) setTarget(`conversation:${conversationId}`); }
-    catch (reason) { if (epoch.current === current) setError(message(reason)); }
+    try { const conversationId = await onPrepare(); if (epoch.current === currentEpoch) setTarget(`conversation:${conversationId}`); }
+    catch (reason) { if (epoch.current === currentEpoch) setError(reason instanceof Error ? reason.message : '无法准备当前对话'); }
   }
-  async function choose(value: ReasoningChoice | null) {
+  async function choose(choice: ReasoningChoice) {
     if (!ready) return;
-    const issue = reasoningIssue(value, capability); if (issue) { setError(issue); return; }
-    const current = epoch.current; setError('');
-    try { await control.changeReasoning(value, once); if (epoch.current === current) close(); }
-    catch (reason) { if (epoch.current === current) setError(message(reason)); }
+    const issue = reasoningIssue(choice, capability); if (issue) { setError(issue); return; }
+    const currentEpoch = epoch.current; setError('');
+    try { await control.changeReasoning(choice); }
+    catch (reason) {
+      if (epoch.current !== currentEpoch) return;
+      setPreviewIndex(Math.max(0, savedIndex)); setPreviewChanged(false); setBudgetDraft(effective?.reasoning ?? null);
+      setError(reason instanceof Error ? reason.message : '思考设置未保存');
+    }
   }
+  function commit(index: number) {
+    const option = choices[index]; if (option) { setPreviewIndex(index); setPreviewChanged(true); void choose(option.value); }
+  }
+  const triggerLabel = !effective?.reasoning || effective.reasoning.mode === 'default' ? capability?.state === 'unsupported' ? '不可调' : '未配置' : reasoningLabel(effective.reasoning);
+  const shownChoice = savedIndex < 0 && !previewChanged ? effective?.reasoning : current;
+  const shownLabel = savedIndex < 0 && !previewChanged && (!shownChoice || shownChoice.mode === 'default') ? '请选择强度' : reasoningLabel(shownChoice);
   return <>
-    <button ref={trigger} type="button" className="reasoning-quick" aria-label="思考设置" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => void show()}>思考：{effectiveLabel}{source === 'run' ? ' · 本次' : ''}<ChevronDown size={12} /></button>
-    {open && !configure && <DialogPortal><section id={id} ref={popup} role="dialog" aria-label="思考设置" className="reasoning-popover" style={position} onKeyDown={event => {
-      if (!['ArrowDown', 'ArrowUp'].includes(event.key) || event.target instanceof HTMLInputElement) return;
-      const buttons = Array.from(popup.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
-      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-      if (index !== -1) { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); }
-    }}>
-      <header><strong>思考设置</strong><button type="button" className="icon-button" aria-label="关闭思考设置" onClick={() => close()}><X size={14} /></button></header>
-      <div className="model-control__scope" role="group" aria-label="思考作用范围"><button type="button" aria-pressed={!once} disabled={!ready} onClick={() => { setOnce(false); setBudgetChoice(null); setError(''); }}>当前对话</button><button type="button" aria-pressed={once} disabled={!ready} onClick={() => { setOnce(true); setBudgetChoice(null); setError(''); }}>仅本次</button></div>
-      {!target || !config || target !== scope ? <p role="status">正在准备当前对话…</p> : <>
-        <div className="reasoning-options" role="group" aria-label="思考选项">{choices.map(item => <button key={item.key} type="button" aria-pressed={choiceKey(chosen) === item.key} disabled={!ready} onClick={() => {
-          if (item.value?.mode === 'budget') { setBudgetChoice(chosen?.mode === 'budget' ? chosen : item.value); setError(''); } else void choose(item.value);
-        }}>{item.label}</button>)}</div>
-        {budgetChoice && <><ReasoningBudget value={budgetChoice} capability={capability} onChange={value => { if (value.mode === 'budget') setBudgetChoice(value); setError(''); }} disabled={!ready} /><button className="button button--quiet" type="button" disabled={!ready} onClick={() => void choose(budgetChoice)}>使用这个预算</button></>}
-        {capability?.state !== 'available' && <p>{capability?.state === 'unsupported' ? '当前规格不提供思考控制。' : '思考规格尚未确认，可先使用模型默认。'}</p>}
-        {activeEffective?.provider_profile_id && activeEffective.provider_model_id && <button className="text-button" type="button" disabled={!ready} onClick={() => setConfigure(true)}>配置模型思考规格</button>}
+    <button ref={trigger} type="button" className="reasoning-quick" aria-label="思考设置" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => void show()}><ReasoningIcon choice={effective?.reasoning} size={13} />思考：{triggerLabel}<ChevronDown size={11} /></button>
+    {open && <DialogPortal><section id={id} ref={popup} role="dialog" aria-label="思考设置" className="reasoning-popover" style={position}>
+      <header><strong>思考强度</strong><button type="button" className="icon-button" aria-label="关闭思考设置" onClick={() => close()}><X size={14} /></button></header>
+      {!target || !config || target !== scope ? <p role="status">正在准备当前对话…</p> : !choices.length ? <p>{capability?.state === 'unsupported' ? '这个模型不提供思考调节。' : '请在提供方设置中确认这个模型的思考规格。'}</p> : budget ? <>
+        <label className="reasoning-budget-mode"><span>预算方式</span><select aria-label="思考预算方式" value={choices.some(item => item.key === reasoningKey(budgetDraft)) ? reasoningKey(budgetDraft) : ''} disabled={!ready} onChange={event => {
+          const option = choices.find(item => item.key === event.target.value); if (option) { setBudgetDraft(option.value); setError(''); }
+        }}><option value="" disabled>选择预算方式</option>{choices.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
+        {budgetDraft?.mode === 'budget' && <ReasoningBudget value={budgetDraft} capability={capability} onChange={setBudgetDraft} disabled={!ready} />}
+        <button className="button button--quiet" type="button" disabled={!ready || !budgetDraft || !choices.some(item => item.key === reasoningKey(budgetDraft))} onClick={() => { if (budgetDraft) void choose(budgetDraft); }}>保存</button>
+      </> : <>
+        <div className="reasoning-slider-heading"><span>思考较少</span><span>思考更多</span></div>
+        <div className="reasoning-slider" style={{ '--reasoning-progress': `${choices.length > 1 ? previewIndex / (choices.length - 1) * 100 : 0}%` } as CSSProperties}>
+          <div className="reasoning-slider-track">{choices.map((item, index) => <i key={item.key} style={{ left: `${choices.length > 1 ? index / (choices.length - 1) * 100 : 0}%` }} />)}</div>
+          <input ref={range} type="range" aria-label="思考强度" aria-valuetext={shownLabel} min={0} max={Math.max(0, choices.length - 1)} step={1} value={previewIndex} disabled={!ready || choices.length < 2}
+            onChange={event => { setPreviewIndex(Number(event.target.value)); setPreviewChanged(true); setError(''); }}
+            onPointerUp={event => commit(Number(event.currentTarget.value))}
+            onPointerCancel={() => { setPreviewIndex(Math.max(0, savedIndex)); setPreviewChanged(false); }}
+            onKeyUp={event => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) commit(Number(event.currentTarget.value)); }} />
+        </div>
+        <div className="reasoning-slider-labels">{choices.map((item, index) => <button key={item.key} type="button" aria-label={`设为${item.label}`} aria-pressed={(savedIndex >= 0 || previewChanged) && previewIndex === index} disabled={!ready} onClick={() => commit(index)}>{item.label}</button>)}</div>
+        <div className="reasoning-current"><ReasoningIcon choice={shownChoice} size={17} /><p><strong>{shownLabel}</strong><span>{savedIndex < 0 && !previewChanged ? '选择一个实际支持的档位。' : description(shownChoice)}</span></p></div>
       </>}
-      {(error || control.error) && <p role="alert">{error || control.error}</p>}
+      {(error || control.error) && <p className="reasoning-error" role="alert">{error || control.error}</p>}
     </section></DialogPortal>}
-    {open && configure && activeEffective?.provider_profile_id && activeEffective.provider_model_id && <DialogPortal><div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setConfigure(false); }}>
-      <section ref={modal} className="reasoning-spec-dialog" role="dialog" aria-modal="true" aria-label="模型思考规格" onKeyDown={event => {
-        if (event.key !== 'Tab') return;
-        const fields = Array.from(modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), a[href]') ?? []);
-        if (event.shiftKey && document.activeElement === fields[0]) { event.preventDefault(); fields.at(-1)?.focus(); }
-        if (!event.shiftKey && document.activeElement === fields.at(-1)) { event.preventDefault(); fields[0]?.focus(); }
-      }}><header><h3>模型思考规格</h3><button className="icon-button" type="button" aria-label="关闭模型思考规格" onClick={() => setConfigure(false)}><X size={16} /></button></header>
-        <p>{activeEffective.provider_display_name} · {activeEffective.model_display_name ?? activeEffective.model_id}</p>
-        <ReasoningModelDeclaration providerId={activeEffective.provider_profile_id} modelId={activeEffective.provider_model_id} autoFocus />
-      </section></div></DialogPortal>}
   </>;
 }

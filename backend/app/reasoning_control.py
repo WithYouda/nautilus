@@ -169,6 +169,34 @@ def capability(profile, model, protocol):
         model_id = model['model_id'].removeprefix('models/') if protocol == 'google' else model['model_id']
         profile_id = MODEL_PROFILES.get(model_id)
     definition = PROFILES.get(profile_id)
+    discovered = json.loads(model['capabilities_json'] or '{}').get('reasoning_discovery')
+    metadata = discovered.get('metadata') if isinstance(discovered, dict) and discovered.get('binding') == binding(profile, model, protocol) else None
+    if not saved and isinstance(metadata, dict):
+        if metadata.get('thinking_supported') is False:
+            return {'profile_id': 'unsupported', 'state': 'unsupported', 'source': 'api',
+                    'version': VERSION, 'label': None, 'style': None, 'efforts': [],
+                    'supports_off': False, 'supports_on': False, 'budget': None, 'reference_urls': []}
+        levels = metadata.get('effort_levels')
+        shape = metadata.get('format')
+        inferred = copy.deepcopy(definition) if definition and protocol in definition['protocols'] else None
+        if shape == 'deepseek_effort' and protocol in _OPENAI_PROTOCOLS and isinstance(levels, list) and levels:
+            inferred = inferred or _profile('接口返回的思考档位', 'thinking_effort', protocols=_OPENAI_PROTOCOLS, source=DEEPSEEK)
+        elif shape == 'anthropic_capabilities' and protocol == 'anthropic':
+            modes = metadata.get('thinking_modes', [])
+            if 'adaptive' in modes and isinstance(levels, list) and levels:
+                inferred = inferred or _profile('接口返回的思考档位', 'anthropic_adaptive', protocols=('anthropic',), on=True, source=CLAUDE)
+            elif inferred is None and 'enabled' in modes:
+                inferred = copy.deepcopy(PROFILES['claude_budget'])
+                inferred['supports_off'] = False
+        if inferred and isinstance(levels, list):
+            ordered = [value for value in EFFORT_LABELS if value in levels]
+            if inferred['style'] == 'anthropic_budget':
+                inferred['budget']['efforts'] = ordered
+            else:
+                inferred['efforts'] = ordered
+            if 'none' in levels:
+                inferred['supports_off'] = True
+            return {**inferred, 'profile_id': profile_id, 'state': 'available', 'source': 'api', 'version': VERSION}
     if definition and protocol in definition['protocols']:
         return {**copy.deepcopy(definition), 'profile_id': profile_id, 'state': 'available',
                 'source': source, 'version': VERSION}
@@ -179,6 +207,75 @@ def capability(profile, model, protocol):
             'supports_on': False, 'budget': None, 'reference_urls': []}
 
 
+def model_default(model, support):
+    """A model's explicit setting wins; high is the only implicit effort."""
+    options = json.loads(model['overrides_json'] or '{}')
+    configured = normalize_choice(options.get('reasoning_default'))
+    if configured is not None:
+        return configured, configured, False
+    if support['state'] == 'available':
+        if 'high' in support['efforts']:
+            return {'mode': 'effort', 'effort': 'high'}, None, False
+        return None, None, True
+    return None, None, False
+
+
+def configuration(profile, model, protocol):
+    support = capability(profile, model, protocol)
+    default, configured, required = model_default(model, support)
+    saved = json.loads(model['capabilities_json'] or '{}').get('reasoning_control')
+    return {'capability': support, 'default_choice': default, 'configured_default': configured,
+            'default_required': required, 'configured_profile_id': saved.get('profile_id') if saved else None,
+            'profiles': [{'id': key, 'label': value['label']} for key, value in PROFILES.items() if protocol in value['protocols']]}
+
+
+def prepare_configuration(profile, model, protocol, settings=None, metadata=None):
+    """Prepare a complete model edit before saving a provider or its credential."""
+    model = dict(model)
+    caps = json.loads(model['capabilities_json'] or '{}')
+    options = json.loads(model['overrides_json'] or '{}')
+    options['api_protocol'] = protocol
+    if metadata is not None:
+        caps['reasoning_discovery'] = {'binding': binding(profile, model, protocol), 'metadata': metadata}
+    if settings is not None:
+        if not isinstance(settings, dict) or set(settings) - {'profile_id', 'default_choice'}:
+            raise ConversationError('模型思考设置格式不正确')
+        if 'profile_id' in settings:
+            selected = settings['profile_id']
+            if selected is not None and (not isinstance(selected, str) or (selected != 'unsupported' and (selected not in PROFILES or protocol not in PROFILES[selected]['protocols']))):
+                raise ConversationError('所选思考规格与当前接口不兼容')
+            if selected is None:
+                caps.pop('reasoning_control', None)
+            else:
+                caps['reasoning_control'] = {'profile_id': selected, 'binding': binding(profile, model, protocol)}
+        if 'default_choice' in settings:
+            choice = normalize_choice(settings['default_choice'])
+            if choice is not None and choice['mode'] == 'default':
+                raise ConversationError('请选择模型实际支持的默认思考档位')
+            if choice is None:
+                options.pop('reasoning_default', None)
+            else:
+                options['reasoning_default'] = choice
+    model.update(capabilities_json=json.dumps(caps, ensure_ascii=False), overrides_json=json.dumps(options, ensure_ascii=False))
+    return model, configuration(profile, model, protocol)
+
+
+def validate_configuration(prepared, protocol):
+    if prepared['default_required']:
+        raise ConversationError('这个模型没有高档，请选择一个默认思考设置')
+    if prepared['default_choice'] is not None:
+        compile_parameters(prepared['default_choice'], prepared['capability'], protocol)
+
+
+def persist_configuration(service, owner, provider_id, model_id, prepared_model):
+    """Only previously validated, locally constructed JSON reaches this write."""
+    with service._provider_lock:
+        _owned(service, owner, provider_id, model_id)
+        with service.database.transaction() as c:
+            c.execute('UPDATE provider_model SET capabilities_json=?,overrides_json=?,updated_at=? WHERE id=?',
+                      (prepared_model['capabilities_json'], prepared_model['overrides_json'], utc_now().isoformat(), model_id))
+
+
 def compile_parameters(choice, support, protocol):
     """Build native parameters from one mutually exclusive, validated choice."""
     value = normalize_choice(choice) or {'mode': 'default'}
@@ -186,11 +283,11 @@ def compile_parameters(choice, support, protocol):
     if mode == 'default':
         return {}
     if support['state'] != 'available':
-        raise ConversationError('当前模型的思考参数尚未配置或不支持，请选择模型默认或配置思考能力')
+        raise ConversationError('当前模型尚未配置思考能力或不提供调节，请在提供方设置中确认')
     style = support['style']
     if mode == 'off':
         if not support['supports_off']:
-            raise ConversationError('当前模型不能关闭思考，请选择支持的强度或模型默认')
+            raise ConversationError('当前模型不能关闭思考，请选择支持的强度')
         if style in {'effort', 'thinking_effort'} and protocol == 'openai_responses':
             return {'reasoning': {'effort': 'none'}}
         if style == 'effort':
@@ -263,13 +360,14 @@ def status(service, owner, provider_id, model_id):
         profile, model, protocol = _owned(service, owner, provider_id, model_id)
         stored = json.loads(model['capabilities_json'] or '{}').get('reasoning_control')
         return {'provider_id': provider_id, 'model_id': model_id, 'protocol': protocol,
-                'capability': capability(profile, model, protocol),
-                'revision': _tag([binding(profile, model, protocol), stored, model['updated_at']]),
-                'configured_profile_id': stored.get('profile_id') if stored else None,
-                'profiles': [{'id': key, 'label': value['label']} for key, value in PROFILES.items() if protocol in value['protocols']]}
+                **configuration(profile, model, protocol),
+                'revision': _tag([binding(profile, model, protocol), stored, model['updated_at'], model['overrides_json']])}
 
 
-def save_support(service, owner, provider_id, model_id, profile_id, expected_revision):
+_UNSET = object()
+
+
+def save_support(service, owner, provider_id, model_id, profile_id, expected_revision, default_choice=_UNSET):
     with service._provider_lock:
         current = status(service, owner, provider_id, model_id)
         if current['revision'] != expected_revision:
@@ -277,12 +375,13 @@ def save_support(service, owner, provider_id, model_id, profile_id, expected_rev
         if profile_id is not None and profile_id != 'unsupported' and profile_id not in {item['id'] for item in current['profiles']}:
             raise ConversationError('所选思考规格与当前接口不兼容')
         profile, model, protocol = _owned(service, owner, provider_id, model_id)
-        caps = json.loads(model['capabilities_json'] or '{}')
-        if profile_id is None:
-            caps.pop('reasoning_control', None)
-        else:
-            caps['reasoning_control'] = {'profile_id': profile_id, 'binding': binding(profile, model, protocol)}
-        with service.database.transaction() as c:
-            c.execute('UPDATE provider_model SET capabilities_json=?,updated_at=? WHERE id=?',
-                      (json.dumps(caps, ensure_ascii=False), utc_now().isoformat(), model_id))
+        settings = {'profile_id': profile_id}
+        if default_choice is not _UNSET:
+            settings['default_choice'] = default_choice
+        prepared, view = prepare_configuration(profile, model, protocol, settings)
+        # Legacy declaration-only clients may configure the native contract
+        # first. Actual sends still require a usable model/conversation choice.
+        if default_choice is not _UNSET:
+            validate_configuration(view, protocol)
+        persist_configuration(service, owner, provider_id, model_id, prepared)
         return status(service, owner, provider_id, model_id)

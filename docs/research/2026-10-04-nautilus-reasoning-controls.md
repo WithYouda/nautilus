@@ -26,11 +26,11 @@
 
 ## 本项目落实边界
 
-1. 入口：作者已确认输入框附近、优先右侧；快选持续用于当前对话，可选择仅本次及恢复继承，生成中修改只影响下一次发送。
-2. 配置：沿用五级模型控制、旧页面冲突校验和已有运行快照；显式模型切换后重新检查强度是否兼容，不静默换模型或降档。
-3. 能力：按有出处的具体模型/协议规格登记；自定义别名、中转差异提供显式配置入口，未知保留未知，不从返回的思考文字反推支持等级。
+1. 入口：两处输入区右侧刻度滑块，只属于当前对话；没有思考仅本次/恢复继承/模型默认伪档位，生成中修改只影响下一次发送。
+2. 配置：模型选择沿用五级控制；思考采用每模型默认＋当前对话绑定选择。支持high且未配置时用high，无high须明确配置默认；切换模型使用对应默认，不将旧模型选择套用到新模型。旧页面冲突及运行快照继续复用。
+3. 能力：优先返回的有效模型元数据，缺失时按已核查具体模型/协议规格；手工兼容配置优先于自动识别。自定义别名和未知保留配置入口，不从思考文字反推等级。
 4. 传输：原生参数进入实际HTTP正文，覆盖两处学习对话、普通请求和工具续轮；不靠系统提示模拟参数，不改工具或资料权限。模型是否实际遵循与参数是否已传递分开验证。
-5. 验证：捕获实际出站请求字段，检查默认/关闭/不同档位、协议差异、模型切换、历史冻结、仅本次、重试及两处输入区交互；真实模型检查仅用合成内容。
+5. 验证：捕获实际出站请求字段，检查默认/关闭/不同档位、协议差异、模型切换、历史冻结、旧仅本次请求重放、重试及两处输入区交互；真实模型检查仅用合成内容。
 6. 模型策略预设形式尚在等待作者对已提出具体方案的答复；不将研究建议或示例名称视为已确认策略。
 
 ## 接入核对
@@ -38,3 +38,18 @@
 2026-10-04：四协议普通/JSON/流式及工具续轮的请求正文检查已通过；运行配置使用不可变参数字符串。当前已配置DeepSeek用合成算术内容分别检查low/high/max/off，四次实际HTTP均200、参数逐字段一致、答案正常，off未返回思考内容。未保存真实学习记录或更改全局Provider默认；这只证明当前连接接受这些参数，不证明档位必然带来质量差异或全部厂商账户可用。
 
 Claude自适应仍受既有4096输出上限限制；旧预算模式为原回答额度加用户明确预算，满足budget小于总输出上限。更高档不是无限输出，资源上限的独立配置不由本切片暗中扩展。
+
+## 后续核查：RikkaHub自动档与模型档位发现
+
+作者于同日修订交互，落实边界已按产品决定更新。远程RikkaHub HEAD重新核对仍为上述固定提交。其[Web思考弹窗](https://github.com/rikkahub/rikkahub/blob/a6dbb8cd2ba8302bd02fb2dbfdb9e06060e7c979/web-ui/app/components/input/reasoning-picker.tsx#L240-L268)是右侧按钮、向上弹出、离散滑块、松开保存；内部固定OFF/AUTO/LOW/MEDIUM/HIGH/XHIGH/MAX，按Assistant保存，并不按具体模型过滤。Nautilus按作者明确要求改为当前对话及实际模型档位，不复制该作用域和统一七档。
+
+AUTO通常不发effort；Claude走adaptive，DeepSeek等开启thinking但不指定effort。它没有根据问题另行判断low/high的客户端算法，也不等于配置的默认high。OFF在RikkaHub部分Gemini/NVIDIA分支被映射为minimal/low，不能用于实现“真正关闭”。
+
+| 模型列表接口 | 是否直接提供完整档位 |
+| --- | --- |
+| [DeepSeek /models](https://api-docs.deepseek.com/zh-cn/api/list-models/) | 返回`effort.supported_levels`及可选`default_level`；当前已配置连接只读HTTP200核对为low/high/max、默认high，无生成调用或业务写入。列表不把关闭用的none包含在开启时等级中。 |
+| [Claude /models](https://platform.claude.com/docs/en/api/models/list) | `capabilities.effort`逐档supported，以及thinking的支持/模式；capabilities可为空，缺失不能按完整集合处理。 |
+| [OpenAI /models](https://developers.openai.com/api/reference/resources/models/methods/list) | 标准对象为ID、创建时间、归属及可选关闭日期，不包含effort枚举。 |
+| [Gemini Model](https://ai.google.dev/api/models) | 有thinking布尔及输入/输出上限，未提供完整thinkingLevel枚举。 |
+
+采用接口真实元数据优先、已核查官方规格补充、未知明确配置的顺序；不发送付费生成去逐档试错，不将返回思考文字视为能力证据。元数据只保留允许的公开字段，绑定模型/协议/地址；缓存保持owner及凭据隔离，手工配置不被刷新覆盖。模型配置默认high与厂商default_level是不同事实，无high例外由作者确认必须明确配置。

@@ -14,18 +14,7 @@ import {
 } from "./api";
 import DialogPortal from "./DialogPortal";
 import useDismissibleLayer from "./useDismissibleLayer";
-
-const modelCache = new Map<string, { models: string[]; savedAt: number }>();
-const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000;
-
-async function cacheKey(baseUrl: string, draftKey: string, protocol: AiApiProtocol) {
-  const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
-  if (!draftKey) return `${protocol}:${normalizedBaseUrl}:saved`;
-  if (!crypto.subtle) return "";
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(draftKey));
-  const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${protocol}:${normalizedBaseUrl}:${fingerprint}`;
-}
+import ReasoningSettings, { useProviderReasoningDraft } from './ReasoningSettings';
 
 export default function AiProviderDialog({
   open,
@@ -104,6 +93,10 @@ export default function AiProviderDialog({
     [model, models],
   );
   const selectedProvider = providerList.find((item) => item.id === selectedProviderId) ?? (provider?.id === selectedProviderId ? provider : null);
+  const reasoningTarget = useMemo(() => ({ ...(selectedProviderId ? { provider_id: selectedProviderId } : {}), base_url: baseUrl.trim(), api_protocol: apiProtocol, model: model.trim(), ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}) }), [selectedProviderId, baseUrl, apiProtocol, model, apiKey]);
+  const reasoningDraft = useProviderReasoningDraft(reasoningTarget, open);
+  const currentDraft = useRef(reasoningTarget); currentDraft.current = reasoningTarget;
+  useEffect(() => { setDiscovering(false); }, [reasoningTarget]);
 
   if (!open) return null;
 
@@ -118,17 +111,10 @@ export default function AiProviderDialog({
   }
 
   async function loadModels(forceRefresh = false) {
+    const target = currentDraft.current;
     if (!baseUrl.trim() || (!apiKey.trim() && !selectedProvider?.has_api_key)) {
       setModelsOpen(true);
       setModelNotice("填写 Base URL 和 API Key 后可自动获取；也可以直接手动填写模型名称。");
-      return;
-    }
-    const key = await cacheKey(baseUrl, apiKey.trim(), apiProtocol);
-    const cached = key ? modelCache.get(key) : undefined;
-    if (!forceRefresh && cached && Date.now() - cached.savedAt < CLIENT_CACHE_TTL_MS) {
-      setModels(cached.models);
-      setModelNotice(`已使用缓存的 ${cached.models.length} 个模型`);
-      setModelsOpen(true);
       return;
     }
     setDiscovering(true);
@@ -141,19 +127,22 @@ export default function AiProviderDialog({
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         request_timeout_seconds: timeoutSeconds,
         force_refresh: forceRefresh,
+        ...(selectedProviderId ? { provider_id: selectedProviderId } : {}),
       });
+      if (currentDraft.current !== target) return;
       setModels(result.models);
-      if (key) modelCache.set(key, { models: result.models, savedAt: Date.now() });
       setModelNotice(result.models.length
         ? `${result.cached ? "已读取缓存" : "已获取"} ${result.models.length} 个模型`
         : "提供方没有返回模型，可继续手动填写。");
       setModelsOpen(true);
+      void reasoningDraft.refresh();
     } catch (reason: unknown) {
+      if (currentDraft.current !== target) return;
       setModels([]);
       setModelsOpen(true);
       setModelNotice(reason instanceof Error ? `${reason.message}；仍可手动填写。` : "无法获取模型；仍可手动填写。");
     } finally {
-      setDiscovering(false);
+      if (currentDraft.current === target) setDiscovering(false);
     }
   }
 
@@ -167,6 +156,7 @@ export default function AiProviderDialog({
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (reasoningDraft.blocked) { setError(reasoningDraft.error || reasoningDraft.issue || (reasoningDraft.missing ? '请先选择这个模型的默认思考设置。' : '请等待模型思考设置读取完成。')); return; }
     setSaving(true);
     setError("");
     setTestMessage("");
@@ -178,6 +168,7 @@ export default function AiProviderDialog({
       enabled,
       request_timeout_seconds: timeoutSeconds,
       ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+      reasoning_settings: reasoningDraft.settings,
     };
     try {
       const result = selectedProviderId
@@ -188,8 +179,10 @@ export default function AiProviderDialog({
         ? providerList.map((item) => item.id === result.provider.id ? result.provider : item)
         : [...providerList, result.provider];
       setProviderList(nextProviders);
+      setSelectedProviderId(result.provider.id);
       onChanged(nextProviders.find((item) => item.is_default) ?? provider ?? result.provider);
       setTestMessage("配置已保存。建议连接测试通过后再开始对话。");
+      window.dispatchEvent(new Event('nautilus:model-settings-changed'));
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "AI 提供方保存失败");
     } finally {
@@ -294,6 +287,8 @@ export default function AiProviderDialog({
               <label className="field field--wide"><span>API Key</span><input type="password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setModels([]); setModelNotice(""); }} placeholder={selectedProvider?.has_api_key ? `已保存 ${selectedProvider.api_key_masked}；留空则保留` : "首次配置必须填写"} autoComplete="off" required={!selectedProvider?.has_api_key} /></label>
             </div>
 
+            <ReasoningSettings draft={reasoningDraft} disabled={saving} />
+
             <p className="form-hint">点击模型输入框会从 Base URL 获取模型并缓存；获取失败时仍可手动填写。密钥只交给本地服务处理。</p>
             <p className="form-hint">模型内置搜索只在支持的 API 协议和模型上可用；实际是否执行以本轮 API 返回的搜索状态为准。</p>
             {provider?.credential_error && <p className="form-error" role="alert">{provider.credential_error}</p>}
@@ -304,7 +299,7 @@ export default function AiProviderDialog({
               {testMessage && <p className="ai-provider-success" role="status"><CheckCircle2 size={16} />{testMessage}</p>}
               <span className="ai-provider-action-spacer" />
               <button className="button button--quiet" type="button" onClick={handleClose}>取消</button>
-              <button className="button button--dark" disabled={saving}>{saving ? "正在保存" : "保存配置"}</button>
+              <button className="button button--dark" disabled={saving || reasoningDraft.blocked}>{saving ? "正在保存" : "保存配置"}</button>
             </footer>
           </form>
         </section>

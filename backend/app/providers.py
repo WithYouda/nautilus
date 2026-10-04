@@ -15,6 +15,7 @@ from .provider_network import ProviderHTTPClient
 from .provider_messages import encode_messages
 from .teaching_wire import apply_json_output, uses_json
 from .reasoning_wire import apply_reasoning_parameters
+from .model_metadata import add_catalog_entry
 
 logger = logging.getLogger("nautilus.providers")
 
@@ -439,6 +440,10 @@ class OpenAICompatibleProvider:
 
     async def list_models(self) -> list[str]:
         """读取 OpenAI 兼容模型列表，返回去重排序后的模型 ID。"""
+        return [entry['id'] for entry in await self.list_model_catalog()]
+
+    async def list_model_catalog(self) -> list[dict[str, Any]]:
+        """Read model IDs and independently validated public metadata."""
         try:
             async with self._client() as client:
                 async with client.stream(
@@ -463,16 +468,17 @@ class OpenAICompatibleProvider:
         source = parsed.get("data") if isinstance(parsed, dict) else parsed
         if not isinstance(source, list):
             raise ProviderError("提供方模型列表格式不正确", kind="protocol_error")
-        models: set[str] = set()
+        models: dict[str, dict[str, Any]] = {}
+        metadata_conflicts = {}
         for item in source:
             candidate = item.get("id") if isinstance(item, dict) else item
             if isinstance(candidate, str):
                 candidate = candidate.strip()
                 if candidate and len(candidate) <= 120:
-                    models.add(candidate)
+                    add_catalog_entry(models, candidate, item, self.kind, metadata_conflicts)
             if len(models) >= MAX_DISCOVERED_MODELS:
                 break
-        return sorted(models, key=str.casefold)
+        return [models[model] for model in sorted(models, key=str.casefold)]
 
     @staticmethod
     async def _read_limited(

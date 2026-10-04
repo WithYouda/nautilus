@@ -8,13 +8,13 @@ from .conversations import ConversationConflict, ConversationError
 from .core.learning import utc_timestamp
 from .learning_domain import DomainError
 from .providers import ProviderConfig
-from .reasoning_control import normalize_choice, capability, compile_parameters
+from .reasoning_control import normalize_choice, capability, compile_parameters, model_default
 
 
 def normalize_override(value):
     if value is None:
         value = {}
-    if not isinstance(value, dict) or set(value) - {'model', 'timeout_seconds', 'reasoning'}:
+    if not isinstance(value, dict) or set(value) - {'model', 'timeout_seconds', 'reasoning', 'reasoning_model'}:
         raise ConversationError('模型设置格式不正确')
     model = value.get('model')
     if model is not None:
@@ -25,7 +25,11 @@ def normalize_override(value):
     timeout = value.get('timeout_seconds')
     if timeout is not None and (type(timeout) is not int or not 5 <= timeout <= 600):
         raise ConversationError('超时须为5到600秒的整数')
-    return {'model': model, 'timeout_seconds': timeout, 'reasoning': normalize_choice(value.get('reasoning'))}
+    result = {'model': model, 'timeout_seconds': timeout, 'reasoning': normalize_choice(value.get('reasoning'))}
+    binding = value.get('reasoning_model')
+    if binding is not None:
+        result['reasoning_model'] = normalize_override({'model': binding})['model']
+    return result
 
 
 def _tag(value):
@@ -101,7 +105,8 @@ class ModelControlService:
         profile = dict(row) if row else None
         override = normalize_override(None)
         reasoning = self.db.fetchone('SELECT * FROM learning_model_defaults WHERE owner_id=?', (owner,))
-        override['reasoning'] = json.loads(reasoning['reasoning_json']) if reasoning and reasoning['reasoning_json'] else None
+        # Old global reasoning rows remain historical; new requests use the
+        # selected model's own default and this conversation's explicit choice.
         override['timeout_seconds'] = profile['request_timeout_seconds'] if profile else 60
         if profile:
             override['model'] = {'provider_profile_id': profile['id'], 'provider_model_id': profile['default_model_id']}
@@ -114,9 +119,14 @@ class ModelControlService:
             WHERE owner_id=? AND scope_kind=? AND scope_id=?''', (owner, kind, scope_id))
         if row is not None:
             model = {'provider_profile_id': row['provider_profile_id'], 'provider_model_id': row['provider_model_id']} if row['provider_profile_id'] else None
-            return {'kind': kind, 'id': scope_id, 'revision': str(row['revision']),
-                    'override': {'model': model, 'timeout_seconds': row['timeout_seconds'],
-                                 'reasoning': json.loads(row['reasoning_json']) if row['reasoning_json'] else None}}
+            saved = json.loads(row['reasoning_json']) if row['reasoning_json'] else None
+            reasoning = saved.get('choice') if isinstance(saved, dict) and 'choice' in saved else saved
+            binding = saved.get('model') if isinstance(saved, dict) and 'choice' in saved else None
+            override = {'model': model, 'timeout_seconds': row['timeout_seconds'],
+                        'reasoning': reasoning if kind in {'conversation', 'discussion'} else None}
+            if binding and kind in {'conversation', 'discussion'}:
+                override['reasoning_model'] = binding
+            return {'kind': kind, 'id': scope_id, 'revision': str(row['revision']), 'override': override}
         if kind == 'conversation':
             legacy = self.chats.database.fetchone('SELECT * FROM conversation_config WHERE conversation_id=?', (scope_id,))
             if legacy:
@@ -163,21 +173,30 @@ class ModelControlService:
             if layer['override']['model'] is not None:
                 values['model'] = layer['override']['model']
                 sources['model'] = {'kind': layer['kind'], 'id': layer['id']}
-            if layer['override'].get('reasoning') is not None:
-                values['reasoning'] = layer['override']['reasoning']
-                sources['reasoning'] = {'kind': layer['kind'], 'id': layer['id']}
+        persistent_model = values['model']
         override = normalize_override(run_override)
+        if override['reasoning'] is not None or override.get('reasoning_model') is not None:
+            raise ConversationError('思考强度只设置在当前对话，不再提供仅本次覆盖')
         if override['model'] is not None:
             values['model'] = override['model']
             sources['model'] = {'kind': 'run', 'id': scope_id}
-        if override['reasoning'] is not None:
-            values['reasoning'] = override['reasoning']
-            sources['reasoning'] = {'kind': 'run', 'id': scope_id}
         profile, model, issues = self._selected(owner, values['model'])
         protocol = self.chats._protocol(profile, model['model_id']) if profile and model else None
         support = capability(profile, model, protocol) if profile and model else None
         parameters = {}
         if support:
+            default, _, required = model_default(model, support)
+            choice = layers[-1]['override'] if kind in {'conversation', 'discussion'} else {}
+            selected_choice = choice.get('reasoning')
+            selected_binding = choice.get('reasoning_model') or persistent_model
+            if selected_choice is not None and selected_choice.get('mode') != 'default' and selected_binding == values['model']:
+                values['reasoning'] = selected_choice
+                sources['reasoning'] = {'kind': kind, 'id': scope_id}
+            else:
+                values['reasoning'] = default
+                sources['reasoning'] = {'kind': 'model', 'id': model['id']} if default is not None else None
+                if required:
+                    issues.append('请在模型配置中选择默认思考强度，或在当前对话选择实际档位')
             try:
                 parameters = compile_parameters(values['reasoning'], support, protocol)
             except ConversationError as error:
@@ -232,24 +251,39 @@ class ModelControlService:
         value = normalize_override(override)
         if kind != 'global' and value['timeout_seconds'] is not None:
             raise ConversationError('超时使用所选提供方默认设置，需要延长时请使用仅本次')
+        if kind not in {'conversation', 'discussion'} and value['reasoning'] is not None:
+            raise ConversationError('请在模型配置中设置默认思考强度；对话内可单独调整')
         self._ensure_owner(owner)
         with self.lock, self.chats._provider_lock:
             current = self._layers(owner, kind, scope_id)[-1]
             if current['revision'] != expected_revision:
                 raise ConversationConflict('模型设置已变化，请刷新后重新选择')
-            if kind == 'global':
-                # Global provider settings and learning defaults live in distinct
-                # databases. Keep their updates in the dedicated atomic APIs.
-                if 'reasoning' in (override or {}) and value['reasoning'] != current['override']['reasoning']:
-                    raise ConversationError('请在全局思考默认中单独保存思考设置')
-                value['reasoning'] = current['override']['reasoning']
+            if kind in {'conversation', 'discussion'}:
+                if 'reasoning' not in (override or {}):
+                    value['reasoning'] = current['override']['reasoning']
+                    if current['override'].get('reasoning_model'):
+                        value['reasoning_model'] = current['override']['reasoning_model']
+                    elif value['reasoning'] is not None:
+                        old = self._resolve(owner, kind, scope_id)[0]['effective']
+                        value['reasoning_model'] = {k: old[k] for k in ('provider_profile_id', 'provider_model_id')}
+                elif value['reasoning'] is not None:
+                    if value['reasoning']['mode'] == 'default':
+                        value['reasoning'] = None
+                    else:
+                        target = value.get('reasoning_model') or value['model']
+                        if target is None:
+                            old = self._resolve(owner, kind, scope_id, replacement={**value, 'reasoning': None})[0]['effective']
+                            target = {k: old[k] for k in ('provider_profile_id', 'provider_model_id')}
+                        selected_profile, selected_model, problems = self._selected(owner, target)
+                        if problems:
+                            raise ConversationError(problems[0])
+                        selected_protocol = self.chats._protocol(selected_profile, selected_model['model_id'])
+                        compile_parameters(value['reasoning'], capability(selected_profile, selected_model, selected_protocol), selected_protocol)
+                        value['reasoning_model'] = target
             if value['model'] is not None:
                 profile, model, issues = self._selected(owner, value['model'])
                 if issues:
                     raise ConversationError(issues[0])
-            candidate, _, _ = self._resolve(owner, kind, scope_id, replacement=value)
-            if candidate['effective']['reasoning_capability']:
-                compile_parameters(candidate['effective']['reasoning'], candidate['effective']['reasoning_capability'], candidate['effective']['provider_kind'])
             if kind == 'global':
                 if value['model'] is None or value['timeout_seconds'] is None:
                     raise ConversationError('全局默认须选择模型并设置超时')
@@ -273,39 +307,25 @@ class ModelControlService:
     def _write(self, owner, kind, scope_id, value, connection=None):
         def write(c):
             model = value['model'] or {}
+            thought = ({'choice': value['reasoning'], 'model': value.get('reasoning_model')}
+                       if value.get('reasoning') is not None else None)
             c.execute('''INSERT INTO learning_model_config
                 (owner_id,scope_kind,scope_id,provider_profile_id,provider_model_id,timeout_seconds,reasoning_json,revision,updated_at)
                 VALUES (?,?,?,?,?,?,?,1,?) ON CONFLICT(owner_id,scope_kind,scope_id) DO UPDATE SET
                 provider_profile_id=excluded.provider_profile_id,provider_model_id=excluded.provider_model_id,
-                reasoning_json=excluded.reasoning_json,
+                reasoning_json=CASE WHEN learning_model_config.scope_kind IN ('conversation','discussion')
+                    THEN excluded.reasoning_json ELSE learning_model_config.reasoning_json END,
                 revision=learning_model_config.revision+1,updated_at=excluded.updated_at''',
                 (owner, kind, scope_id, model.get('provider_profile_id'), model.get('provider_model_id'), value['timeout_seconds'],
-                 json.dumps(value['reasoning']) if value.get('reasoning') is not None else None, utc_timestamp()))
+                 json.dumps(thought) if thought is not None else None, utc_timestamp()))
         if connection is not None:
             write(connection)
         else:
             with self.db.transaction(immediate=True) as c:
                 write(c)
 
-    def _write_default(self, owner, choice):
-        with self.db.transaction(immediate=True) as c:
-            c.execute('''INSERT INTO learning_model_defaults(owner_id,reasoning_json,revision,updated_at)
-                VALUES (?,?,1,?) ON CONFLICT(owner_id) DO UPDATE SET reasoning_json=excluded.reasoning_json,
-                revision=learning_model_defaults.revision+1,updated_at=excluded.updated_at''',
-                (owner, json.dumps(choice) if choice is not None else None, utc_timestamp()))
-
     def save_reasoning_default(self, owner, choice, expected_revision):
-        choice = normalize_choice(choice)
-        self._ensure_owner(owner)
-        with self.lock, self.chats._provider_lock:
-            current = self._global(owner)
-            if current['revision'] != expected_revision:
-                raise ConversationConflict('模型设置已变化，请刷新后重新选择')
-            candidate, _, _ = self._resolve(owner, 'global', 'default', replacement={**current['override'], 'reasoning': choice})
-            if candidate['effective']['reasoning_capability']:
-                compile_parameters(choice, candidate['effective']['reasoning_capability'], candidate['effective']['provider_kind'])
-            self._write_default(owner, choice)
-            return self.get(owner, 'global', 'default')
+        raise ConversationError('全局思考默认已移至各模型配置，请在提供方设置中修改')
 
     def runtime(self, owner, kind, scope_id, run_override=None, expected_token=None):
         with self.lock, self.chats._provider_lock:

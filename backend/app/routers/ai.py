@@ -9,7 +9,7 @@ from pydantic import BaseModel, StrictBool, ConfigDict, Field
 from ..ai_runtime import AiRunManager
 from ..conversations import ConversationConflict, ConversationError
 from ..dependencies import ai_run_manager, conversation_service, current_identity
-from ..providers import ProviderError, build_provider
+from ..providers import ProviderError, ProviderConfig, build_provider, normalize_base_url
 from ..schemas import (
     ConversationConfigRequest,
     ConversationCreateRequest,
@@ -34,6 +34,48 @@ class ReasoningSupportSave(BaseModel):
     model_config = ConfigDict(extra='forbid')
     expected_revision: str = Field(min_length=1, max_length=100)
     profile_id: str | None
+    default_choice: dict | None = None
+
+
+class ReasoningPreview(ProviderTestRequest):
+    provider_id: str | None = None
+    profile_id: str | None = None
+    default_choice: dict | None = None
+
+
+def _prepare_reasoning(request, owner, values, provider_id=None, settings=None):
+    from ..reasoning_control import prepare_configuration
+    service = conversation_service(request)
+    profile = service._provider_by_id(owner, provider_id) if provider_id else {}
+    name = (values.get('model') or profile.get('model') or '').strip()
+    if not name:
+        raise ConversationError('请先选择模型')
+    protocol = values.get('api_protocol') or service._protocol(profile if profile else None, name)
+    try:
+        base = normalize_base_url(values.get('base_url') or profile.get('base_url') or '')
+    except ValueError as error:
+        raise ConversationError(str(error)) from error
+    draft_profile = {**profile, 'base_url': base}
+    row = service.database.fetchone('SELECT * FROM provider_model WHERE provider_profile_id=? AND model_id=?',
+                                   (provider_id, name)) if provider_id else None
+    model = dict(row) if row else {'model_id': name, 'capabilities_json': '{}', 'overrides_json': '{}'}
+    key = values.get('api_key') or (service._read_key(profile['credential_key']) if profile else None)
+    metadata = {}
+    if key:
+        config = ProviderConfig(base_url=base, model=name, api_key=key, provider_kind=protocol)
+        metadata = request.app.state.model_discovery.peek_metadata(owner, config)
+    prepared, view = prepare_configuration(draft_profile, model, protocol, settings, metadata.get(name))
+    return prepared, view, protocol
+
+
+@router.post('/provider/reasoning-preview')
+def preview_reasoning(body: ReasoningPreview, request: Request, response: Response, identity=Depends(current_identity)):
+    response.headers['Cache-Control'] = 'no-store'
+    settings = {key: getattr(body, key) for key in ('profile_id', 'default_choice') if key in body.model_fields_set}
+    try:
+        return _prepare_reasoning(request, identity['id'], body.model_dump(), body.provider_id, settings)[1]
+    except ConversationError as error:
+        _raise(error)
 
 
 @router.get('/providers/{provider_id}/models/{model_id}/reasoning-support')
@@ -54,7 +96,8 @@ def save_reasoning_support(provider_id: str, model_id: str, body: ReasoningSuppo
     response.headers['Cache-Control'] = 'no-store'
     try:
         return save_support(conversation_service(request), identity['id'], provider_id, model_id,
-                            body.profile_id, body.expected_revision)
+                            body.profile_id, body.expected_revision,
+                            **({'default_choice': body.default_choice} if 'default_choice' in body.model_fields_set else {}))
     except ConversationError as error:
         _raise(error)
 
@@ -99,12 +142,18 @@ def create_provider(
     identity: dict[str, Any] = Depends(current_identity),
 ) -> dict[str, Any]:
     try:
-        provider = conversation_service(request).create_provider(
-            identity["id"], display_name=payload.display_name, base_url=payload.base_url,
-            model=payload.model, api_key=payload.api_key, enabled=payload.enabled,
-            is_default=payload.is_default, request_timeout_seconds=payload.request_timeout_seconds,
-            api_protocol=payload.api_protocol,
-        )
+        from ..reasoning_control import validate_configuration
+        service = conversation_service(request)
+        with service._provider_lock:
+            prepared, view, protocol = _prepare_reasoning(request, identity['id'], payload.model_dump(), settings=payload.reasoning_settings)
+            validate_configuration(view, protocol)
+            provider = service.create_provider(
+                identity["id"], display_name=payload.display_name, base_url=payload.base_url,
+                model=payload.model, api_key=payload.api_key, enabled=payload.enabled,
+                is_default=payload.is_default, request_timeout_seconds=payload.request_timeout_seconds,
+                api_protocol=payload.api_protocol,
+                reasoning_config=prepared,
+            )
     except ConversationError as error:
         _raise(error)
     return {"provider": provider}
@@ -118,9 +167,16 @@ def update_provider(
     identity: dict[str, Any] = Depends(current_identity),
 ) -> dict[str, Any]:
     try:
-        provider = conversation_service(request).update_provider(
-            identity["id"], provider_id, **payload.model_dump(exclude_unset=True)
-        )
+        from ..reasoning_control import validate_configuration
+        service = conversation_service(request)
+        with service._provider_lock:
+            changes = payload.model_dump(exclude_unset=True)
+            settings = changes.pop('reasoning_settings', None)
+            prepared, view, protocol = _prepare_reasoning(request, identity['id'], changes, provider_id, settings)
+            if settings is not None or {'model', 'base_url', 'api_protocol'} & changes.keys():
+                validate_configuration(view, protocol)
+            changes['api_protocol'] = protocol
+            provider = service.update_provider(identity["id"], provider_id, **changes, reasoning_config=prepared)
     except ConversationError as error:
         _raise(error)
     return {"provider": provider}
@@ -351,14 +407,13 @@ async def discover_provider_models(
 ) -> dict[str, Any]:
     service = conversation_service(request)
     try:
-        _profile, config = service.provider_form_runtime(
-            identity["id"],
-            base_url=payload.base_url,
-            api_key=payload.api_key,
-            request_timeout_seconds=payload.request_timeout_seconds,
-            api_protocol=payload.api_protocol,
-        )
-        models, cached = await request.app.state.model_discovery.discover(
+        values = dict(base_url=payload.base_url, api_key=payload.api_key,
+                      request_timeout_seconds=payload.request_timeout_seconds, api_protocol=payload.api_protocol)
+        if payload.provider_id:
+            _profile, config = service.provider_profile_form_runtime(identity['id'], payload.provider_id, **values)
+        else:
+            _profile, config = service.provider_form_runtime(identity['id'], **values)
+        models, metadata, cached = await request.app.state.model_discovery.discover_details(
             identity["id"], config, force_refresh=payload.force_refresh
         )
     except ConversationError as error:
@@ -368,7 +423,7 @@ async def discover_provider_models(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"kind": error.kind, "message": str(error)},
         ) from error
-    return {"models": models, "cached": cached, "ttl_seconds": 600}
+    return {"models": models, "reasoning_metadata": metadata, "cached": cached, "ttl_seconds": 600}
 
 
 @router.post("/providers/{provider_id}/models/discover")
@@ -385,10 +440,20 @@ async def discover_provider_profile_models(
             api_key=payload.api_key, request_timeout_seconds=payload.request_timeout_seconds,
             api_protocol=payload.api_protocol,
         )
-        models, cached = await request.app.state.model_discovery.discover(
+        models, metadata, cached = await request.app.state.model_discovery.discover_details(
             identity["id"], config, force_refresh=payload.force_refresh
         )
-        return {"models": service.discover_models(identity["id"], provider_id, models), "cached": cached, "ttl_seconds": 600}
+        with service._provider_lock:
+            service.discover_models(identity["id"], provider_id, models)
+            if normalize_base_url(profile['base_url']) == normalize_base_url(config.base_url):
+                from ..reasoning_control import prepare_configuration, persist_configuration
+                for model in service.list_models(identity['id'], provider_id):
+                    if model['model_id'] not in metadata or service._protocol(profile, model['model_id']) != config.provider_kind:
+                        continue
+                    row = service.database.fetchone('SELECT * FROM provider_model WHERE id=?', (model['id'],))
+                    prepared, _ = prepare_configuration(profile, dict(row), config.provider_kind, metadata=metadata[model['model_id']])
+                    persist_configuration(service, identity['id'], provider_id, model['id'], prepared)
+        return {"models": service.list_models(identity["id"], provider_id), "reasoning_metadata": metadata, "cached": cached, "ttl_seconds": 600}
     except ConversationError as error:
         _raise(error)
     except ProviderError as error:

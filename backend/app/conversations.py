@@ -674,6 +674,7 @@ class ConversationService:
         is_default: bool = False,
         request_timeout_seconds: int = 60,
         api_protocol: str | None = None,
+        reasoning_config: dict | None = None,
     ) -> dict[str, Any]:
         """创建独立 provider；旧单数接口仍走 save_provider。"""
         try:
@@ -722,6 +723,9 @@ class ConversationService:
                 "UPDATE provider_profile SET default_model_id = ? WHERE id = ?",
                 (model_row["id"] if model_row else None, provider_id),
             )
+            if reasoning_config is not None:
+                connection.execute('UPDATE provider_model SET capabilities_json=?,overrides_json=?,updated_at=? WHERE id=?',
+                    (reasoning_config['capabilities_json'], reasoning_config['overrides_json'], now, model_row['id']))
         self._set_model_protocol(provider_id, model, api_protocol or "openai_compatible")
         profile = self._provider_by_id(identity_id, provider_id)
         public = self._provider_public_row(profile)
@@ -789,6 +793,10 @@ class ConversationService:
             )
         with self.database.transaction() as connection:
             connection.execute("UPDATE provider_profile SET default_model_id = ? WHERE id = ?", (model_row["id"], provider_id))
+            prepared = changes.get('reasoning_config')
+            if prepared is not None:
+                connection.execute('UPDATE provider_model SET capabilities_json=?,overrides_json=?,updated_at=? WHERE id=?',
+                    (prepared['capabilities_json'], prepared['overrides_json'], now, model_row['id']))
         self._set_model_protocol(provider_id, model, protocol)
         public = self._provider_public_row(self._provider_by_id(identity_id, provider_id))
         public["models"] = self.list_models(identity_id, provider_id)

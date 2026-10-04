@@ -400,7 +400,7 @@ def test_model_discovery_uses_cache_and_supports_temporary_form_config(tmp_path)
             },
         )
         assert first.status_code == 200
-        assert first.json() == {"models": ["model-a", "model-b"], "cached": False, "ttl_seconds": 600}
+        assert first.json() == {"models": ["model-a", "model-b"], "reasoning_metadata": {}, "cached": False, "ttl_seconds": 600}
 
         second = client.post(
             "/api/ai/provider/models",

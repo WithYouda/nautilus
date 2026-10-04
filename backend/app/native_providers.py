@@ -19,6 +19,7 @@ from .provider_network import ProviderHTTPClient
 from .provider_messages import encode_messages
 from .teaching_wire import apply_json_output
 from .reasoning_wire import apply_reasoning_parameters
+from .model_metadata import add_catalog_entry
 
 MAX_EVENT_BYTES = 512 * 1024
 MAX_EVENTS = 10000
@@ -158,9 +159,12 @@ class _NativeProvider:
             raise ProviderError(f"无法连接提供方：{type(error).__name__}", kind="network_error") from error
 
     async def list_models(self) -> list[str]:
+        return [entry['id'] for entry in await self.list_model_catalog()]
+
+    async def list_model_catalog(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
-    async def _model_list(self, url: str, *, key: str = "data") -> list[str]:
+    async def _model_catalog(self, url: str, *, key: str = "data") -> list[dict[str, Any]]:
         try:
             async with self._client() as client:
                 async with client.stream("GET", url, headers=self._headers()) as response:
@@ -178,12 +182,14 @@ class _NativeProvider:
         values = _object(parsed).get(key)
         if not isinstance(values, list):
             raise ProviderError("提供方模型列表格式不正确", kind="protocol_error")
-        result = set()
+        result = {}
+        metadata_conflicts = {}
         for value in values[:500]:
             model = (_object(value).get("name") if self.kind == "google" else _object(value).get("id")) if isinstance(value, dict) else value
             if isinstance(model, str) and 0 < len(model.strip()) <= 120:
-                result.add(model.strip().removeprefix("models/") if self.kind == "google" else model.strip())
-        return sorted(result, key=str.casefold)
+                candidate = model.strip().removeprefix("models/") if self.kind == "google" else model.strip()
+                add_catalog_entry(result, candidate, value, self.kind, metadata_conflicts)
+        return [result[model] for model in sorted(result, key=str.casefold)]
 
     async def test_connection(self) -> dict[str, Any]:
         started = time.monotonic()
@@ -312,9 +318,9 @@ class OpenAIResponsesProvider(_NativeProvider):
             raise ProviderError("提供方没有返回最终文本", kind="protocol_error")
         return value
 
-    async def list_models(self) -> list[str]:
+    async def list_model_catalog(self) -> list[dict[str, Any]]:
         base = self.base.removesuffix("/responses")
-        return await self._model_list(f"{base}/models")
+        return await self._model_catalog(f"{base}/models")
 
 
 class GoogleProvider(_NativeProvider):
@@ -428,8 +434,8 @@ class GoogleProvider(_NativeProvider):
             raise ProviderError("提供方没有返回最终文本", kind="protocol_error")
         return value
 
-    async def list_models(self) -> list[str]:
-        return await self._model_list(f"{self.base}/models", key="models")
+    async def list_model_catalog(self) -> list[dict[str, Any]]:
+        return await self._model_catalog(f"{self.base}/models", key="models")
 
 
 class AnthropicProvider(_NativeProvider):
@@ -547,5 +553,5 @@ class AnthropicProvider(_NativeProvider):
                 raise ProviderError("提供方未返回 JSON 对象", kind="protocol_error")
         return value
 
-    async def list_models(self) -> list[str]:
-        return await self._model_list(f"{self.base.removesuffix('/messages')}/models")
+    async def list_model_catalog(self) -> list[dict[str, Any]]:
+        return await self._model_catalog(f"{self.base.removesuffix('/messages')}/models")
