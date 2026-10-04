@@ -32,6 +32,7 @@ class QuestionDiscussionService:
         self.tasks = {}
         self.recorders = {}
         self.current_state = None
+        self.model_control = getattr(self.chats, 'model_control', None)
         self.outbound = getattr(self.chats, "outbound", None) or OutboundApprovals()
 
     def recover(self):
@@ -153,6 +154,7 @@ class QuestionDiscussionService:
                 results.append({**ref, **text})
         return results[:6]
 
+    @material_guard
     def get(self, identity, discussion_id):
         owner = self.learning.principal(identity).owner_id
         # Do not combine a pre-purge source with post-purge turns in one response.
@@ -171,13 +173,19 @@ class QuestionDiscussionService:
             previous = turn['id']
         turns = [self._public_turn(owner, discussion['delegation_id'], turn) for turn in turns]
         try:
-            _profile, config = self.verification._runtime(owner, discussion['session_id'])
-            protocol = config.provider_kind
-            database = getattr(self.chats, 'database', None)
-            model = database.fetchone('SELECT id,capabilities_json FROM provider_model WHERE provider_profile_id=? AND model_id=?',
-                                      (_profile['id'], config.model)) if database is not None and _profile.get('id') else None
-            image_model = {'provider_profile_id': _profile['id'], 'provider_model_id': model['id'],
-                           'model': config.model, 'supports_image_input': json.loads(model['capabilities_json'] or '{}').get('supports_image_input')} if model else None
+            if self.model_control is not None:
+                effective = self.model_control.get(owner, 'discussion', discussion_id)['effective']
+                protocol = effective['provider_kind']
+                image_model = {'provider_profile_id': effective['provider_profile_id'], 'provider_model_id': effective['provider_model_id'],
+                               'model': effective['model_id'], 'supports_image_input': effective['supports_image_input']} if effective['model_id'] else None
+            else:
+                _profile, config = self.verification._runtime(owner, discussion['session_id'])
+                protocol = config.provider_kind
+                database = getattr(self.chats, 'database', None)
+                model = database.fetchone('SELECT id,capabilities_json FROM provider_model WHERE provider_profile_id=? AND model_id=?',
+                                          (_profile['id'], config.model)) if database is not None and _profile.get('id') else None
+                image_model = {'provider_profile_id': _profile['id'], 'provider_model_id': model['id'],
+                               'model': config.model, 'supports_image_input': json.loads(model['capabilities_json'] or '{}').get('supports_image_input')} if model else None
         except (ConversationError, DomainError):
             protocol = None
             image_model = None
@@ -193,6 +201,8 @@ class QuestionDiscussionService:
     def _public_turn(self, owner, delegation_id, turn):
         turn = dict(turn)
         snapshot = json.loads(turn.pop('provider_snapshot_json'))
+        from .model_control import public_snapshot
+        turn['model_config'] = public_snapshot(snapshot)
         reply = snapshot.get('reply', {})
         if snapshot.get('branch_origin'):
             origin = snapshot['branch_origin']
@@ -264,7 +274,10 @@ class QuestionDiscussionService:
     @material_guard
     def start(self, identity, discussion_id, content, request_key, retry=False,
               regenerate_turn_id=None, parent_turn_id=None, edit_turn_id=None, search=None, help_request=None, source_scope=None,
-              current_state_revision=None, public_search_query=None, attachment_version_ids=None, teaching_mode=None, teaching_action=None):
+              current_state_revision=None, public_search_query=None, attachment_version_ids=None, teaching_mode=None, teaching_action=None,
+              model_override=None, model_config_token=None):
+        from .model_control import normalize_override
+        normalized_model_override = normalize_override(model_override)
         if retry:
             raise DomainError('discussion_regeneration_required', 422)
         if edit_turn_id and (regenerate_turn_id or parent_turn_id):
@@ -291,8 +304,14 @@ class QuestionDiscussionService:
         if source_scope and source_scope.get('mode') != 'unspecified' and not materials:
             raise DomainError('material_scope_invalid', 422)
         image_runtime = None
-        if any(item.get('input_mode') == 'image' for item in (frozen or {}).get('materials', [])):
-            image_runtime = self.verification._runtime(owner, discussion['session_id'])
+        model_runtime = None
+        model_snapshot = {}
+        if not existing_turn and self.model_control is not None:
+            profile, config, model_snapshot = self.model_control.runtime(owner, 'discussion', discussion_id,
+                                                                         model_override, model_config_token)
+            model_runtime = (profile, config)
+        if not existing_turn and any(item.get('input_mode') == 'image' for item in (frozen or {}).get('materials', [])):
+            image_runtime = model_runtime or self.verification._runtime(owner, discussion['session_id'])
             require_image_capability(self.chats, owner, image_runtime[0]['id'], image_runtime[1].model, frozen)
         material_bound = bool(frozen and frozen['mode'] != 'unspecified')
         original_snapshot = None
@@ -316,7 +335,7 @@ class QuestionDiscussionService:
         runtime_snapshot = {}
         if not existing_turn:
             try:
-                prepared_runtime = image_runtime or self.verification._runtime(owner, discussion['session_id'])
+                prepared_runtime = model_runtime or image_runtime or self.verification._runtime(owner, discussion['session_id'])
                 profile, config = prepared_runtime
                 runtime_snapshot = {
                     'runtime_snapshot_schema_version': 1,
@@ -327,7 +346,11 @@ class QuestionDiscussionService:
                     'base_url': config.base_url,
                     'timeout_seconds': config.timeout_seconds,
                     'discussion_prompt_schema_version': 2,
+                    'model_override': normalized_model_override,
                 }
+                if model_snapshot:
+                    runtime_snapshot['model_control'] = model_snapshot['model_control']
+                    runtime_snapshot['provider_model_id'] = model_snapshot['model']['id']
                 if getattr(self.chats, 'search_service', None):
                     search_run = self.chats.search_service.prepare(owner, search, config.provider_kind)
             except (SearchError, ConversationError, DomainError) as error:
@@ -350,6 +373,8 @@ class QuestionDiscussionService:
             turn = c.execute('SELECT * FROM learning_discussion_turn WHERE discussion_id=? AND request_key=?', (discussion_id, request_key)).fetchone()
             if turn:
                 saved_snapshot = json.loads(turn['provider_snapshot_json'])
+                if normalize_override(saved_snapshot.get('model_override')) != normalized_model_override:
+                    raise DomainError('idempotency_conflict', 409)
                 saved_reply = saved_snapshot.get('reply', {})
                 if (turn['user_content'] != content or saved_reply.get('retry_of') != regenerate_turn_id
                         or saved_reply.get('requested_parent') != parent_turn_id

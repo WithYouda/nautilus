@@ -16,6 +16,54 @@ from app.learning_production import (
 from test_evidence_claims import authorize, create_standard_chain
 
 
+@pytest.mark.asyncio
+async def test_upgrade_039_to_040_preserves_every_old_table_and_discussion_snapshot(tmp_path):
+    from app.config import Settings
+    from app.db import Database
+    from app.learning_service import LearningService
+    from app.question_discussion import QuestionDiscussionService
+    from test_learning_verifications import IDENTITY, response_transport
+    from test_material_originals import _business_rows
+    from test_verification_review import attempt
+
+    path = tmp_path / 'learning-039.sqlite3'
+    database = Database(path, Settings.from_env().migrations_dir, migration_floor=11, migration_ceiling=39)
+    LearningService(database).principal(IDENTITY)
+    verification, original = await attempt(database)
+    discussion = QuestionDiscussionService(verification)
+    thread = discussion.create(IDENTITY, original['id'], original['latest_submission_id'], 'q1', 'existing-discussion')
+    verification.transport = response_transport(['{"history_query":null}', 'Existing synthetic reply'])
+    await discussion.send(IDENTITY, thread['id'], 'Existing synthetic question', 'existing-turn')
+    verification.link_legacy_submissions(IDENTITY)
+    with database.transaction() as connection:
+        connection.execute('''INSERT INTO learning_task_material
+            (id,material_id,owner_id,scope_kind,scope_id,version,title,content,content_kind,provenance_json,created_at)
+            VALUES ('old-material','old-group',?,'discussion',?,1,'Old title','Existing material','text','{}','now')''',
+            (IDENTITY['id'], thread['id']))
+        connection.execute("INSERT INTO learning_material_original(version_id,filename,media_type,content,sha256) VALUES ('old-material','old.txt','text/plain',?,'synthetic-hash')", (b'EXISTING_ORIGINAL_039',))
+    before = _business_rows(database.connection)
+    definitions = dict(database.connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations'"))
+    database.close()
+
+    result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
+    assert result['status'] == 'upgraded'
+    assert result['preflight']['applied_migrations'][-1] == '039_material_ocr'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '040_model_control'
+    assert result['pre_upgrade_backup']['applied_migrations'][-1] == '039_material_ocr'
+    assert result['pre_upgrade_backup']['integrity_check'] == 'ok'
+    assert len(list((tmp_path / 'backups').glob('*.sqlite3'))) == 2
+    assert Path(result['post_upgrade_backup_path']).is_file()
+    with closing(sqlite3.connect(path)) as connection:
+        after = _business_rows(connection)
+        assert {table: after[table] for table in before} == before
+        assert set(after) - set(before) == {'learning_model_config'}
+        assert after['learning_model_config'] == []
+        assert {name: connection.execute('SELECT sql FROM sqlite_master WHERE name=?', (name,)).fetchone()[0]
+                for name in definitions} == definitions
+        assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+        assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+
+
 def test_upgrade_029_to_current_preserves_existing_learning_facts(tmp_path):
     from app.config import Settings
     from app.db import Database
@@ -31,7 +79,7 @@ def test_upgrade_029_to_current_preserves_existing_learning_facts(tmp_path):
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '029_discussion_reasoning'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '039_material_ocr'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '040_model_control'
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute('SELECT * FROM learning_event ORDER BY position').fetchall() == before
         assert connection.execute('SELECT status FROM learning_session WHERE id=?', (context['session_id'],)).fetchone()[0] == 'running'

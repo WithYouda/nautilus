@@ -310,6 +310,8 @@ class ConversationUpdateRequest(BaseModel):
 
 
 class MessageSendRequest(BaseModel):
+    model_override: dict[str, Any] | None = None
+    model_config_token: str | None = Field(default=None, min_length=1, max_length=100)
     teaching_mode: Literal['default', 'stepwise', 'socratic', 'feynman', 'practice_first', 'project', 'adaptive'] | None = None
     teaching_action: Literal['practice', 'retell', 'continue', 'next_question', 'next_step'] | None = None
     public_search_query: str | None = None
@@ -657,6 +659,8 @@ class QuestionDiscussionCreateRequest(BaseModel):
 
 
 class QuestionDiscussionMessageRequest(BaseModel):
+    model_override: dict[str, Any] | None = None
+    model_config_token: str | None = Field(default=None, min_length=1, max_length=100)
     teaching_mode: Literal['default', 'stepwise', 'socratic', 'feynman', 'practice_first', 'project', 'adaptive'] | None = None
     teaching_action: Literal['practice', 'retell', 'continue', 'next_question', 'next_step'] | None = None
     public_search_query: str | None = None

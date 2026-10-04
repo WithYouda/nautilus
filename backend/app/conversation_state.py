@@ -101,13 +101,10 @@ class CurrentConversationState:
         if selection.get('mode') == 'external' and not selection.get('service_id'):
             raise DomainError('conversation_state_search_invalid', 422)
         try:
-            protocol = 'openai_responses'
-            if selection.get('mode') == 'native' and kind == 'conversation':
-                protocol = self.conversations.runtime_for_conversation(owner, scope_id)[1].provider_kind
-            elif selection.get('mode') == 'native' and kind == 'discussion':
-                discussion = self.discussions._owned(owner, scope_id)
-                protocol = self.discussions.verification._runtime(owner, discussion['session_id'])[1].provider_kind
-            self.search.prepare(owner, selection, protocol)
+            # This is the saved tool choice, not a model capability check. The
+            # actual send validates native support against its frozen model,
+            # including a one-run override. A model change cannot rewrite grants.
+            self.search.prepare(owner, selection, 'openai_responses')
         except (SearchError, ConversationError, DomainError) as error:
             raise DomainError('conversation_state_search_invalid', 422) from error
 

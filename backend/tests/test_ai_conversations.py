@@ -1209,15 +1209,15 @@ def test_provider_runtime_is_read_once_and_config_version_is_frozen(tmp_path, mo
         configure_provider(client)
         conversation_id = start_conversation(client, task_id)
         service = client.app.state.conversations
-        original = service.provider_runtime
+        original = service.model_control.runtime
         calls = 0
 
-        def counted(identity):
+        def counted(*args, **kwargs):
             nonlocal calls
             calls += 1
-            return original(identity)
+            return original(*args, **kwargs)
 
-        monkeypatch.setattr(service, "provider_runtime", counted)
+        monkeypatch.setattr(service.model_control, "runtime", counted)
         sent = client.post(
             f"/api/ai/conversations/{conversation_id}/messages",
             json={"content": "读取一次配置", "client_message_id": "client-1"},

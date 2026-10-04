@@ -108,6 +108,8 @@ class AiRunManager:
         source_scope: dict | None = None,
         attachment_version_ids: list[str] | None = None,
         current_state_revision: int | None = None,
+        model_override: dict | None = None,
+        model_config_token: str | None = None,
     ) -> dict[str, Any]:
         prepared = self.conversations.prepare_run(
             identity_id,
@@ -121,6 +123,7 @@ class AiRunManager:
             **({"source_scope": source_scope} if source_scope is not None else {}),
             attachment_version_ids=attachment_version_ids,
             current_state_revision=current_state_revision,
+            model_override=model_override, model_config_token=model_config_token,
             **({"regenerate_message_id": regenerate_message_id,
                 "parent_message_id": parent_message_id,
                 "edit_message_id": edit_message_id}

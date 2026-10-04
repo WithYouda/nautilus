@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { chooseReturnReview, getLearningRoom, getLearningState, getReturnReview, type LearningRoomBrief, type LearningState } from './api';
 import LearningPageHeader from './LearningPageHeader';
+import ScopedModelControl from './ModelControl';
 import GoalClosure, { goalIsClosed, goalStatusLabel } from './GoalClosure';
 
 export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
@@ -51,12 +52,14 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
       })}</nav>
       {selected ? <section className="learning-plan-detail" aria-label="计划详情">
         <header><p className="eyebrow">学习目标</p><h2>{goal?.title || selected.title}</h2>{goal && <span className="learning-state-label">{goalStatusLabel(goal.status)}</span>}{goal?.description && <p>{goal.description}</p>}<p className="learning-plan-detail__route">{selected.title}</p>{goal && <button className="text-button" onClick={() => setReviewGoalId(goal.id)}>调整目标状态</button>}</header>
+        <ScopedModelControl key={selected.id} kind="plan" id={selected.id} />
         <div className="learning-plan-detail__heading"><h3>学习任务</h3>{selected.status === 'active' && !closedGoal && <button className="button button--accent" onClick={() => onCreate(selected.id)}>添加下一步</button>}</div>
         {closedGoal && <p>目标{goalStatusLabel(goal!.status)}。已有任务和学习记录仍可查看；重新开启目标后可继续安排学习。</p>}
         {tasks.map((task, index) => {
           const delegations = state!.delegations.filter(item => item.action_id === task.id);
           return <article className="learning-plan-task" key={task.id}><div className="learning-plan-task__title"><span className="learning-plan-task__number">{String(index + 1).padStart(2, '0')}</span><h4>{task.title}</h4><span className="learning-state-label">{task.status === 'completed' ? '已完成' : closedGoal ? '未完成' : delegations.some(item => item.status === 'active') ? '正在学习' : '已保存'}</span></div>
             {delegations.map(delegation => <div className="learning-plan-task__body" key={delegation.id}><p>{delegation.behavior}</p><div className="learning-action-row">{!closedGoal && task.status === 'open' && ['ready', 'active'].includes(delegation.status) && <button className="button button--quiet" disabled={busy} onClick={() => void continueTask(delegation.id)}>{delegation.status === 'ready' ? '开始学习' : '继续学习'}</button>}<button className="text-button" onClick={() => onOpenRecord(delegation.id)}>查看记录</button></div></div>)}
+            <ScopedModelControl kind="task" id={task.id} />
           </article>;
         })}
         {!tasks.length && <p>{closedGoal ? '这个目标尚无任务。' : '还没有任务，添加下一步开始学习。'}</p>}

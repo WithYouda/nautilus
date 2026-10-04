@@ -1,0 +1,17 @@
+.model-control-entry { margin: .65rem 0; }
+.model-control-entry > summary, .model-config-history > summary { color: var(--text-muted, #687482); cursor: pointer; font-size: .8rem; width: fit-content; }
+.model-control-entry > summary { display: flex; align-items: center; gap: .4rem; }
+.model-control { display: grid; gap: .75rem; max-width: 28rem; padding: .75rem 0; min-width: 0; }
+.model-control label { display: grid; gap: .3rem; font-size: .8rem; }
+.model-control select, .model-control input { width: 100%; min-width: 0; box-sizing: border-box; background: var(--surface, #fff); color: inherit; border: 1px solid var(--border, #d7dfe5); border-radius: .4rem; padding: .55rem; font: inherit; }
+.model-control__scope { display: flex; gap: .4rem; }
+.model-control__scope button { background: transparent; color: inherit; border: 1px solid var(--border, #d7dfe5); border-radius: .4rem; padding: .35rem .6rem; cursor: pointer; }
+.model-control__scope button[aria-pressed="true"] { border-color: var(--accent, #187c72); background: color-mix(in srgb, var(--accent, #187c72) 9%, transparent); }
+.model-control__summary p, .model-control > p { margin: 0; font-size: .8rem; line-height: 1.55; overflow-wrap: anywhere; }
+.model-control__summary small { display: block; color: var(--text-muted, #687482); font-size: .72rem; }
+.model-control__summary p + p { margin-top: .35rem; }
+.model-control__actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+.model-control__once { color: var(--accent, #187c72); }
+.model-config-history { margin: .55rem 0 .25rem; }
+.model-config-history .model-control__summary { padding: .5rem 0; }
+@media (max-width: 480px) { .model-control { max-width: 100%; } .model-control select { font-size: .8rem; } }

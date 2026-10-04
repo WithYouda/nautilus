@@ -133,6 +133,11 @@ def test_learning_database_is_independent_from_legacy_database(client):
         "033_task_materials",
         "034_discussion_branch_map",
         "035_conversation_current_state",
+        "036_material_originals",
+        "037_material_library",
+        "038_material_library_removal",
+        "039_material_ocr",
+        "040_model_control",
     ]
 
 

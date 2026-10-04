@@ -541,6 +541,9 @@ async def send_discussion_message(discussion_id: str, payload: QuestionDiscussio
         return request.app.state.discussions.start(identity, discussion_id, **payload.model_dump())
     except DomainError as error:
         _raise_learning_error(error)
+    except ConversationError as error:
+        from ..conversations import ConversationConflict
+        raise HTTPException(status_code=409 if isinstance(error, ConversationConflict) else 400, detail=str(error)) from error
 
 
 @router.post('/discussions/{discussion_id}/turns/{turn_id}/help-display')

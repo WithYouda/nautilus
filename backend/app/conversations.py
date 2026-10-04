@@ -104,6 +104,7 @@ class ConversationService:
         self.current_state = None
         self.preferences = None
         self.adaptive_preferences = None
+        self.model_control = None
         self._teaching_checks = set()
 
     def teaching_output(self, owner, profile, config, *, search=None, scope=None):
@@ -424,6 +425,16 @@ class ConversationService:
 
     def conversation_config_public(self, identity_id: str, conversation_id: str) -> dict[str, Any] | None:
         self.owned_conversation(identity_id, conversation_id)
+        if self.model_control is not None:
+            view = self.model_control.get(identity_id, 'conversation', conversation_id)
+            if view['override']['model'] is None:
+                return None
+            effective = view['effective']
+            return dict(conversation_id=conversation_id, **view['override']['model'],
+                        timeout_override_seconds=view['override']['timeout_seconds'],
+                        config_version=int(view['revision'].removeprefix('legacy:')),
+                        provider_display_name=effective['provider_display_name'], model_id=effective['model_id'],
+                        model_display_name=effective['model_display_name'], updated_at=None)
         selection = self._selection_for_conversation(conversation_id)
         if not selection:
             return None
@@ -449,6 +460,12 @@ class ConversationService:
         timeout_override_seconds: int | None = None,
     ) -> dict[str, Any]:
         self.owned_conversation(identity_id, conversation_id)
+        if self.model_control is not None:
+            current = self.model_control.get(identity_id, 'conversation', conversation_id)
+            self.model_control.save(identity_id, 'conversation', conversation_id,
+                {'model': {'provider_profile_id': provider_id, 'provider_model_id': model_id},
+                 'timeout_seconds': timeout_override_seconds}, current['revision'])
+            return self.conversation_config_public(identity_id, conversation_id)
         profile = self._provider_by_id(identity_id, provider_id)
         model = self.database.fetchone(
             "SELECT * FROM provider_model WHERE id = ? AND provider_profile_id = ?",
@@ -488,6 +505,10 @@ class ConversationService:
 
     def clear_conversation_config(self, identity_id: str, conversation_id: str) -> None:
         self.owned_conversation(identity_id, conversation_id)
+        if self.model_control is not None:
+            current = self.model_control.get(identity_id, 'conversation', conversation_id)
+            self.model_control.save(identity_id, 'conversation', conversation_id, {}, current['revision'])
+            return
         with self.database.transaction() as connection:
             connection.execute(
                 "DELETE FROM conversation_config WHERE conversation_id = ?",
@@ -907,8 +928,12 @@ class ConversationService:
         self,
         identity_id: str,
         conversation_id: str,
+        model_override: dict | None = None,
+        model_config_token: str | None = None,
     ) -> tuple[dict[str, Any], ProviderConfig, dict[str, Any]]:
         """解析对话选择并一次性构建运行快照。快照写库前不暴露密钥。"""
+        if self.model_control is not None:
+            return self.model_control.runtime(identity_id, 'conversation', conversation_id, model_override, model_config_token)
         self.owned_conversation(identity_id, conversation_id)
         selection = self._selection_for_conversation(conversation_id)
         if selection is None:
@@ -1521,6 +1546,8 @@ class ConversationService:
             item["source_scope"] = public_scope(snapshot.get("source_scope"), item["content"])
             item["attachment_version_ids"] = snapshot.get("attachment_version_ids", [])
             if item["role"] == "assistant":
+                from .model_control import public_snapshot
+                item['model_config'] = public_snapshot(snapshot)
                 from .teaching_runtime import public as public_teaching
                 item['teaching'] = public_teaching(snapshot, item['status'])
                 if snapshot.get('branch_origin'):
@@ -1657,6 +1684,7 @@ class ConversationService:
         self, conversation_id, client_message_id, content, *, connection=None,
         regenerate_message_id=None, parent_message_id=None, edit_message_id=None, search=None, help_request=None, source_scope=None,
         attachment_version_ids=None, teaching_mode=None, teaching_action=None,
+        model_override=None,
     ):
         query = connection.execute if connection is not None else self.database.connection.execute
         existing = query("SELECT * FROM message WHERE conversation_id=? AND client_message_id=?",
@@ -1668,6 +1696,9 @@ class ConversationService:
         if not run:
             raise ConversationError("这条消息已提交，但缺少对应的 AI 运行记录")
         snapshot = json.loads(run["config_snapshot_json"] or "{}")
+        from .model_control import normalize_override
+        if normalize_override(snapshot.get('model_override')) != normalize_override(model_override):
+            raise ConversationConflict('同一 client_message_id 已用于不同的模型设置')
         if snapshot.get("attachment_version_ids", []) != (attachment_version_ids or []):
             raise ConversationConflict("同一 client_message_id 已用于不同的附件")
         if snapshot.get("source_request", {"mode": "unspecified", "version_ids": []}) != (source_scope or {"mode": "unspecified", "version_ids": []}):
@@ -1709,6 +1740,8 @@ class ConversationService:
         source_scope: dict | None = None,
         attachment_version_ids: list[str] | None = None,
         current_state_revision: int | None = None,
+        model_override: dict | None = None,
+        model_config_token: str | None = None,
     ) -> dict[str, Any]:
         """写入用户消息、上下文快照、助手占位消息和 queued 运行记录。
 
@@ -1735,7 +1768,7 @@ class ConversationService:
                 if teaching_action is None:
                     teaching_action = original_snapshot.get('teaching_action')
 
-        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action)
+        replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action, model_override=model_override)
         if replayed:
             return replayed
         if self.current_state is not None:
@@ -1752,7 +1785,7 @@ class ConversationService:
 
         # 冻结本次运行使用的配置；提交后不再二次读取可变的 provider 状态。
         profile, config, config_snapshot = self.runtime_for_conversation(
-            identity_id, conversation_id
+            identity_id, conversation_id, model_override, model_config_token
         )
 
         frozen = None
@@ -1809,7 +1842,7 @@ class ConversationService:
                 replayed = self._existing_submission(
                     conversation_id, client_message_id, text, connection=connection,
                     regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id,
-                    edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action
+                    edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action, model_override=model_override
                 )
                 if replayed:
                     return replayed
@@ -2002,7 +2035,7 @@ class ConversationService:
         except sqlite3.IntegrityError as error:
             # 并发提交命中唯一索引：另一个协程已经写入了同一个 client_message_id。
             # 返回对方的运行记录，不重复追加消息，也不报错。
-            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action)
+            replayed = self._existing_submission(conversation_id, client_message_id, text, regenerate_message_id=regenerate_message_id, parent_message_id=parent_message_id, edit_message_id=edit_message_id, search=search, help_request=help_request, source_scope=source_scope, attachment_version_ids=attachment_version_ids, teaching_mode=teaching_mode, teaching_action=teaching_action, model_override=model_override)
             if replayed:
                 return replayed
             active = self.active_run(identity_id, conversation_id)

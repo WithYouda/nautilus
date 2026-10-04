@@ -218,11 +218,11 @@ def test_formal_038_to_039_preserves_all_old_rows_and_original_bytes(tmp_path):
     db.close()
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['preflight']['applied_migrations'][-1] == '038_material_library_removal'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '039_material_ocr'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '040_model_control'
     with closing(sqlite3.connect(path)) as c:
         after = _business_rows(c)
         assert {table: after[table] for table in before} == before
-        assert set(after) - set(before) == {'learning_material_ocr'}
+        assert set(after) - set(before) == {'learning_material_ocr', 'learning_model_config'}
         assert after['learning_material_ocr'] == []
         assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         assert c.execute('PRAGMA foreign_key_check').fetchall() == []

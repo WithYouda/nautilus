@@ -47,6 +47,8 @@ from .materials import MaterialService
 from .material_ocr import MaterialOCR
 from .obsidian import ObsidianService
 from .conversation_state import CurrentConversationState
+from .model_control import ModelControlService
+from .routers import model_control
 from .routers import materials
 from .routers import material_ocr
 from .routers import obsidian
@@ -127,6 +129,9 @@ def create_app(
         )
         verification_service.evidence = evidence_service
         discussion_service = QuestionDiscussionService(verification_service)
+        model_control_service = ModelControlService(learning_service, conversation_service)
+        conversation_service.model_control = model_control_service
+        discussion_service.model_control = model_control_service
         current_state = CurrentConversationState(material_service, conversation_service, discussion_service, search_service)
         conversation_service.current_state = current_state
         discussion_service.current_state = current_state
@@ -160,6 +165,7 @@ def create_app(
         app.state.verification = verification_service
         app.state.discussions = discussion_service
         app.state.conversation_state = current_state
+        app.state.model_control = model_control_service
         app.state.agent_runtime = agent_runtime
         app.state.state_derivation = state_derivation_service
         app.state.review = review_service
@@ -251,6 +257,7 @@ def create_app(
     app.include_router(delayed_follow_up.router)
     app.include_router(ai.router)
     app.include_router(conversation_state.router)
+    app.include_router(model_control.router)
     app.include_router(search.router)
     app.include_router(outbound.router)
     app.include_router(materials.router)

@@ -199,7 +199,7 @@ export default function Workspace({ health, identity, onLogout }: {
         : <LearningRecords key={pageKey} onClose={() => chooseView("home")} onLearning={brief => openRoom("", brief)} />}
       <Settings open={settingsOpen} section={settingsSection} provider={aiProvider} onClose={() => setSettingsOpen(false)} onOpenSearchSettings={() => setSearchSettingsOpen(true)} onOpenProviderSettings={() => setProviderDialogOpen(true)} />
       <SearchSettings open={searchSettingsOpen} onClose={() => setSearchSettingsOpen(false)} />
-      <AiProviderDialog open={providerDialogOpen} provider={aiProvider} onClose={() => setProviderDialogOpen(false)} onChanged={setAiProvider} />
+      <AiProviderDialog open={providerDialogOpen} provider={aiProvider} onClose={() => setProviderDialogOpen(false)} onChanged={provider => { setAiProvider(provider); window.dispatchEvent(new Event('nautilus:model-settings-changed')); }} />
     </section>
     {mode === "manage" && <>
       <div className="v6-resizer v6-resizer--companion" role="separator" aria-label="调整 AI 伙伴栏宽度" onPointerDown={event => resizeColumn("companion", event)} />

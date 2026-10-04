@@ -1,12 +1,13 @@
 import useConversationState, { isStateConflict, isStateRejected } from './useConversationState';
 import ConversationStateNotice from './ConversationStateNotice';
+import { ModelControlEditor, ModelControlNotice, ModelConfigHistory, useModelControl } from './ModelControl';
 import BranchMap from './BranchMap';
 import useReplyHistory from "./useReplyHistory";
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
 import { setReviewLocation } from "./LearningRecords";
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject, type ReactNode } from "react";
-import { ArrowLeft, Bot, Check, CircleAlert, History, ListChecks, MapPin, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState, type RefObject, type ReactNode } from "react";
+import { ArrowLeft, Bot, Check, CircleAlert, History, ListChecks, MapPin, Pencil, Plus, RefreshCw, ShieldCheck, Sparkles, Square, SlidersHorizontal, Trash2, X } from "lucide-react";
 import LearningMarkdown from "./LearningMarkdown";
 import SearchControls, { type SearchSelection } from "./SearchControls";
 import OutboundApproval from './OutboundApproval';
@@ -24,11 +25,9 @@ import {
   recordAiHelpDisplay,
   cancelAiRun,
   branchAiConversation,
-  clearAiConversationConfig,
   createAiConversation,
   deleteAiConversation,
   getAiConversation,
-  getAiConversationConfig,
   getAiContextPreview,
   getLearningRoom,
   getReturnReview,
@@ -48,8 +47,6 @@ import {
   type TeachingSelection,
   type TeachingAction,
   type AiProvider,
-  type AiProviderModel,
-  type AiConversationConfig,
   type AiContextScope,
   type AiLearningContext,
   type AiRun,
@@ -58,6 +55,7 @@ import {
   type MaterialVersion,
   type LearningRoomBrief,
   type Task,
+  type ModelOverride,
 } from "./api";
 import DialogPortal from "./DialogPortal";
 import useDismissibleLayer from "./useDismissibleLayer";
@@ -78,6 +76,8 @@ type PendingSubmission = {
   targetId: string | null;
   conversationId: string | null;
   clientMessageId: string;
+  modelOverride?: ModelOverride | null;
+  modelConfigToken?: string | null;
   search?: SearchSelection;
   publicQuery?: string;
   sourceScope?: SourceScope;
@@ -140,6 +140,8 @@ function readSession(): RoomSession | null {
             editMessageId: parsed.pending.editMessageId,
             parentMessageId: parsed.pending.parentMessageId,
             clientMessageId: typeof parsed.pending.clientMessageId === "string" ? parsed.pending.clientMessageId : "",
+            modelOverride: parsed.pending.modelOverride,
+            modelConfigToken: parsed.pending.modelConfigToken,
             search: parsed.pending.search && typeof parsed.pending.search === "object" && ["off", "external", "native"].includes(parsed.pending.search.mode) ? parsed.pending.search : undefined,
             attachmentVersionIds: Array.isArray(parsed.pending.attachmentVersionIds) ? parsed.pending.attachmentVersionIds.filter((value): value is string => typeof value === 'string') : [],
             sourceScope: parsed.pending.sourceScope && ['unspecified', 'reference', 'only'].includes(parsed.pending.sourceScope.mode) && Array.isArray(parsed.pending.sourceScope.version_ids) ? parsed.pending.sourceScope : undefined,
@@ -314,9 +316,7 @@ export default function AiLearningRoom({
   const [editingTitle, setEditingTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<AiConversation | null>(null);
   const [historyDismissSuspended, setHistoryDismissSuspended] = useState(false);
-  const [conversationConfig, setConversationConfig] = useState<AiConversationConfig | null>(null);
   const [draftConfig, setDraftConfig] = useState<DraftConfig | null>(readSession()?.draftConfig ?? null);
-  const [configBusy, setConfigBusy] = useState(false);
   const [openLayer, setOpenLayer] = useState<"history" | "config" | "context" | null>(null);
   const [verificationOpen, setVerificationOpen] = useState(learningBrief?.open_verification === true);
   const [verificationCompleted, setVerificationCompleted] = useState(false);
@@ -376,6 +376,8 @@ export default function AiLearningRoom({
   }, []);
   const currentRun = detail?.active_run ?? null;
   const conversationId = detail?.conversation.id ?? null;
+  const modelControl = useModelControl(conversationId ? 'conversation' : learningBrief?.action_id ? 'task' : 'global', conversationId ?? learningBrief?.action_id ?? 'default');
+  const modelEffective = modelControl.config?.effective;
   const sharedState = useConversationState('conversation', detail?.conversation.identity_id ?? null, conversationId, async () => {
     if (!conversationId) return;
     const next = await getAiConversation(conversationId);
@@ -585,18 +587,11 @@ export default function AiLearningRoom({
 
   const activateConversation = useCallback(async (id: string) => {
     if (learningBrief?.session_id) await selectLearningRoomConversation(learningBrief.session_id, id);
-    const [next, currentConfig] = await Promise.all([
-      getAiConversation(id),
-      getAiConversationConfig(id).catch(reason => {
-        if (mountedRef.current) setError(reason instanceof Error ? reason.message : "模型配置暂时无法读取");
-        return { config: null };
-      }),
-    ]);
+    const next = await getAiConversation(id);
     if (!mountedRef.current) return;
     conversationIdRef.current = id;
     setDetail(next);
     conversationContextRef.current = conversationContext(next);
-    setConversationConfig(currentConfig.config);
     setDraftConfig(null);
     setConversations((items) => upsertConversation(items, conversationListItem(next)));
     const titlePending = ["queued", "running"].includes(next.conversation.title_generation_status);
@@ -611,6 +606,7 @@ export default function AiLearningRoom({
       persistSession({ conversationId: id, runId: null });
       setStatus("idle");
     }
+    return next;
   }, [effectiveScope, effectiveTargetId, pollTitle, learningBrief?.session_id]);
 
   const loadRoom = useCallback(async () => {
@@ -658,10 +654,13 @@ export default function AiLearningRoom({
       }
       if (candidate) {
         try {
-          await activateConversation(candidate);
+          const restored = await activateConversation(candidate);
           if (savedForEntry?.pending) {
-            pendingSubmissionRef.current = null;
+            const accepted = restored?.messages.some(message => message.client_message_id === savedForEntry.pending!.clientMessageId);
+            pendingSubmissionRef.current = accepted ? null : savedForEntry.pending;
             pendingContentRef.current = null;
+            if (accepted) persistSession({ pending: undefined });
+            else setError('上次发送结果尚未确认，请用原问题重试。');
           }
         } catch {
           pendingSubmissionRef.current = null;
@@ -672,7 +671,6 @@ export default function AiLearningRoom({
         }
       } else {
         setDetail(null);
-        setConversationConfig(null);
         setDraft("");
         setStatus("idle");
       }
@@ -703,7 +701,7 @@ export default function AiLearningRoom({
       if (mountedRef.current) void submitMessage(content);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [detail, initialDraft, provider, providers, status, searchChoice.ready]);
+  }, [detail, initialDraft, provider, providers, status, searchChoice.ready, modelControl.config?.token, modelControl.busy]);
 
 
   useEffect(() => {
@@ -739,9 +737,6 @@ export default function AiLearningRoom({
         conversationIdRef.current = created.conversation.id;
         setConversations((items) => upsertConversation(items, conversationListItem(created), true));
         saveCurrentSession({ conversationId: created.conversation.id, runId: null });
-        const currentConfig = await getAiConversationConfig(created.conversation.id);
-        if (!stillCurrent()) throw new Error('对话已切换，请在当前对话重新上传。');
-        setConversationConfig(currentConfig.config);
       }
       return created;
     };
@@ -750,59 +745,9 @@ export default function AiLearningRoom({
     finally { if (creatingConversation.current === pending) creatingConversation.current = null; }
   }
 
-  async function handleConfigChange(event: ChangeEvent<HTMLSelectElement>) {
-    const [providerId, modelId] = event.target.value.split("::");
-    if (configBusy) return;
-    if (!providerId || !modelId) {
-      if (conversationId) await handleRestoreDefault();
-      else {
-        setDraftConfig(null);
-        saveCurrentSession({ draftConfig: null });
-      }
-      return;
-    }
-    if (!conversationId) {
-      const nextDraft = { providerProfileId: providerId, providerModelId: modelId };
-      setDraftConfig(nextDraft);
-      saveCurrentSession({ draftConfig: nextDraft });
-      return;
-    }
-    setConfigBusy(true);
-    setError("");
-    try {
-      const result = await setAiConversationConfig(conversationId, {
-        provider_profile_id: providerId,
-        provider_model_id: modelId,
-      });
-      setConversationConfig(result.config);
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "切换提供方或模型失败");
-    } finally {
-      setConfigBusy(false);
-    }
-  }
-
-  async function handleRestoreDefault() {
-    if (!conversationId || configBusy) return;
-    setConfigBusy(true);
-    setError("");
-    try {
-      await clearAiConversationConfig(conversationId);
-      setConversationConfig(null);
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "恢复默认配置失败");
-    } finally {
-      setConfigBusy(false);
-    }
-  }
-
-  function handleRestoreSelection() {
-    if (conversationId) {
-      void handleRestoreDefault();
-      return;
-    }
-    setDraftConfig(null);
-    saveCurrentSession({ draftConfig: null });
+  function openModelConfig() {
+    setOpenLayer('config');
+    void ensureConversation().catch(reason => setError(reason instanceof Error ? reason.message : '无法建立对话'));
   }
 
   async function handleRegenerateTitle() {
@@ -829,11 +774,11 @@ export default function AiLearningRoom({
     if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !sourceScope.knowledge_base && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本或知识库，或改为未指定资料。'); return false; }
     const unresolved = pendingSubmissionRef.current;
 
-    if (unresolved && (pendingContentRef.current !== content || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
+    if (unresolved && ((pendingContentRef.current !== null && pendingContentRef.current !== content) || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
       setError("上次发送结果尚未确认。请先用原问题重试，或重新打开对话核对已保存的消息。");
       return false;
     }
-    if (!activeProvider?.has_api_key || !activeProvider.enabled) {
+    if (!unresolved && (!modelEffective?.available || !modelEffective.has_api_key)) {
       setError("请先配置并启用 AI 提供方");
       return false;
     }
@@ -872,16 +817,21 @@ export default function AiLearningRoom({
         ? detail?.messages.find(message => message.id === regenerateMessageId)?.teaching?.requested_action ?? null : requestedAction ?? null;
       const frozenScope = canReusePending ? savedPending!.sourceScope ?? emptySourceScope() : sourceScope;
       const frozenAttachments = canReusePending ? savedPending!.attachmentVersionIds ?? [] : regenerateMessageId || editMessageId || automatic ? [] : attachmentDraftIds.filter(id => frozenScope.version_ids.includes(id));
-      const pending: PendingSubmission = { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, sourceScope: frozenScope, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, teachingAction: frozenTeachingAction, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
+      const frozenModel = canReusePending
+        ? { model_override: savedPending!.modelOverride ?? null, model_config_token: savedPending!.modelConfigToken ?? null }
+        : await modelControl.forSend('conversation', conversation.conversation.id);
+      if (!stillCurrent()) return false;
+      const pending: PendingSubmission = { modelOverride: frozenModel.model_override, modelConfigToken: frozenModel.model_config_token, attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, sourceScope: frozenScope, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, teachingAction: frozenTeachingAction, regenerateMessageId, editMessageId, parentMessageId, taskId: effectiveScope === "task" ? effectiveTargetId : null, contextScope: effectiveScope, targetId: effectiveTargetId, conversationId: conversation.conversation.id, clientMessageId };
       pendingSubmissionRef.current = pending;
       pendingContentRef.current = content;
       persistSession({ conversationId: conversation.conversation.id, runId: null, pending });
       if (!preserveDraft) setDraft("");
-      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, teaching_mode: frozenTeachingMode, teaching_action: frozenTeachingAction, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
+      const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { ...frozenModel, current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, teaching_mode: frozenTeachingMode, teaching_action: frozenTeachingAction, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (!stillCurrent() || conversationIdRef.current !== conversation.conversation.id) return false;
       if (!regenerateMessageId && !editMessageId && !automatic) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
       if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
+      modelControl.clearOnce();
       pendingSubmissionRef.current = null;
       pendingContentRef.current = null;
       const localTitle = fallbackConversationTitle(content);
@@ -918,11 +868,12 @@ export default function AiLearningRoom({
       const stateRejected = isStateRejected(reason);
       if (stateRejected) await sharedState.reload(isStateConflict(reason));
       if (!stillCurrent()) return false;
-      if (stateRejected || (reason instanceof ApiError && [400, 422].includes(reason.status ?? 0))) {
+      if (stateRejected || (reason instanceof ApiError && [400, 409, 422].includes(reason.status ?? 0))) {
         pendingSubmissionRef.current = null;
         pendingContentRef.current = null;
         persistSession({ pending: undefined });
         if (!regenerateMessageId) setSelectedTeachingMode(requestedTeachingMode);
+        if (reason instanceof ApiError && reason.status === 409) void modelControl.reload().catch(() => {});
       }
       if (!preserveDraft) setDraft(content);
       setStatus("failed");
@@ -980,7 +931,6 @@ export default function AiLearningRoom({
     pendingContentRef.current = null;
     setDetail(null);
     conversationContextRef.current = null;
-    setConversationConfig(null);
     setDraftConfig(null);
     setOpenLayer(null);
     setEditingConversationId(null);
@@ -1123,14 +1073,9 @@ export default function AiLearningRoom({
   const displayContext = detail ? detail.context : context;
   const displayScope = detail?.conversation.context_scope ?? effectiveScope;
   const contextTitle = learningContextTitle(displayContext, displayScope);
-  const selectedProviderId = conversationConfig?.provider_profile_id ?? draftConfig?.providerProfileId;
-  const selectedModelId = conversationConfig?.provider_model_id ?? draftConfig?.providerModelId;
-  const activeProvider = providers.find((item) => item.id === selectedProviderId) ?? providers.find(item => item.id === provider?.id) ?? provider;
-  const activeModel = activeProvider?.models?.find((item) => item.id === (selectedModelId ?? activeProvider.default_model_id)) ?? activeProvider?.default_model ?? null;
-  const selectedConfigValue = selectedProviderId && selectedModelId ? `${selectedProviderId}::${selectedModelId}` : "";
   const conversationTitle = detail?.conversation.title ?? "新的学习对话";
   const canSend = entryReady && !branchBusy && !sharedState.blocked && Boolean(
-    activeProvider?.has_api_key && activeProvider.enabled && (!selectedModelId || (activeModel?.enabled && activeModel.discovery_status !== "unavailable")),
+    pendingSubmissionRef.current || (!modelControl.busy && modelEffective?.available && modelEffective.has_api_key),
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
   const teaching = <TeachingState
     key={conversationId ?? 'new'} kind="conversation" scopeId={conversationId ?? ''} pathKey={teachingPath}
@@ -1258,33 +1203,15 @@ export default function AiLearningRoom({
               aria-expanded={openLayer === "config"}
               title="对话配置"
               aria-controls="ai-conversation-config-panel"
-              onClick={() => setOpenLayer((value) => value === "config" ? null : "config")}
+              onClick={() => { if (openLayer === "config") setOpenLayer(null); else openModelConfig(); }}
             >
               <SlidersHorizontal size={14} /><span>对话配置</span>
             </button>
             {openLayer === "config" && <div id="ai-conversation-config-panel" className="ai-layer-panel ai-config-panel">
               <div className="ai-layer-heading"><div><small>CONVERSATION</small><strong>本次对话配置</strong></div><button className="icon-button" type="button" onClick={() => setOpenLayer(null)} aria-label="关闭对话配置"><X size={15} /></button></div>
-              <label className="ai-room-config-select">
-                <span>提供方 / 模型</span>
-                <select
-                  aria-label="对话引擎选择"
-                  value={selectedConfigValue}
-                  onChange={(event) => void handleConfigChange(event)}
-                  disabled={configBusy || !providers.length || Boolean(detail?.active_run)}
-                >
-                  <option value="">默认配置</option>
-                  {providers.flatMap((item) => (item.models ?? []).map((model: AiProviderModel) => (
-                    <option key={`${item.id}::${model.id}`} value={`${item.id}::${model.id}`} disabled={!item.enabled || !model.enabled || model.discovery_status === "unavailable"}>
-                      {item.display_name} · {model.display_name}{model.discovery_status === "stale" ? "（过期）" : ""}
-                    </option>
-                  )))}
-                </select>
-              </label>
-              <p className="ai-config-summary">{selectedConfigValue ? `${activeProvider?.display_name ?? "未知提供方"} · ${activeModel?.display_name ?? "未知模型"}` : "跟随默认提供方和模型"}</p>
-              <p className="ai-capability-summary">当前已启用：文本输入、流式回答{activeModel?.capabilities.supports_reasoning ? "、推理内容" : ""}</p>
-              {!activeProvider?.has_api_key && <div className="ai-provider-note" role="note">尚未配置可用提供方。<button className="text-button" onClick={onProviderOpen}>现在配置</button></div>}
+              <ModelControlEditor control={modelControl} allowOnce disabled={!conversationId || Boolean(pendingSubmissionRef.current) || status === 'submitting'} />
+              {!modelEffective?.has_api_key && <div className="ai-provider-note"><button className="text-button" onClick={onProviderOpen}>配置提供方</button></div>}
               <div className="ai-config-actions">
-                <button className="button button--quiet button--with-icon" type="button" disabled={!selectedConfigValue || configBusy} onClick={handleRestoreSelection}><RotateCcw size={13} />恢复默认</button>
                 <button className="button button--quiet button--with-icon" type="button" disabled={!conversationId || titleBusy || !detail?.messages.some((message) => message.status === "complete")} onClick={() => void handleRegenerateTitle()}><Sparkles size={13} />重新生成标题</button>
               </div>
               <p className="ai-title-note">{detail?.conversation.title_generation_status === "failed" ? "上次标题生成失败，当前保留本地标题。" : "首轮回答成功后自动生成一次；也可在这里手动重生成。"}</p>
@@ -1300,6 +1227,7 @@ export default function AiLearningRoom({
         </div>
       </header>
 
+    <ModelControlNotice control={modelControl} onOpen={openModelConfig} />
     {learningBrief && <><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} teaching={teaching} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
         <button className="button button--quiet" disabled={branchBusy} onClick={async () => { try { const card = await getReturnReview(); if (card) await chooseReturnReview(card.id, "stop_for_now", `room-stop:${card.id}`); onBack(); } catch (reason) { setError(reason instanceof Error ? reason.message : "暂停未保存"); } }}>今天先停</button>
         {learningBrief.delegation_id && !learningBrief.history_only && <button className="button button--quiet" type="button" aria-expanded={completionOpen} onClick={() => setCompletionOpen(value => !value)}>记录本次完成</button>}
@@ -1325,8 +1253,8 @@ export default function AiLearningRoom({
       </>} composer={<LearningComposer id="ai-learning-question" textareaRef={composerRef}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-        attachments={<ComposerAttachments kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} onEnsure={async () => (await ensureConversation()).conversation.id} supportsImages={activeModel?.capabilities.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} />}
-        disabled={!canSend || Boolean(editingMessageId)} sendDisabled={attachmentBusy} suggestions={<HelpControls disabled={!canSend || attachmentBusy || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={typeof activeModel?.overrides.api_protocol === "string" ? activeModel.overrides.api_protocol : activeProvider?.api_protocol} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={(detail?.messages ?? []).flatMap(message => message.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+        attachments={<ComposerAttachments kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} onEnsure={async () => (await ensureConversation()).conversation.id} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} />}
+        disabled={!canSend || Boolean(editingMessageId)} sendDisabled={attachmentBusy} suggestions={<HelpControls disabled={!canSend || attachmentBusy || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={modelEffective?.provider_kind ?? undefined} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={(detail?.messages ?? []).flatMap(message => message.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
               const versions = message.role === 'user'
@@ -1572,6 +1500,7 @@ function MessageBubble({ message, automatic = false, onRetry, retryDisabled, onB
       {message.inherited_from && <small className="ai-inherited-answer">继承的历史回答</small>}
       <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
       {!message.inherited_from && <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />}
+      <ModelConfigHistory config={message.model_config} />
       <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} onBranch={onBranch} branchDisabled={branchDisabled} more={<MaterialUse scope={message.source_scope} versions={materialVersions} kind="conversation" scopeId={message.conversation_id} />} />
     </LearningMessage>
   );

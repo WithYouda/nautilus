@@ -1,5 +1,6 @@
 import useConversationState, { isStateConflict, isStateRejected } from './useConversationState';
 import ConversationStateNotice from './ConversationStateNotice';
+import { ModelControlEditor, ModelControlNotice, ModelConfigHistory, useModelControl } from './ModelControl';
 import BranchMap from './BranchMap';
 import useReplyHistory from './useReplyHistory';
 import { useEffect, useRef, useState } from 'react';
@@ -18,12 +19,15 @@ import ComposerAttachments from './ComposerAttachments';
 import MessageAttachments from './MessageAttachments';
 import { attachmentError } from './AttachmentSupport';
 import TaskMaterials, { MaterialUse, emptySourceScope, webMaterialCandidates } from './TaskMaterials';
-import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type HelpRequestKind, type TeachingSelection, type TeachingAction, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
+import { ApiError, getQuestionDiscussion, branchQuestionDiscussion, sendDiscussionMessage, streamDiscussionTurn, cancelDiscussionTurn, recordDiscussionHelpDisplay, recordReferenceHelpDisplay, type ModelOverride, type HelpRequestKind, type TeachingSelection, type TeachingAction, type QuestionDiscussion as Discussion, type SourceScope, type MaterialVersion } from './api';
 
 const requestId = (): string => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: string; onBack: () => void; onNavigate: (id: string) => void }) {
   const [mapLocation, setMapLocation] = useState<{ id: string; source: string } | null>(null);
   const [discussion, setDiscussion] = useState<Discussion | null>(null);
+  const modelControl = useModelControl('discussion', id);
+  const modelEntry = useRef<HTMLDetailsElement>(null);
+  const modelEffective = modelControl.config?.effective;
   const [content, setContent] = useState('');
   const [publicQuery, setPublicQuery] = useState('');
   const sharedState = useConversationState('discussion', discussion?.identity_id ?? null, id, async () => {
@@ -50,7 +54,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const editRequest = useRef<{ turnId: string; content: string; key: string } | null>(null);
   const key = useRef(requestId());
-  const searchByRequestKey = useRef(new Map<string, { search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; teachingMode: TeachingSelection | null; teachingAction: TeachingAction | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
+  const searchByRequestKey = useRef(new Map<string, { modelOverride: ModelOverride | null; modelConfigToken: string | null; search: SearchSelection; publicQuery: string; content: string; helpRequest: HelpRequestKind | null; teachingMode: TeachingSelection | null; teachingAction: TeachingAction | null; sourceScope: SourceScope; attachmentVersionIds: string[] }>());
   const sending = useRef(false);
   const branching = useRef(false);
   const branchKeys = useRef(new Map<string, string>());
@@ -144,6 +148,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
       setError('上次发送结果尚未确认。请先重试原消息，或重新打开讨论核对已保存的内容。');
       return false;
     }
+    if (!searchByRequestKey.current.has(requestKey) && (modelControl.busy || !modelEffective?.available)) { setError('当前模型配置不可用，请打开模型配置核对。'); return false; }
     const currentGeneration = generation.current;
     sending.current = true; setBusy(true); setError('');
     const frozenHelp = searchByRequestKey.current.has(requestKey) ? searchByRequestKey.current.get(requestKey)!.helpRequest : (requestedHelp !== undefined ? requestedHelp : regenerateTurnId ? discussion?.turns.find(turn => turn.id === regenerateTurnId)?.help_record?.request?.kind ?? null : null);
@@ -155,11 +160,14 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     try {
       const frozenSearch = searchByRequestKey.current.get(requestKey)?.search ?? structuredClone(searchSelection);
       const frozenPublicQuery = searchByRequestKey.current.get(requestKey)?.publicQuery ?? (!regenerateTurnId && !editTurnId && frozenSearch.mode === 'external' ? publicQuery.trim() : '');
-      searchByRequestKey.current.set(requestKey, { attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, content: text, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, teachingAction: frozenTeachingAction, sourceScope: frozenScope });
-      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, teaching_mode: frozenTeachingMode, teaching_action: frozenTeachingAction, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
+      const priorModel = searchByRequestKey.current.get(requestKey);
+      const frozenModel = priorModel ? { model_override: priorModel.modelOverride, model_config_token: priorModel.modelConfigToken } : await modelControl.forSend();
+      searchByRequestKey.current.set(requestKey, { modelOverride: frozenModel.model_override, modelConfigToken: frozenModel.model_config_token, attachmentVersionIds: frozenAttachments, search: frozenSearch, publicQuery: frozenPublicQuery, content: text, helpRequest: frozenHelp, teachingMode: frozenTeachingMode, teachingAction: frozenTeachingAction, sourceScope: frozenScope });
+      const saved = await sendDiscussionMessage(id, text, requestKey, retry, { ...frozenModel, current_state_revision: sharedState.revisionFor(id), regenerate_turn_id: regenerateTurnId, edit_turn_id: editTurnId, parent_turn_id: regenerateTurnId || editTurnId ? undefined : replyHistory.leaf ?? undefined, help_request: frozenHelp, teaching_mode: frozenTeachingMode, teaching_action: frozenTeachingAction, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== 'off' ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (generation.current !== currentGeneration) return false;
       if (!regenerateTurnId && !editTurnId) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
+      modelControl.clearOnce();
       searchByRequestKey.current.delete(requestKey);
       setDiscussion(previous => ({ ...saved, turns: saved.turns.map(turn => ({ ...turn, search_trace: turn.search_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.search_trace : turn.search_trace, generation_trace: turn.generation_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.generation_trace : turn.generation_trace })) })); setPending(null); key.current = requestId();
       await sharedState.reload();
@@ -168,8 +176,9 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
       if (generation.current !== currentGeneration) return false;
       const stateRejected = isStateRejected(reason);
       if (stateRejected) await sharedState.reload(isStateConflict(reason));
-      if (stateRejected || (reason instanceof ApiError && [400, 422].includes(reason.status ?? 0))) {
+      if (stateRejected || (reason instanceof ApiError && [400, 409, 422].includes(reason.status ?? 0))) {
         searchByRequestKey.current.delete(requestKey);
+        if (reason instanceof ApiError && reason.status === 409) void modelControl.reload().catch(() => {});
         if (editRequest.current?.key === requestKey) editRequest.current = null;
         if (key.current === requestKey) key.current = requestId();
         if (!retry && !regenerateTurnId && !editTurnId) { setPending(null); if (!preserveDraft) { setContent(text); drafts.current.set(id, text); } }
@@ -232,17 +241,18 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
     <BranchMap kind="discussion" id={id} revision={`${discussion?.title}:${discussion?.turns.at(-1)?.status}:${discussion?.turns.length}`} disabled={!discussion || discussion.id !== id || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
       onNavigate={(nextId, source) => { drafts.current.set(id, content); if (source) setMapLocation({ id: nextId, source }); onNavigate(nextId); }}
       onRenamed={async () => { const version = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === version) setDiscussion(next); }} />
+    <details className="model-control-entry" ref={modelEntry}><summary>模型配置</summary><ModelControlEditor control={modelControl} allowOnce disabled={busy || Boolean(pending) || Boolean(editingTurnId)} /></details>
     <LearningChatPanel title={discussion?.title ?? "讨论这道题"} autoFollow={!editingTurnId && (replyHistory.following || busy) && Boolean(discussion?.turns.length || pending)} followToken={`${id}:${(discussion?.turns.length ?? 0) + (pending ? 1 : 0)}`}
-      notice={<><ConversationStateNotice state={sharedState} onSelectPath={() => { void sharedState.save({ leaf_id: discussion?.turns.filter(turn => turn.status !== 'purged').at(-1)?.id ?? null, paths: {} }); }} /><OutboundApproval kind="discussion" scopeId={id} active={running} />{searchChoice.error && <p role="status">{searchChoice.error}</p>}{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
+      notice={<><ModelControlNotice control={modelControl} onOpen={() => { if (modelEntry.current) modelEntry.current.open = true; }} /><ConversationStateNotice state={sharedState} onSelectPath={() => { void sharedState.save({ leaf_id: discussion?.turns.filter(turn => turn.status !== 'purged').at(-1)?.id ?? null, paths: {} }); }} /><OutboundApproval kind="discussion" scopeId={id} active={running} />{searchChoice.error && <p role="status">{searchChoice.error}</p>}{error && <p className="ai-room-error" role="alert">{error}</p>}{connectionLost && running && <button type="button" className="button button--quiet ai-retry-button" onClick={() => setReconnect(value => value + 1)}>重新连接回复</button>}</>}
       composer={discussion && !discussion.purged && <LearningComposer
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
         onChange={value => { setContent(value); drafts.current.set(id, value); key.current = requestId(); }}
         onSubmit={event => { event.preventDefault(); void send(); }}
         placeholder="输入关于这道题的问题，或回答拓展问题" maxLength={12000}
         disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
-        attachments={<ComposerAttachments kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} supportsImages={discussion.image_model?.supports_image_input} discussionModel onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} />}
-        sendDisabled={attachmentBusy}
-        suggestions={<HelpControls disabled={attachmentBusy || sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onChoose={(kind, label) => void send(label, key.current, false, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !searchChoice.ready} providerKind={discussion.provider_protocol ?? undefined} /><TaskMaterials kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={discussion.turns.flatMap(turn => turn.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onPurged={async () => { const current = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === current) { setDiscussion(next); await sharedState.reload(); } }} candidates={webMaterialCandidates(discussion.turns.map(turn => ({ runId: turn.id, trace: turn.search_trace, complete: turn.status === 'succeeded' })))} /></>}
+        attachments={<ComposerAttachments kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} />}
+        sendDisabled={attachmentBusy || modelControl.busy || !modelEffective?.available}
+        suggestions={<HelpControls disabled={attachmentBusy || sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onChoose={(kind, label) => void send(label, key.current, false, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !searchChoice.ready} providerKind={modelEffective?.provider_kind ?? undefined} /><TaskMaterials kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={discussion.turns.flatMap(turn => turn.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} onPurged={async () => { const current = generation.current; const next = await getQuestionDiscussion(id); if (generation.current === current) { setDiscussion(next); await sharedState.reload(); } }} candidates={webMaterialCandidates(discussion.turns.map(turn => ({ runId: turn.id, trace: turn.search_trace, complete: turn.status === 'succeeded' })))} /></>}
         actions={running && <button className="button button--danger button--with-icon" type="button" disabled={cancelling} onClick={() => void cancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}
     >
@@ -290,6 +300,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
               {turn.status === 'failed' && <div role="status"><p>{turn.reason === 'cancelled' ? '已取消生成，已收到的内容保留。' : '这次回复未完成，问题和已收到的内容已保存。'}</p></div>}
               {turn.status === 'succeeded' && turn.sources.length === 0 && <p className="form-hint">{turn.history_searched ? '本轮检索没有找到匹配的历史记录。' : '本轮依据这道题和当前讨论回答，未检索其他历史。'}</p>}
               {turn.sources.length > 0 && <DiscussionSources sources={turn.sources} />}
+              <ModelConfigHistory config={turn.model_config} />
               <LearningReplyActions more={<MaterialUse scope={turn.source_scope} versions={materialVersions} kind="discussion" scopeId={id} />} content={turn.assistant_content ?? ''} retryDisabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !turn.user_content}
                 onRetry={() => void send(turn.user_content ?? '', requestId(), false, true, turn.id)}
                 onBranch={() => void branch(turn.id)} branchDisabled={!searchChoice.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || turn.status === 'running' || Boolean(turn.source_scope?.purged)}

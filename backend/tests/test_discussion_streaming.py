@@ -197,6 +197,8 @@ async def test_upgrade_028_preserves_existing_turn_and_erases_new_reasoning(lear
     legacy_path = tmp_path / 'legacy-028.sqlite3'
     with sqlite3.connect(legacy_path) as legacy:
         learning_database.connection.backup(legacy)
+        legacy.execute('DROP TRIGGER learning_discussion_purge_model_config')
+        legacy.execute('DROP TABLE learning_model_config')
         legacy.execute('DROP TRIGGER learning_discussion_erase_turns')
         legacy.execute('ALTER TABLE learning_discussion_turn DROP COLUMN reasoning_content')
         old_migration = Path('backend/app/migrations/028_verification_discussions.sql').read_text()

@@ -579,6 +579,7 @@ async def send_message(
             source_scope=payload.source_scope,
             attachment_version_ids=payload.attachment_version_ids,
             current_state_revision=payload.current_state_revision,
+            model_override=payload.model_override, model_config_token=payload.model_config_token,
         )
     except ConversationError as error:
         _raise(error)

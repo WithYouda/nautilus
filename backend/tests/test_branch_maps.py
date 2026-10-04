@@ -97,14 +97,28 @@ async def test_033_upgrade_preserves_all_existing_business_columns(learning_data
     legacy_path = tmp_path/'legacy-033.sqlite3'
     with closing(sqlite3.connect(legacy_path)) as c:
         learning_database.connection.backup(c)
+        c.execute('DROP TRIGGER learning_discussion_purge_model_config')
+        c.execute('DROP TABLE learning_model_config')
+        c.execute('DROP TRIGGER learning_material_purge_ocr')
+        c.execute('DROP TABLE learning_material_ocr')
+        c.execute('DROP TRIGGER learning_material_purge_original')
+        c.execute('DROP TABLE learning_material_original')
+        c.execute('DROP TRIGGER learning_discussion_purge_materials')
+        c.execute('DROP TABLE learning_material_link')
+        c.execute('DROP TABLE learning_material_library')
+        c.executescript('''CREATE TRIGGER learning_discussion_purge_materials
+            AFTER UPDATE OF purged_at ON learning_question_discussion
+            WHEN NEW.purged_at IS NOT NULL BEGIN
+                UPDATE learning_task_material SET title=NULL,content=NULL,url=NULL,provenance_json='{}',purged_at=NEW.purged_at
+                WHERE owner_id=NEW.owner_id AND scope_kind='discussion' AND scope_id=NEW.id AND purged_at IS NULL;
+            END;''')
         c.execute('DROP TRIGGER learning_discussion_purge_current_state')
         c.execute('DROP TABLE learning_conversation_current_state')
-        c.execute("DELETE FROM schema_migrations WHERE version='035_conversation_current_state'")
         c.execute('DROP TRIGGER discussion_title_on_purge')
         c.execute('DROP TRIGGER discussion_title_on_turn_purge')
         for column in ('title', 'title_source', 'branch_parent_id', 'branch_turn_id'):
             c.execute(f'ALTER TABLE learning_question_discussion DROP COLUMN {column}')
-        c.execute("DELETE FROM schema_migrations WHERE version='034_discussion_branch_map'")
+        c.execute("DELETE FROM schema_migrations WHERE version >= '034'")
         c.commit()
         tables = [row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_migrations','sqlite_sequence')")]
         columns = {t: [row[1] for row in c.execute(f'PRAGMA table_info("{t}")')] for t in tables}

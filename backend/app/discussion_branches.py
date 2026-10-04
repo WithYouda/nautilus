@@ -64,6 +64,8 @@ def create_branch(self, identity, discussion_id, turn_id, request_key):
         c.execute('UPDATE learning_question_discussion SET branch_parent_id=?,branch_turn_id=?,title=? WHERE id=?',
                   (discussion_id, turn_id, compact_title(path[-1]['user_content']), bid))
         c.execute('INSERT INTO learning_discussion_dependency VALUES (?,?)', (bid, discussion_id))
+        if self.model_control is not None:
+            self.model_control.copy_branch(owner, 'discussion', discussion_id, bid, c)
         for turn in path:
             row = c.execute('SELECT * FROM learning_discussion_turn WHERE id=?', (turn['id'],)).fetchone()
             snapshot = json.loads(row['provider_snapshot_json'])

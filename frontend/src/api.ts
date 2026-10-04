@@ -267,6 +267,31 @@ export type AiConversationConfig = {
   updated_at: string;
 };
 
+export type ModelScopeKind = 'global' | 'plan' | 'task' | 'conversation' | 'discussion';
+export type ModelOverride = { model?: { provider_profile_id: string; provider_model_id: string } | null; timeout_seconds?: number | null };
+export type ModelSource = { kind: ModelScopeKind | 'run'; id: string };
+export type ModelSources = { model: ModelSource | null; timeout: ModelSource | null };
+export type ModelEffective = {
+  provider_profile_id: string | null; provider_model_id: string | null;
+  provider_display_name: string | null; model_id: string | null; model_display_name: string | null;
+  provider_kind: string | null; timeout_seconds: number | null; provider_config_version: number | null;
+  supports_image_input: boolean | null; supports_reasoning: boolean | null; has_api_key: boolean; available: boolean;
+};
+export type ModelConfig = {
+  scope_kind: ModelScopeKind; scope_id: string; revision: string; token: string; override: ModelOverride;
+  effective: ModelEffective; sources: ModelSources;
+  layers: Array<{ kind: ModelScopeKind; id: string; revision: string; override: ModelOverride }>; issues: string[];
+};
+export type ModelRunConfig = Partial<ModelEffective> & { sources?: ModelSources | null };
+const modelConfigPath = (kind: ModelScopeKind, id: string) => `/api/model-config/${kind}/${encodeURIComponent(id)}`;
+export function getModelConfig(kind: ModelScopeKind, id: string): Promise<ModelConfig> { return request(modelConfigPath(kind, id)); }
+export function putModelConfig(kind: ModelScopeKind, id: string, expected_revision: string, override: ModelOverride): Promise<ModelConfig> {
+  return request(modelConfigPath(kind, id), { method: 'PUT', body: JSON.stringify({ expected_revision, override }) });
+}
+export function previewModelConfig(kind: ModelScopeKind, id: string, override: ModelOverride): Promise<ModelConfig> {
+  return request(`${modelConfigPath(kind, id)}/preview`, { method: 'POST', body: JSON.stringify({ override }) });
+}
+
 export type AiProviderInput = {
   display_name: string;
   base_url: string;
@@ -521,6 +546,7 @@ export function changeAdaptiveLearning(payload: AdaptiveLearningChange, signal?:
 }
 
 export type AiMessage = {
+  model_config?: ModelRunConfig | null;
   id: string;
   conversation_id: string;
   role: "user" | "assistant" | "system";
@@ -1168,7 +1194,7 @@ export function sendAiMessage(
   conversationId: string,
   content: string,
   clientMessageId: string,
-  versions: { current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingSelection | null; teaching_action?: TeachingAction | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {},
+  versions: { model_override?: ModelOverride | null; model_config_token?: string | null; current_state_revision?: number; edit_message_id?: string; regenerate_message_id?: string; parent_message_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingSelection | null; teaching_action?: TeachingAction | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {},
 ): Promise<AiSendResult> {
   return request<AiSendResult>(`/api/ai/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -2272,7 +2298,7 @@ export type QuestionDiscussion = {
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
   provider_protocol?: AiApiProtocol | null;
   image_model?: { provider_profile_id: string; provider_model_id: string; model: string; supports_image_input: boolean | null } | null;
-  turns: Array<{ teaching?: TeachingRecord | null; search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; source_scope?: AppliedSourceScope | null; attachment_version_ids?: string[]; inherited_from?: { discussion_id: string; turn_id: string } | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+  turns: Array<{ model_config?: ModelRunConfig | null; teaching?: TeachingRecord | null; search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; source_scope?: AppliedSourceScope | null; attachment_version_ids?: string[]; inherited_from?: { discussion_id: string; turn_id: string } | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; outcome_id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
@@ -2314,7 +2340,7 @@ export function getQuestionDiscussion(id: string, signal?: AbortSignal): Promise
 export function branchQuestionDiscussion(id: string, turnId: string, requestKey: string): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/branches`, { method: 'POST', body: JSON.stringify({ turn_id: turnId, request_key: requestKey }) });
 }
-export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingSelection | null; teaching_action?: TeachingAction | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {}): Promise<QuestionDiscussion> {
+export function sendDiscussionMessage(id: string, content: string, requestKey: string, retry = false, versions: { model_override?: ModelOverride | null; model_config_token?: string | null; current_state_revision?: number; edit_turn_id?: string; regenerate_turn_id?: string; parent_turn_id?: string; search?: SearchSelection; public_search_query?: string; help_request?: HelpRequestKind | null; teaching_mode?: TeachingSelection | null; teaching_action?: TeachingAction | null; source_scope?: SourceScope; attachment_version_ids?: string[] } = {}): Promise<QuestionDiscussion> {
   return request(`/api/learning/discussions/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, request_key: requestKey, retry, ...versions }) });
 }
 export function recordDiscussionHelpDisplay(discussionId: string, turnId: string, characters: number): Promise<HelpRecord> {

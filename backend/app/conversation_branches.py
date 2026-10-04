@@ -46,6 +46,8 @@ def create_branch(self, identity_id, conversation_id, message_id, request_key):
             metadata = branch_metadata(self, identity_id, branch_id)
             if existing['deleted_at'] or metadata.get('branch_origin', {}).get('message_id') != message_id:
                 raise ConversationConflict('分支请求已用于其他回答或对话已删除')
+            if self.model_control is not None:
+                self.model_control.copy_branch(identity_id, 'conversation', conversation_id, branch_id)
             return self.conversation_detail(identity_id, branch_id)
         messages = self.list_messages(identity_id, conversation_id)
         path = self.message_path(messages, message_id)
@@ -66,6 +68,12 @@ def create_branch(self, identity_id, conversation_id, message_id, request_key):
         config = c.execute('SELECT * FROM conversation_config WHERE conversation_id=?', (conversation_id,)).fetchone()
         if config:
             _insert(c, 'conversation_config', {**dict(config), 'conversation_id': branch_id, 'updated_at': now})
+        model_config_copy = None
+        if self.model_control is not None:
+            room = self.model_control.db.fetchone('SELECT session_id,selected_at FROM learning_room_conversation WHERE owner_id=? AND conversation_id=?',
+                                                   (identity_id, conversation_id))
+            model_config_copy = {'override': self.model_control._layer(identity_id, 'conversation', conversation_id)['override'],
+                                 'room': dict(room) if room else None}
         for sequence, item in enumerate(path):
             row = dict(c.execute('SELECT * FROM message WHERE id=?', (item['id'],)).fetchone())
             row.update(id=ids[item['id']], conversation_id=branch_id, sequence=sequence,
@@ -88,6 +96,8 @@ def create_branch(self, identity_id, conversation_id, message_id, request_key):
                 *snapshot.get('source_history_message_ids', []), question, item['id']]))
             snapshot['branch_origin'] = dict(conversation_id=conversation_id, message_id=message_id,
                                              source_message_id=item['id'])
+            if model_config_copy is not None:
+                snapshot['branch_origin']['model_config_copy'] = model_config_copy
             snapshot['branch_material_version_ids'] = (snapshot.get('source_scope') or {}).get('version_ids', [])
             # A location summary belongs to its original conversation, not the new branch.
             snapshot.pop('learning_position', None)
@@ -104,4 +114,6 @@ def create_branch(self, identity_id, conversation_id, message_id, request_key):
                        config_snapshot_json=json.dumps(snapshot, ensure_ascii=False))
             _insert(c, 'ai_run', run)
             c.execute('UPDATE message SET ai_run_id=? WHERE id=?', (run['id'], ids[item['id']]))
+    if self.model_control is not None:
+        self.model_control.copy_branch(identity_id, 'conversation', conversation_id, branch_id)
     return self.conversation_detail(identity_id, branch_id)

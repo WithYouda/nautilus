@@ -59,7 +59,7 @@ def test_upgrade_035_to_current_preserves_every_old_business_table(tmp_path):
     with closing(sqlite3.connect(path)) as connection:
         after = _business_rows(connection)
         assert {table: after[table] for table in before} == before
-        assert set(after) - set(before) == {'learning_material_original', 'learning_material_library', 'learning_material_link', 'learning_material_ocr'}
+        assert set(after) - set(before) == {'learning_material_original', 'learning_material_library', 'learning_material_link', 'learning_material_ocr', 'learning_model_config'}
         assert after['learning_material_library'] == []
         assert after['learning_material_link'] == []
         assert after['learning_material_original'] == []
