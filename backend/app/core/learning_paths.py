@@ -10,7 +10,7 @@ from ..learning_domain import DomainError
 from .commands import EndSession, StartSession
 from .events import append_event, canonical, digest
 from .path_commands import (SavePathDraft, ConfirmPathDecision, SetPathPosition,
-                            StartPathTask, PurgePathContent, PathFields, TransferFields, TransferPathToPlan)
+                            StartPathTask, PurgePathContent, PathFields, TransferFields, TransferPathToPlan, CreatePathTask)
 
 
 PATH_EVENT_TYPES = frozenset({'path.draft_saved', 'path.decision_confirmed', 'path.transfer_departed',
@@ -233,6 +233,72 @@ def dispatch_path(core, connection, principal, command, command_id, key, now):
                         'path.content_purged', dict(object_ids=affected))
         return dict(plan_id=plan_id, version_id=version['id'], revision=event['aggregate_version'])
     writable_plan(connection, owner, plan_id)
+    if isinstance(command, CreatePathTask):
+        from .organization_commands import CreatePlanTask, TaskFields
+        if command.expected_organization_revision != organization_revision(connection, owner, plan_id):
+            raise DomainError('version_conflict')
+        if command.version_id:
+            if state['status'] != 'active':
+                raise DomainError('path_paused')
+            if command.version_id != state['adopted_version_id']:
+                raise DomainError('path_not_current')
+            version, fields = version_fields(connection, owner, command.version_id)
+            fields['current_node_id'] = state['current_node_id']
+            draft_options = dict(intent='change_scope', source_version_id=version['id'])
+        else:
+            existing = owned(connection, owner, 'learning_path_draft', command.draft_id)
+            if existing['revision'] != command.expected_draft_revision:
+                raise DomainError('version_conflict')
+            reviewed = review(connection, owner, plan_id, command.draft_id)
+            private = read_private(connection, owner, existing['id'], existing['revision'])
+            fields = dict(title=private['title'], reason=private['reason'], **reviewed['data'])
+            fields['nodes'] = [{**node, 'title': private['node_titles'][node['id']]} for node in fields['nodes']]
+            # Restoring a historical snapshot must retain its exact associations.
+            if existing['intent'] in {'restore', 'undo'}:
+                raise DomainError('path_restore_changed')
+            draft_options = {name: existing[name] for name in ('intent', 'source_version_id', 'restore_version_id')}
+            draft_options.update(draft_id=existing['id'], expected_draft_revision=existing['revision'])
+        node = next((node for node in fields['nodes'] if node['id'] == command.node_id), None)
+        if node is None:
+            raise DomainError('path_node_missing')
+        if (len(node['action_ids']) >= 30 or
+                (len(node['outcome_ids']) >= 30 and command.outcome_id not in node['outcome_ids'])):
+            raise DomainError('path_node_task_limit', 422)
+        result = core.execute_in_transaction(connection, principal, CreatePlanTask(plan_id=plan_id,
+            expected_revision=command.expected_organization_revision,
+            **command.model_dump(mode='json', include=set(TaskFields.model_fields))),
+            'path-task:' + digest(command_id))
+        node['action_ids'].append(result['action_id'])
+        if result['outcome_id'] not in node['outcome_ids']:
+            node['outcome_ids'].append(result['outcome_id'])
+        if command.version_id:
+            fields['reason'] = '在阶段中添加任务'
+        saved = core.execute_in_transaction(connection, principal, SavePathDraft(plan_id=plan_id,
+            **fields, **draft_options, expected_revision=state['revision'],
+            expected_organization_revision=result['revision']), 'path-task-draft:' + digest(command_id))
+        if command.draft_id:
+            return {**result, 'draft_id': saved['draft_id'], 'node_id': command.node_id}
+        # This addition changes no existing task, position or execution. Keep the
+        # immutable old snapshot and carry its checkpoint into the new snapshot.
+        saved_draft = owned(connection, owner, 'learning_path_draft', saved['draft_id'])
+        data = json.loads(saved_draft['data_json'])
+        point = complete_checkpoint(connection, owner, plan_id, state)
+        version_id, decision_id = str(uuid4()), str(uuid4())
+        _append(connection, principal, command_id, key, now, plan_id, saved['revision'],
+            'path.decision_confirmed', dict(id=version_id, route_id=version['route_id'],
+                decision_id=decision_id, draft_id=saved['draft_id'], private_revision=saved_draft['revision'],
+                data=data, intent='change_scope', previous_version_id=version['id'],
+                parent_version_id=version['id'], branch_node_id=command.node_id,
+                previous_node_id=state['current_node_id'], old_checkpoint=point, new_checkpoint=point))
+        effects = commitment_effects(connection, owner, plan_id, data, intent='change_scope')
+        # Only carry arrangements whose existing association is retained. An
+        # unrelated arrangement is unaffected by adding a task to this stage.
+        effects['changes'] = [change for change in effects['changes'] if change['kind'] == 'keep']
+        effects['affected_sessions'] = []
+        if effects['changes']:
+            from .commitments import apply_route_change
+            apply_route_change(core, connection, principal, plan_id, version_id, effects, command_id, key, now)
+        return {**result, 'version_id': version_id, 'node_id': command.node_id}
     if isinstance(command,TransferPathToPlan):
         preview=transfer_review(connection,owner,plan_id,command)
         if preview['review_key']!=command.review_key:

@@ -384,3 +384,104 @@ def test_manual_marker_move_keeps_actual_session_but_does_not_relabel_its_anchor
     point=view['versions'][0]['checkpoint']
     assert point['node_id']=='practice' and point['session_id'] is None and point['anchor']=={}
     assert client.app.state.learning.database.fetchone('SELECT status FROM learning_session WHERE id=?',(original['session_id'],))[0]=='running'
+
+
+def path_task_body(value, **changes):
+    body = dict(action_title='阶段新增任务', context_key='synthetic', object_description='合成对象',
+        behavior='独立处理新输入', outcome_context_key='synthetic', boundaries='',
+        stop_conditions='核对后停止', time_budget_minutes=20,
+        expected_revision=value['revision'], expected_organization_revision=value['organization_revision'],
+        version_id=value['adopted_version_id'], node_id='practice', request_key='path-add-task')
+    body.update(changes)
+    return body
+
+
+def test_stage_task_creation_is_atomic_idempotent_and_retains_history_position_and_execution(client):
+    identity, plan_id, first, second = seed(client)
+    saved, _ = draft(client, plan_id, first, second,
+        nodes=[dict(id='entry', title='起点', action_ids=[first['action_id']], outcome_ids=[]),
+               dict(id='practice', title='下一阶段', action_ids=[], outcome_ids=[])])
+    adopted, _ = confirm(client, plan_id, saved)
+    # An ordinary task outside the selected/current stage must keep running.
+    action = next(a for a in client.get('/api/learning/state').json()['actions'] if a['id'] == second['action_id'])
+    started = client.post('/api/learning/sessions', json=dict(delegation_id=second['delegation_id'],
+        expected_version=action['version'], idempotency_key='outside-path-start'))
+    assert started.status_code == 201, started.text
+    body = path_task_body(path(client, plan_id))
+    endpoint = f'/api/learning/plans/{plan_id}/path/tasks'
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 201, response.text
+    added = response.json()
+    new = added['path']
+    current = next(v for v in new['versions'] if v['id'] == new['adopted_version_id'])
+    old = next(v for v in new['versions'] if v['id'] == adopted['adopted_version_id'])
+    assert old['nodes'][1]['action_ids'] == []
+    assert current['nodes'][1]['action_ids'] == [added['action_id']]
+    assert current['nodes'][1]['outcome_ids'] == [added['outcome_id']]
+    assert current['route_id'] == old['route_id'] and new['current_node_id'] == 'entry'
+    assert get(client, plan_id)['tasks'][-1]['id'] == added['action_id']
+    state = client.get('/api/learning/state').json()
+    assert len(state['sessions']) == 1 and state['sessions'][0]['status'] == 'running'
+    assert state['sessions'][0]['id'] == started.json()['id']
+    repeat = client.post(endpoint, json=body)
+    assert repeat.status_code == 201 and repeat.json() == added
+    # The obsolete snapshot cannot receive another task.
+    before = snapshot(client.app.state.learning.database, ('learning_action', 'learning_outcome', 'learning_delegation', 'learning_event'))
+    stale = client.post(endpoint, json={**body, 'request_key': 'stale-add'})
+    assert stale.status_code == 409
+    assert snapshot(client.app.state.learning.database, before.keys()) == before
+    assert client.app.state.learning.core.replay(client.app.state.learning.principal(identity))['comparison']['matched']
+    assert path(client, plan_id)['adopted_version_id'] == new['adopted_version_id']
+
+
+def test_candidate_stage_task_stays_unadopted_and_late_failure_rolls_back_task_and_path(client, monkeypatch):
+    _identity, plan_id, first, second = seed(client)
+    saved, _ = draft(client, plan_id, first, second)
+    body = path_task_body(saved, version_id=None, draft_id=saved['draft_id'],
+        expected_draft_revision=saved['drafts'][0]['revision'])
+    endpoint = f'/api/learning/plans/{plan_id}/path/tasks'
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 201, response.text
+    added = response.json()
+    candidate = added['path']['drafts'][0]
+    assert candidate['id'] == saved['draft_id'] and added['action_id'] in candidate['nodes'][1]['action_ids']
+    assert not candidate['stale'] and added['path']['adopted_version_id'] is None
+    assert not client.app.state.learning.database.fetchall('SELECT * FROM learning_session')
+    adopted, _ = confirm(client, plan_id, {**added['path'], 'draft_id': saved['draft_id']})
+    from app.core import learning_paths
+    append = learning_paths._append
+    def fail(*args, **kwargs):
+        if args[-2] == 'path.decision_confirmed':
+            raise RuntimeError('synthetic path task attachment failure')
+        return append(*args, **kwargs)
+    monkeypatch.setattr(learning_paths, '_append', fail)
+    db = client.app.state.learning.database
+    before = snapshot(db, ('learning_action', 'learning_outcome', 'learning_delegation', 'learning_action_link',
+        'learning_plan_organization', 'learning_event', 'learning_command', 'learning_path_private',
+        *PATH_PROJECTION_TABLES))
+    with pytest.raises(RuntimeError, match='synthetic path task attachment'):
+        client.post(endpoint, json=path_task_body(adopted, request_key='late-add-failure'))
+    assert snapshot(db, before.keys()) == before
+
+
+def test_stage_task_addition_carries_interrupted_checkpoint_and_rejects_wrong_target(client):
+    _identity, plan_id, first, second = seed(client)
+    saved, _ = draft(client, plan_id, first, second)
+    adopted, _ = confirm(client, plan_id, saved)
+    started = start(client, plan_id, adopted, 'entry', first['delegation_id'])
+    action = next(a for a in client.get('/api/learning/state').json()['actions'] if a['id'] == first['action_id'])
+    client.app.state.learning.core.execute(client.app.state.learning.principal(_identity),
+        EndSession(session_id=started['session_id'], disposition='interrupted', expected_version=action['version']), 'pause-before-add')
+    endpoint = f'/api/learning/plans/{plan_id}/path/tasks'
+    before = path(client, plan_id)
+    body = path_task_body(before)
+    for invalid in [dict(node_id='missing'), dict(version_id='wrong'), dict(draft_id='both', expected_draft_revision=1), dict(expected_organization_revision=999)]:
+        response = client.post(endpoint, json={**body, **invalid, 'request_key': str(invalid)})
+        assert response.status_code in {409, 422}, response.text
+    added = client.post(endpoint, json=body)
+    assert added.status_code == 201, added.text
+    current = next(v for v in added.json()['path']['versions'] if v['id'] == added.json()['path']['adopted_version_id'])
+    old = next(v for v in before['versions'] if v['id'] == before['adopted_version_id'])
+    assert current['checkpoint'] == old['checkpoint']
+    assert current['checkpoint']['session_id'] == started['session_id']
+    assert len(client.get('/api/learning/state').json()['sessions']) == 1

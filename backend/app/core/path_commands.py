@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .commands import Command
+from .organization_commands import TaskFields
 
 
 class PathNode(BaseModel):
@@ -74,6 +75,27 @@ class PathFields(BaseModel):
 
 class PathCommand(Command):
     pass
+
+
+class PathTaskFields(TaskFields):
+    node_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=1)
+    expected_organization_revision: int = Field(ge=0)
+    version_id: str | None = None
+    draft_id: str | None = None
+    expected_draft_revision: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode='after')
+    def target(self):
+        if bool(self.version_id) == bool(self.draft_id):
+            raise ValueError('select one route target')
+        if bool(self.draft_id) != (self.expected_draft_revision is not None):
+            raise ValueError('draft revision required for draft target')
+        return self
+
+
+class CreatePathTask(PathCommand, PathTaskFields):
+    plan_id: str
 
 
 class SavePathDraft(PathCommand, PathFields):

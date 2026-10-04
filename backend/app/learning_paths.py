@@ -5,7 +5,7 @@ import json
 
 from .conversations import ConversationError
 from .core.path_commands import (SavePathDraft, ConfirmPathDecision, StartPathTask,
-                                SetPathPosition, PurgePathContent, TransferFields, TransferPathToPlan)
+                                SetPathPosition, PurgePathContent, TransferFields, TransferPathToPlan, CreatePathTask)
 from .core.learning_paths import (owned, plan_state, organization_revision, read_private,
                                  reference_hash, version_fields, review, transfer_review)
 from .learning_domain import DomainError
@@ -124,6 +124,10 @@ class LearningPaths:
     def save(self, identity, plan_id, payload, key):
         result = self.learning.core.execute(self.learning.principal(identity), SavePathDraft(plan_id=plan_id,**payload), key)
         return {**self.data(identity,plan_id),'draft_id':result['draft_id']}
+
+    def create_task(self, identity, plan_id, payload, key):
+        result = self.learning.core.execute(self.learning.principal(identity), CreatePathTask(plan_id=plan_id, **payload), key)
+        return {**result, 'path': self.data(identity, plan_id)}
 
     def restore_draft(self, identity, plan_id, payload, key):
         owner = self._owner(identity)

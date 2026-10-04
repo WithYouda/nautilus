@@ -340,3 +340,110 @@ test('ordinary task entry explains a different linked stage without moving the r
   expect((await pathView(page.request, plan.planId)).current_node_id).toBe(initial.current_node_id);
   expect((await pathView(page.request, plan.planId)).revision).toBe(initial.revision);
 });
+
+for (const width of [1280, 390]) {
+  test(`adding from an empty path stage displays the task and retains its association after reload at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await authorize(page);
+    const plan = await seed(page.request);
+    const before = await pathView(page.request, plan.planId);
+    const saved = await page.request.post(`/api/learning/plans/${plan.planId}/path/drafts`, { data: {
+      title: '添加任务检查路线', nodes: [
+        { id: 'entry', title: '已有阶段', action_ids: [plan.tasks[0].action_id], outcome_ids: [] },
+        { id: 'empty', title: '待添加任务阶段', action_ids: [], outcome_ids: [] },
+      ], edges: [{ source: 'entry', target: 'empty' }], entry_node_id: 'entry', current_node_id: 'entry',
+      reason: '', intent: 'create', expected_revision: before.revision, expected_organization_revision: before.organization_revision,
+      request_key: key('empty-stage'),
+    } });
+    expect(saved.ok()).toBeTruthy();
+    const draft = await saved.json();
+    const review = await (await page.request.post(`/api/learning/plans/${plan.planId}/path/previews`, { data: { draft_id: draft.draft_id } })).json();
+    const adopted = await page.request.post(`/api/learning/plans/${plan.planId}/path/decisions`, { data: {
+      draft_id: draft.draft_id, expected_revision: review.revision, expected_draft_revision: review.draft_revision,
+      review_key: review.review_key, request_key: key('adopt-empty'),
+    } });
+    expect(adopted.ok()).toBeTruthy();
+    const initial = await adopted.json() as LearningPathView;
+    const stateBefore = await (await page.request.get('/api/learning/state')).json();
+    await openPath(page, plan);
+    await page.locator(`[data-path-node="version:${initial.adopted_version_id}:empty"]`).click();
+    await page.locator('.learning-path-detail').getByRole('button', { name: '添加下一步', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '添加下一步', exact: true });
+    await expect(dialog).toContainText('添加到阶段：待添加任务阶段');
+    if (width === 390) {
+      await dialog.getByRole('button', { name: '取消', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: '待添加任务阶段', exact: true })).toBeVisible();
+      await page.locator('.learning-path-detail').getByRole('button', { name: '添加下一步', exact: true }).click();
+    }
+    const title = key(`阶段任务-${width}`);
+    await dialog.getByRole('textbox', { name: '任务名称', exact: true }).fill(title);
+    await dialog.getByRole('textbox', { name: '学习对象', exact: true }).fill('合成文本');
+    await dialog.getByRole('textbox', { name: '希望具备的能力', exact: true }).fill('独立拆分文本');
+    await dialog.getByRole('textbox', { name: '做到哪里可以停', exact: true }).fill('完成合成检查后停止');
+    if (width === 1280) {
+      const organization = await (await page.request.get(`/api/learning/plans/${plan.planId}/organization`)).json();
+      const concurrent = await page.request.post(`/api/learning/plans/${plan.planId}/modules`, { data: {
+        title: '并发模块', description: '', parent_module_id: null, expected_revision: organization.revision, request_key: key('concurrent-module'),
+      } });
+      expect(concurrent.ok()).toBeTruthy();
+      await dialog.getByRole('button', { name: '确认任务', exact: true }).click();
+      await expect(dialog.getByRole('button', { name: '读取最新状态', exact: true })).toBeVisible();
+      await expect(dialog.getByRole('textbox', { name: '任务名称', exact: true })).toHaveValue(title);
+      await dialog.getByRole('button', { name: '读取最新状态', exact: true }).click();
+      await dialog.getByRole('button', { name: '已核对，继续编辑', exact: true }).click();
+    }
+    await dialog.getByRole('button', { name: '确认任务', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator('.learning-path-detail')).toContainText(title);
+    await expect(page.locator('.learning-path-detail').getByRole('button', { name: '开始学习', exact: true })).toBeVisible();
+    const view = await pathView(page.request, plan.planId);
+    const current = view.versions.find(item => item.id === view.adopted_version_id)!;
+    const node = page.locator(`[data-path-node="version:${current.id}:empty"]`);
+    await expect(node).toHaveAttribute('aria-pressed', 'true');
+    await expect(node).toContainText('1项任务');
+    expect(view.current_node_id).toBe('entry');
+    const state = await (await page.request.get('/api/learning/state')).json();
+    const added = state.actions.find((item: { title: string }) => item.title === title);
+    expect(current.nodes[1].action_ids).toEqual([added.id]);
+    expect(state.sessions).toEqual(stateBefore.sessions);
+    await page.screenshot({ path: `/tmp/nautilus-path-add-task-${width}.png`, fullPage: true });
+    await page.reload();
+    await page.locator(`[data-path-node="version:${current.id}:empty"]`).click();
+    await expect(page.locator('.learning-path-detail')).toContainText(title);
+    if (width === 390) await page.getByRole('button', { name: '关闭阶段详情', exact: true }).click();
+    await page.getByRole('button', { name: '全图', exact: true }).click();
+    await page.locator(`[data-path-node="version:${initial.adopted_version_id}:empty"]`).click();
+    await expect(page.locator('.learning-path-detail').getByRole('button', { name: '添加下一步', exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  });
+}
+
+test('adding a task to a candidate stage updates the candidate without adopting or starting it', async ({ page }) => {
+  await authorize(page);
+  const plan = await seed(page.request), before = await pathView(page.request, plan.planId);
+  const saved = await page.request.post(`/api/learning/plans/${plan.planId}/path/drafts`, { data: {
+    title: '待核对路线', nodes: [{ id: 'candidate', title: '待核对阶段', action_ids: [], outcome_ids: [] }], edges: [],
+    entry_node_id: 'candidate', current_node_id: 'candidate', reason: '', intent: 'create',
+    expected_revision: before.revision, expected_organization_revision: before.organization_revision, request_key: key('candidate'),
+  } });
+  expect(saved.ok()).toBeTruthy();
+  const draft = await saved.json();
+  await openPath(page, plan);
+  await page.locator(`[data-path-node="draft:${draft.draft_id}:candidate"]`).click();
+  await page.locator('.learning-path-detail').getByRole('button', { name: '添加下一步', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '添加下一步', exact: true });
+  await dialog.getByRole('textbox', { name: '任务名称', exact: true }).fill('草案阶段任务');
+  await dialog.getByRole('textbox', { name: '学习对象', exact: true }).fill('合成文本');
+  await dialog.getByRole('textbox', { name: '希望具备的能力', exact: true }).fill('独立处理');
+  await dialog.getByRole('textbox', { name: '做到哪里可以停', exact: true }).fill('完成即停止');
+  await dialog.getByRole('button', { name: '确认任务', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('.learning-path-detail')).toContainText('草案阶段任务');
+  await expect(page.locator(`[data-path-node="draft:${draft.draft_id}:candidate"]`)).toContainText('1项任务');
+  const view = await pathView(page.request, plan.planId);
+  expect(view.adopted_version_id).toBeNull();
+  expect(view.drafts[0].stale).toBeFalsy();
+  await expect(page.locator('.learning-path-detail').getByRole('button', { name: '开始学习', exact: true })).toHaveCount(0);
+  await confirmCandidate(page);
+  await expect(page.locator('[data-path-node]')).toContainText('1项任务');
+});

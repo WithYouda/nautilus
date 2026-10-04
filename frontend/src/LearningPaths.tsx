@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError, getLearningRoom, type LearningRoomBrief, type LearningState, type PurgeReport } from './api';
 import { AttachmentDialog } from './AttachmentReview';
+import { PlanTaskDialog } from './LearningPlanOrganization';
 import LearningPathCanvas, { pathNodeKey, type PathCanvasGroup } from './LearningPathCanvas';
 import { organizationRequestKey } from './learning-organization-api';
 import {
@@ -8,6 +9,7 @@ import {
   restoreLearningPathDraft, saveLearningPathDraft, startLearningPathTask,
   type LearningPathDraft, type LearningPathDraftInput, type LearningPathEdge, type LearningPathNode,
   type LearningPathPreview, type LearningPathVersion, type LearningPathView, type PathIntent, type PathTransferInput, type PathTransferPreview, type PathTransferResult, type PathCommitmentChange,
+  type PathTaskTarget,
 } from './learning-path-api';
 import './styles/learning-path.css';
 
@@ -44,14 +46,15 @@ function pathGroups(view: LearningPathView): PathCanvasGroup[] {
   ];
 }
 
-export default function LearningPaths({ planId, state, onLearning, onOpenRecord, onRefresh, onPlanCreated, closed, onAddTask }: {
+export default function LearningPaths({ planId, state, onLearning, onOpenRecord, onRefresh, onPlanCreated, closed }: {
   planId: string; state: LearningState; onLearning: (brief: LearningRoomBrief) => void; onOpenRecord: (delegationId: string) => void;
-  onRefresh: () => Promise<void>; onPlanCreated?: (id: string) => void; closed: boolean; onAddTask?: () => void;
+  onRefresh: () => Promise<void>; onPlanCreated?: (id: string) => void; closed: boolean;
 }) {
   const [view, setView] = useState<LearningPathView | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [selection, setSelection] = useState<string | null>(null), [focusTarget, setFocusTarget] = useState<{ key: string; request: number } | null>(null);
   const [editor, setEditor] = useState<{ intent: LearningPathDraftInput['intent']; source?: LearningPathVersion; draft?: LearningPathDraft } | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null), [purging, setPurging] = useState(false), [busy, setBusy] = useState(false);
+  const [taskTarget, setTaskTarget] = useState<PathTaskTarget | null>(null);
   const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 760px)').matches);
   const serial = useRef(0), identity = useRef(planId), focusSerial = useRef(0), attempt = useRef<Attempt>(null); identity.current = planId;
   const nestedTrigger = useRef<HTMLElement | null>(null);
@@ -93,8 +96,10 @@ export default function LearningPaths({ planId, state, onLearning, onOpenRecord,
     if (key) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-path-node="${CSS.escape(key)}"]`)?.focus({ preventScroll: true }));
   }
   function addTask() {
-    if (mobile && selection) { document.querySelector<HTMLButtonElement>(`[data-path-node="${CSS.escape(selection)}"]`)?.focus({ preventScroll: true }); setSelection(null); }
-    onAddTask?.();
+    if (!view || !node) return;
+    rememberTrigger();
+    setTaskTarget({ node_id: node.id, node_title: node.title, expected_revision: view.revision,
+      ...(selectedGroup?.kind === 'main' && selectedVersion ? { version_id: selectedVersion.id } : selectedDraft ? { draft_id: selectedDraft.id, expected_draft_revision: selectedDraft.revision } : {}) });
   }
   const main = view?.versions.find(version => version.id === view.adopted_version_id);
   const groups = view ? pathGroups(view) : [];
@@ -149,7 +154,7 @@ export default function LearningPaths({ planId, state, onLearning, onOpenRecord,
         return <article key={id}><strong>{action?.title ?? '任务当前不可查看'}</strong>{action?.status === 'completed' && <span className="learning-state-label">已完成</span>}
           <div className="learning-path-actions">{selectedGroup.kind === 'main' && action?.status === 'open' && available && <button className="button button--quiet" type="button" disabled={busy || closed} onClick={() => void start(id, !checkpointMissing)}>{checkpointMissing ? '从当前可用任务开始' : available.status === 'active' ? '继续学习' : '开始学习'}</button>}{delegations[0] && <button className="text-button" type="button" onClick={() => onOpenRecord(delegations[0].id)}>{action?.status === 'completed' ? '回看记录' : '查看记录'}</button>}</div>
         </article>;
-      })}{!node.action_ids.length && <>{onAddTask ? <button className="button button--quiet" type="button" disabled={closed || busy} onClick={addTask}>添加下一步</button> : <p>可在计划任务中添加下一步。</p>}</>}</section>
+      })}{(selectedGroup.kind === 'main' || (selectedDraft && !['restore', 'undo'].includes(selectedDraft.intent))) && <button className="button button--quiet" type="button" disabled={closed || busy || selectedDraft?.stale} onClick={addTask}>添加下一步</button>}</section>
       {!!node.outcome_ids.length && <details><summary>成果依据</summary><div className="learning-path-outcome-links">{node.outcome_ids.map(id => <a key={id} href={`?view=records&outcome=${encodeURIComponent(id)}`}>{state.outcomes.find(outcome => outcome.id === id)?.object_description ?? '关联成果'} · 查看依据</a>)}</div></details>}
       {selectedVersion && <details><summary>路线变更详情</summary>{view.decisions.filter(decision => decision.version_id === selectedVersion.id).map(decision => <div key={decision.id}><p>{intentLabels[decision.intent]} · {new Date(decision.created_at).toLocaleString()}</p>{decision.reason && <p>{decision.reason}</p>}</div>)}<PathContentPurge planId={planId} version={selectedVersion} revision={view.revision} closed={closed} retryNeeded={view.purge_retry_ids?.includes(selectedVersion.id)} onChanged={changed} onDialogChange={setPurging} /></details>}
     </div>;
@@ -169,7 +174,14 @@ export default function LearningPaths({ planId, state, onLearning, onOpenRecord,
       return <p key={index}><a href={`?view=plans&plan=${encodeURIComponent(relatedPlan)}&plan_view=path&path_version=${encodeURIComponent(versionId)}${incoming ? `&path_node=${encodeURIComponent(transfer.node_id)}` : ''}`}>{incoming ? '查看原路线' : '查看新计划'}：{title}</a>{transfer.pause_original && incoming && <small>原方向暂停，原任务与记录保留。</small>}</p>;
     })}</div></details>}
     {view && view.versions.length > 1 && <details className="learning-path-history"><summary>查看路线历史</summary><div>{view.versions.filter(version => version.id !== view.adopted_version_id).map(version => <article key={version.id}><strong>{version.content_available ? version.title : '路线内容已清除'}</strong>{version.content_available ? <button className="text-button" type="button" onClick={() => { const key = pathNodeKey(`version:${version.id}`, version.checkpoint?.node_id ?? version.current_node_id ?? version.entry_node_id); select(key); setFocusTarget({ key, request: ++focusSerial.current }); }}>查看旧方向</button> : <PathContentPurge planId={planId} version={version} revision={view.revision} closed={closed} retryNeeded={view.purge_retry_ids?.includes(version.id)} onChanged={changed} onDialogChange={setPurging} />}</article>)}</div></details>}
-    {node && mobile && <AttachmentDialog title={node.title} closeLabel="关闭阶段详情" className="learning-path-drawer" onClose={closeDetail} suspended={Boolean(editor || previewId || purging)}>{detail()}</AttachmentDialog>}
+    {node && mobile && <AttachmentDialog title={node.title} closeLabel="关闭阶段详情" className="learning-path-drawer" onClose={closeDetail} suspended={Boolean(editor || previewId || purging || taskTarget)}>{detail()}</AttachmentDialog>}
+    {taskTarget && <PlanTaskDialog planId={planId} pathTarget={taskTarget} onClose={() => { setTaskTarget(null); returnFocus(); }} onCreated={async next => {
+      if (!next) return;
+      setView(next); setTaskTarget(null);
+      const group = taskTarget.draft_id ? `draft:${taskTarget.draft_id}` : `version:${next.adopted_version_id}`;
+      const key = pathNodeKey(group, taskTarget.node_id); setSelection(key); setFocusTarget({ key, request: ++focusSerial.current });
+      try { await onRefresh(); } catch (reason) { setError(`任务已保存，更新界面失败：${failure(reason)}`); }
+    }} />}
     {editor && view && <PathEditor planId={planId} state={state} view={view} initial={editor} closed={closed} onClose={() => { setEditor(null); returnFocus(); }} onRead={readWithFacts} onTransferred={transferred} onSaved={async (next, draftId) => { setView(next); setEditor(null); setSelection(pathNodeKey(`draft:${draftId}`, next.drafts.find(draft => draft.id === draftId)!.current_node_id)); }} />}
     {previewId && view && <PathPreview planId={planId} draftId={previewId} view={view} state={state} closed={closed} onClose={() => { setPreviewId(null); returnFocus(); }} onRead={readWithFacts} onConfirmed={async next => { setView(next); setPreviewId(null); setSelection(null); try { await onRefresh(); } catch (reason) { setError(`路线已保存，更新界面失败：${failure(reason)}`); } }} />}
   </section>;

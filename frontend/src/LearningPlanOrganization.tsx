@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError, getLearningState, getOutcomeGraph, type LearningOutcome, type LearningStandard, type PurgeReport } from './api';
 import { AttachmentDialog } from './AttachmentReview';
+import { createLearningPathTask, getLearningPath, type LearningPathView, type PathTaskTarget } from './learning-path-api';
 import {
   createLearningPlan, createPlanModule, createPlanTask, getPlanOrganization, getPlanOrganizationPurgeStatus,
   organizationRequestKey, placePlanTask, purgePlanOrganizationContent, reorderPlanChildren, revisePlanModule,
@@ -255,7 +256,10 @@ export function PlanCreateDialog({ goals, onClose, onCreated, onCreateGoal }: {
   </div><div className="learning-organization-dialog__footer"><button className="button button--quiet" type="button" disabled={busy} onClick={onClose}>取消</button><button className="button button--accent" type="submit" disabled={busy || !title.trim()}>{busy ? '正在创建…' : '创建计划'}</button></div></form></AttachmentDialog>;
 }
 
-export function PlanTaskDialog({ planId, onClose, onCreated }: { planId: string; onClose: () => void; onCreated: () => void }) {
+export function PlanTaskDialog({ planId, onClose, onCreated, pathTarget }: {
+  planId: string; onClose: () => void; onCreated: (path?: LearningPathView) => void | Promise<void>; pathTarget?: PathTaskTarget;
+}) {
+  const [target, setTarget] = useState(pathTarget);
   const [data, setData] = useState<PlanOrganization | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [title, setTitle] = useState(''), [object, setObject] = useState(''), [behavior, setBehavior] = useState(''), [stop, setStop] = useState('');
   const [context, setContext] = useState('本次学习'), [boundaries, setBoundaries] = useState(''), [budget, setBudget] = useState('');
@@ -293,7 +297,17 @@ export function PlanTaskDialog({ planId, onClose, onCreated }: { planId: string;
   }
   async function readLatest() {
     setBusy(true); setError('');
-    try { const value = await getPlanOrganization(planId); if (alive.current) { setData(value); setStale('review'); attempt.current = null; } }
+    try {
+      const value = await getPlanOrganization(planId);
+      if (target) {
+        const path = await getLearningPath(planId);
+        const route = target.version_id ? path.versions.find(item => item.id === target.version_id && item.id === path.adopted_version_id && path.status === 'active') : path.drafts.find(item => item.id === target.draft_id && !['restore', 'undo'].includes(item.intent) && !item.stale);
+        const node = route?.content_available && route.nodes.find(item => item.id === target.node_id);
+        if (!node) throw new Error('所选路线或阶段已变化，暂不能保存。请从当前路径重新选择阶段。');
+        if (alive.current) setTarget({ ...target, node_title: node.title, expected_revision: path.revision, ...(target.draft_id ? { expected_draft_revision: path.drafts.find(item => item.id === target.draft_id)!.revision } : {}) });
+      }
+      if (alive.current) { setData(value); setStale('review'); attempt.current = null; }
+    }
     catch (reason) { if (alive.current) setError(message(reason)); }
     finally { if (alive.current) setBusy(false); }
   }
@@ -309,7 +323,11 @@ export function PlanTaskDialog({ planId, onClose, onCreated }: { planId: string;
       criterion_id: criterionId || null, boundaries: boundaries.trim(), time_budget_minutes: minutes, expected_revision: data.revision,
     };
     setBusy(true); setError('');
-    try { await createPlanTask(planId, { ...payload, request_key: attemptKey(attempt, payload) }); if (alive.current) onCreated(); }
+    try {
+      const task = { ...payload, request_key: attemptKey(attempt, { ...payload, target }) };
+      const result = target ? await createLearningPathTask(planId, target, task) : await createPlanTask(planId, task);
+      if (alive.current) await onCreated('path' in result ? result.path : undefined);
+    }
     catch (reason) { if (alive.current) { if (conflict(reason)) { setStale('stale'); setError(''); } else setError(message(reason)); } }
     finally { if (alive.current) setBusy(false); }
   }
@@ -317,6 +335,7 @@ export function PlanTaskDialog({ planId, onClose, onCreated }: { planId: string;
   const chosenStandard = standards.find(item => item.id === criterionId);
   return <AttachmentDialog title="添加下一步" closeLabel="关闭添加下一步" className="learning-organization-dialog learning-plan-task-dialog" onClose={() => { if (!busy) onClose(); }}><form onSubmit={save}><div className="learning-organization-dialog__body">
     {!data && !error && <p role="status">正在读取计划…</p>}
+    {target && <p className="form-hint">添加到阶段：{target.node_title}</p>}
     <ConflictNotice state={stale} busy={busy} onRead={() => void readLatest()} onReviewed={() => setStale(null)} />
     <label className="field"><span>任务名称</span><input required maxLength={300} disabled={disabled} value={title} onChange={event => setTitle(event.target.value)} /></label>
     <fieldset className="learning-organization-outcome"><legend>希望能够做什么</legend><label className="field"><span>学习对象</span><input required maxLength={500} disabled={disabled || !!outcomeId} value={object} onChange={event => setObject(event.target.value)} placeholder="例如：含空行的文本" /></label><label className="field"><span>希望具备的能力</span><textarea required maxLength={500} disabled={disabled || !!outcomeId} value={behavior} onChange={event => setBehavior(event.target.value)} placeholder="例如：独立拆分并清理文本" /></label></fieldset>

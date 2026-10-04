@@ -1,4 +1,11 @@
 import { learningRequest, type PurgeReport } from './api';
+import type { PlanTaskInput } from './learning-organization-api';
+
+export type PathTaskTarget = {
+  node_id: string; node_title: string; expected_revision: number;
+  version_id?: string; draft_id?: string; expected_draft_revision?: number;
+};
+export type PathTaskResult = { action_id: string; node_id: string; version_id?: string; draft_id?: string; path: LearningPathView };
 
 export type LearningPathNode = { id: string; title: string; action_ids: string[]; outcome_ids: string[] };
 export type LearningPathEdge = { source: string; target: string };
@@ -101,6 +108,11 @@ const path = (planId: string) => `/api/learning/plans/${encodeURIComponent(planI
 const post = <T>(url: string, body: unknown) => learningRequest<T>(url, { method: 'POST', body: JSON.stringify(body) });
 export function getLearningPath(planId: string): Promise<LearningPathView> {
   return learningRequest(path(planId), { cache: 'no-store' });
+}
+export function createLearningPathTask(planId: string, target: PathTaskTarget, task: PlanTaskInput): Promise<PathTaskResult> {
+  const { node_title: _title, ...position } = target;
+  const { expected_revision: organizationRevision, ...fields } = task;
+  return post(`${path(planId)}/tasks`, { ...fields, ...position, expected_organization_revision: organizationRevision });
 }
 export function saveLearningPathDraft(planId: string, payload: LearningPathDraftInput): Promise<LearningPathView & { draft_id: string }> {
   return post(`${path(planId)}/drafts`, payload);

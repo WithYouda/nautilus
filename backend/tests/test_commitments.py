@@ -18,7 +18,7 @@ from app.commitment_integrations import PURGE_TABLES,erase_managed
 from app.providers import ProviderConfig
 from app.routers import commitments as routes
 from test_evidence_claims import authorize
-from test_plan_organization import plan,task,get as org
+from test_plan_organization import plan,task,get as org,rows as table_rows
 from test_learning_paths import draft as path_draft,confirm as path_confirm
 from test_managed_purge import absent,snapshot
 
@@ -655,3 +655,25 @@ def test_one_active_run_per_plan_is_discoverable_and_same_key_is_reused(arranged
     response=client.post(base(ctx)+'/suggestions/'+run['id']+'/cancel',json={'expected_revision':run['revision'],'request_key':'cancel-found'})
     assert response.status_code==200,response.text
     assert view(ctx)['runs'][0]['status']=='canceled' and not calls
+
+
+def test_adding_task_to_stage_preserves_running_arrangement_and_execution(arranged):
+    ctx = arranged
+    confirmed = confirm(ctx, save(ctx))
+    item_id = confirmed['current_version']['items'][0]['id']
+    running = start(ctx, item_id)
+    client = ctx['client']
+    path = client.get(f"/api/learning/plans/{ctx['plan_id']}/path").json()
+    execution_before = table_rows(ctx['db'], ('learning_commitment_execution', 'learning_session'))
+    response = client.post(f"/api/learning/plans/{ctx['plan_id']}/path/tasks", json=dict(
+        action_title='阶段新增安排外任务', context_key='synthetic', object_description='新输入',
+        behavior='独立处理', outcome_context_key='synthetic', stop_conditions='核对即停',
+        node_id='practice', version_id=path['adopted_version_id'], expected_revision=path['revision'],
+        expected_organization_revision=path['organization_revision'], request_key='add-with-running-arrangement'))
+    assert response.status_code == 201, response.text
+    current = view(ctx)['current_version']['items'][0]
+    assert current['id'] == item_id and current['node_id'] == 'entry'
+    assert current['route_version_id'] == response.json()['path']['adopted_version_id']
+    assert table_rows(ctx['db'], execution_before.keys()) == execution_before
+    assert ctx['db'].fetchone('SELECT status FROM learning_session WHERE id=?', (running['session_id'],))[0] == 'running'
+    assert client.app.state.learning.core.replay(client.app.state.learning.principal(ctx['identity']))['comparison']['matched']
