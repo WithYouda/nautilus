@@ -26,8 +26,10 @@ async function graph(page: Page) {
   await expect(page.getByText('正在读取成果图…', { exact: true })).toHaveCount(0);
 }
 const node = (page: Page, title: string) => page.locator('.outcome-graph__node').filter({ has: page.getByText(title, { exact: true }) });
+async function select(page: Page, title: string) { const target = node(page, title); await target.focus(); await target.click(); }
 const inspector = (page: Page) => page.getByRole('complementary', { name: '成果详情', exact: true });
 async function create(page: Page, title: string, kind = 'composite') {
+  const drawer = page.locator('.outcome-graph__drawer'); if (await drawer.count()) await drawer.getByRole('button', { name: '关闭成果详情', exact: true }).click();
   await page.getByRole('button', { name: '新建成果', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '新建成果', exact: true });
   await dialog.getByRole('combobox', { name: '成果类型', exact: true }).selectOption(kind);
@@ -75,7 +77,7 @@ test('manual composition, standard coverage, original evidence, CAS and revoked 
   await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog).toHaveCount(0);
   dialog = await relationship(page, 'contains', fixture.no_standard_outcome_id, '合成数据分析项目');
   await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog).toHaveCount(0);
-  await node(page, supported.object_description).click();
+  await select(page, supported.object_description);
   const details = inspector(page);
   await expect(details).toContainText('已有支持'); await expect(details).toContainText('不同表现'); await expect(details).toContainText('尚无依据');
   await details.getByText('标准来源与范围', { exact: true }).first().click();
@@ -85,8 +87,8 @@ test('manual composition, standard coverage, original evidence, CAS and revoked 
   await review.getByRole('button', { name: '查看这个版本的原始产出', exact: true }).first().click();
   await expect(review.locator('[aria-label="原始产出版本"]')).toContainText('sample: D142');
   await review.getByRole('button', { name: '返回成果图', exact: true }).click();
-  await node(page, missing.object_description).click(); await expect(inspector(page)).toContainText('没有合格标准');
-  await node(page, composite.object_description).click(); await expect(inspector(page)).toContainText('整体实践仍待验证');
+  await select(page, missing.object_description); await expect(inspector(page)).toContainText('没有合格标准');
+  await select(page, composite.object_description); await expect(inspector(page)).toContainText('整体实践仍待验证');
   await page.setViewportSize({ width: 1440, height: 1000 }); await noOverflow(page);
   await page.screenshot({ path: '/tmp/nautilus-d1-desktop.png', fullPage: true });
   await page.getByRole('combobox', { name: '计划范围', exact: true }).selectOption(fixture.plan_id);
@@ -94,7 +96,7 @@ test('manual composition, standard coverage, original evidence, CAS and revoked 
   await page.getByLabel('查找成果', { exact: true }).fill('合成综合成果'); await expect(page.locator('.outcome-graph__node')).toHaveCount(1);
   await page.getByLabel('查找成果', { exact: true }).fill('');
   await page.reload(); await expect(node(page, composite.object_description)).toBeVisible();
-  await node(page, composite.object_description).click();
+  await select(page, composite.object_description);
   await inspector(page).getByRole('button', { name: `${composite.object_description} 包含 ${supported.object_description}`, exact: true }).click();
   const relationDetails = page.getByRole('complementary', { name: '关系详情', exact: true });
   await relationDetails.getByRole('button', { name: '调整关系', exact: true }).click();
@@ -111,12 +113,13 @@ test('manual composition, standard coverage, original evidence, CAS and revoked 
   await relationDetails.getByText('关系历史（3）', { exact: true }).click(); await expect(relationDetails).toContainText('合成另一个页面修改');
   await relationDetails.getByRole('button', { name: '撤销关系', exact: true }).click(); await relationDetails.getByRole('button', { name: '确认撤销', exact: true }).click();
   await expect(relationDetails).toContainText('已撤销');
-  await page.reload(); await page.getByRole('combobox', { name: '计划范围', exact: true }).selectOption('all'); await node(page, composite.object_description).click();
+  await page.reload(); await page.getByRole('combobox', { name: '计划范围', exact: true }).selectOption('all'); await select(page, composite.object_description);
   await expect(inspector(page)).toContainText('已撤销');
   const after = await (await page.request.get(graphApi)).json() as OutcomeGraphData;
   expect(after.nodes.find(item => item.id === fixture.support_outcome_id)!.evidence_links).toEqual(supported.evidence_links);
   await page.setViewportSize({ width: 390, height: 844 }); await noOverflow(page);
   await page.screenshot({ path: '/tmp/nautilus-d1-mobile.png', fullPage: true });
+  await page.getByRole('button', { name: '关闭成果详情', exact: true }).click();
   await page.getByRole('button', { name: '新建成果', exact: true }).click();
   const keyboardDialog = page.getByRole('dialog', { name: '新建成果', exact: true });
   await page.keyboard.press('Shift+Tab'); expect(await keyboardDialog.evaluate(element => element.contains(document.activeElement))).toBeTruthy();
@@ -127,7 +130,7 @@ test('four manual relationships, cross-plan selection, duplicate/cycle and reque
   test.setTimeout(60_000); await authorize(page); await graph(page);
   const a = await create(page, '合成四类：基础能力', 'atomic'), b = await create(page, '合成四类：应用能力', 'atomic'), c = await create(page, '合成四类：整体能力');
   let dialog = await relationship(page, 'contains', a.id, '四类包含'); await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog).toHaveCount(0);
-  await node(page, a.object_description).click();
+  await select(page, a.object_description);
   dialog = await relationship(page, 'prerequisite', b.id, '四类前置'); await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog).toHaveCount(0);
   dialog = await relationship(page, 'equivalent', b.id, '四类等价'); await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog).toHaveCount(0);
   dialog = await relationship(page, 'overlap', b.id, '四类重叠');
@@ -138,12 +141,13 @@ test('four manual relationships, cross-plan selection, duplicate/cycle and reque
   expect(data.relations.filter(item => [a.id,b.id,c.id].includes(item.source_outcome_id) && [a.id,b.id,c.id].includes(item.target_outcome_id)).map(item => item.relation_type).sort()).toEqual(['contains','equivalent','overlap','prerequisite']);
   dialog = await relationship(page, 'overlap', b.id, '四类重叠'); await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog.getByRole('alert')).toContainText('已经存在'); await dialog.getByRole('button', { name: '取消', exact: true }).click();
   const d = await create(page, '合成四类：第二个整体'); dialog = await relationship(page, 'contains', c.id, '包含循环检查'); await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog).toHaveCount(0);
-  await node(page, c.object_description).click(); dialog = await relationship(page, 'contains', d.id, '包含循环检查'); await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog.getByRole('alert')).toContainText('循环'); await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await select(page, c.object_description); dialog = await relationship(page, 'contains', d.id, '包含循环检查'); await dialog.getByRole('button', { name: '保存关系', exact: true }).click(); await expect(dialog.getByRole('alert')).toContainText('循环'); await dialog.getByRole('button', { name: '取消', exact: true }).click();
   data = await (await page.request.get(graphApi)).json() as OutcomeGraphData; expect(data.nodes.find(item => item.id === a.id)!.evidence_links).toEqual([]);
   await page.setViewportSize({ width:390,height:844 }); await noOverflow(page);
 });
 
 async function selectedSuggestion(page: Page, titles: string[]): Promise<Locator> {
+  const drawer = page.locator('.outcome-graph__drawer'); if (await drawer.count()) await drawer.getByRole('button', { name: '关闭成果详情', exact: true }).click();
   await page.getByRole('button', { name:'AI 关系建议',exact:true }).click();
   const dialog = page.getByRole('dialog', { name:'AI 关系建议',exact:true });
   const chooser = dialog.locator('details').first();
@@ -200,7 +204,9 @@ test('AI only selected outcomes, saved candidate adopt/edit/reject, cancel/failu
   await dialog.getByRole('button',{name:'重试清除',exact:true}).click(); await expect(dialog.getByLabel('内容清除结果')).toContainText('受管理副本已清除');
   const purged=await (await page.request.get(graphApi)).json() as OutcomeGraphData; const adopted=purged.relations.filter(item=>item.candidate_id && run.candidates.some(candidate=>candidate.id===item.candidate_id));
   expect(adopted).toHaveLength(2); expect(adopted.every(item=>item.status==='active' && item.available===false && !item.rationale)).toBeTruthy();
-  await page.getByRole('button',{name:'关闭 AI 关系建议'}).click(); await node(page,comp.object_description).click();
+  await page.getByRole('button',{name:'关闭 AI 关系建议'}).click();
+  const openDrawer=page.locator('.outcome-graph__drawer'); if(await openDrawer.count()) await openDrawer.getByRole('button',{name:'关闭成果详情',exact:true}).click();
+  await select(page,comp.object_description);
   await inspector(page).getByRole('button',{name:`${comp.object_description} 包含 ${a.object_description}`,exact:true}).click();
   const relationDetails=page.getByRole('complementary',{name:'关系详情',exact:true}); await relationDetails.getByText('更多操作',{exact:true}).click(); await relationDetails.getByRole('button',{name:'彻底清除关系说明',exact:true}).click();
   confirmation=page.getByRole('dialog',{name:'清除这项关系说明？',exact:true}); await confirmation.getByRole('button',{name:'确认清除',exact:true}).click(); await expect(confirmation).toHaveCount(0); await expect(relationDetails.getByLabel('内容清除结果')).toContainText('受管理副本已清除');

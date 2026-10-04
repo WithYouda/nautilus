@@ -33,7 +33,8 @@ def seed(data_dir, owner_id, prefix):
         identity=dict(db.fetchone('SELECT * FROM local_identity WHERE id=?',(owner_id,)))
         learning=LearningService(db)
         principal=learning.principal(identity)
-        standard=learning.overview(identity)['standards'][0]
+        standard=next(item for item in learning.overview(identity)['standards']
+                      if item['context_key']=='python-regex-basics' and item['version']==1)
         criterion_id=prefix+'-criterion-v2'
         recipe={'dimensions':[
             {'id':'application','label':'合成应用检查','requirements':[{'method':'deterministic_check','condition':'with_materials','minimum':1}]},

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getOutcomeGraph, getOutcomeRelation, getReturnReview, revokeOutcomeRelation, type OutcomeGraphData, type OutcomeGraphNode, type OutcomeRelation, type OutcomeRelationDetail } from './api';
 import LearningPageHeader from './LearningPageHeader';
 import OutcomeGraphCanvas, { type GraphNodeDisplay } from './OutcomeGraphCanvas';
 import { graphError, graphTime, OutcomeCreateDialog, relationLabels, RelationDialog, RelationSources, requestKey, stateLabels } from './OutcomeGraphForms';
 import OutcomeSuggestions from './OutcomeSuggestions';
 import OutcomeGraphPurge from './OutcomeGraphPurge';
+import { AttachmentDialog } from './AttachmentReview';
 import './styles/outcome-graph.css';
 
 function location(key: string, value: string | null) {
@@ -22,6 +23,29 @@ function nodeLabels(node: OutcomeGraphNode): GraphNodeDisplay['labels'] {
   return labels.length ? labels : [{ text: '仍待判断', tone: 'unknown' }];
 }
 
+function GraphInspector({ title, onClose, suspended, children }: { title: string; onClose: () => void; suspended: boolean; children: ReactNode }) {
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 760px)').matches);
+  const [nestedDialog, setNestedDialog] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 760px)');
+    const update = () => setMobile(query.matches);
+    query.addEventListener('change', update); return () => query.removeEventListener('change', update);
+  }, []);
+  useEffect(() => {
+    if (!mobile) return;
+    // Clear confirmations are launched inside the reused inspector content.
+    // Yield the drawer's focus and backdrop to those dialogs as well as editors.
+    const update = () => setNestedDialog([...document.querySelectorAll('[role="dialog"]')].some(element => !element.classList.contains('outcome-graph__drawer') && element.getAttribute('aria-hidden') !== 'true'));
+    update(); const observer = new MutationObserver(update); observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [mobile]);
+  const content = <aside className="outcome-graph__inspector" aria-label={title}>
+    {!mobile && <header className="outcome-graph__inspector-header"><strong>{title}</strong><button className="icon-button" type="button" aria-label={`关闭${title}`} onClick={onClose}>×</button></header>}
+    {children}
+  </aside>;
+  return mobile ? <AttachmentDialog title={title} className="outcome-graph__drawer" closeLabel={`关闭${title}`} onClose={onClose} suspended={suspended || nestedDialog}>{content}</AttachmentDialog> : content;
+}
+
 export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => void; onEvidence: (id: string) => void }) {
   const query = new URLSearchParams(window.location.search);
   const [data, setData] = useState<OutcomeGraphData | null>(null), [allData, setAllData] = useState<OutcomeGraphData | null>(null);
@@ -34,7 +58,6 @@ export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => voi
   const [revoke, setRevoke] = useState(false), [busy, setBusy] = useState(false);
   const revokeKey = useRef<string | null>(null);
   const requestSerial = useRef(0);
-  const inspectorElement = useRef<HTMLElement>(null);
   useEffect(() => {
     let active = true;
     Promise.all([getOutcomeGraph(), getReturnReview().catch(() => null)]).then(async ([all, position]) => {
@@ -73,8 +96,8 @@ export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => voi
   const selected = nodes.find(node => node.id === selectedId);
   const allNodes = allData?.nodes ?? [];
   const nodeTitle = (id: string) => allNodes.find(node => node.id === id)?.object_description ?? '成果当前不可查看';
-  function focusDetails() { if (window.matchMedia('(max-width: 1050px)').matches) requestAnimationFrame(() => inspectorElement.current?.scrollIntoView({ block: 'start' })); }
-  function select(id: string) { setSelectedId(id); location('graph_node', id); setRelationId(null); focusDetails(); }
+  function select(id: string) { setSelectedId(id); location('graph_node', id); setRelationId(null); }
+  function closeInspector() { setSelectedId(null); location('graph_node', null); setRelationId(null); }
   async function revokeRelation() {
     if (!detail || busy) return;
     if (!revokeKey.current) revokeKey.current = requestKey();
@@ -92,11 +115,11 @@ export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => voi
     </div>
     {error && <div role="alert"><p>{error}</p><button className="text-button" type="button" onClick={() => { setLoading(true); void refresh().catch(reason => { setError(graphError(reason)); setLoading(false); }); }}>重新读取成果图</button></div>}
     {loading && <p role="status">正在读取成果图…</p>}
-    {!loading && !error && <div className="outcome-graph__layout">
-      {nodes.length ? <OutcomeGraphCanvas nodes={nodes.map(node => ({ id: node.id, title: node.object_description, behavior: node.behavior, kind: node.kind, labels: nodeLabels(node) }))} edges={edges.map(edge => ({ id: edge.id, source: edge.source_outcome_id, target: edge.target_outcome_id, kind: edge.relation_type, label: relationLabels[edge.relation_type] }))} selected={selectedId} onSelect={select} onRelation={id => { setRelationId(id); focusDetails(); }} /> : <div className="outcome-graph__empty"><h3>{search ? '没有找到匹配的成果' : '这个范围还没有成果'}</h3><p className="outcome-graph__muted">{search ? '试试其他名称，或清空搜索。' : '可以新建综合成果，再关联已有成果。'}</p>{plan !== 'all' && <button className="button button--quiet" type="button" onClick={() => void filter('all')}>查看全部成果</button>}</div>}
-      <aside ref={inspectorElement} className="outcome-graph__inspector" aria-label={relationId ? '关系详情' : '成果详情'}>
+    {!loading && !error && <div className={`outcome-graph__layout ${selected || relationId ? 'has-inspector' : ''}`}>
+      {nodes.length ? <OutcomeGraphCanvas nodes={nodes.map(node => ({ id: node.id, title: node.object_description, behavior: node.behavior, kind: node.kind, labels: nodeLabels(node) }))} edges={edges.map(edge => ({ id: edge.id, source: edge.source_outcome_id, target: edge.target_outcome_id, kind: edge.relation_type, label: relationLabels[edge.relation_type] }))} selected={selectedId} selectedRelation={relationId} onSelect={select} onRelation={setRelationId} /> : <div className="outcome-graph__empty"><h3>{search ? '没有找到匹配的成果' : '这个范围还没有成果'}</h3><p className="outcome-graph__muted">{search ? '试试其他名称，或清空搜索。' : '可以新建综合成果，再关联已有成果。'}</p>{plan !== 'all' && <button className="button button--quiet" type="button" onClick={() => void filter('all')}>查看全部成果</button>}</div>}
+      {(selected || relationId) && <GraphInspector title={relationId ? '关系详情' : '成果详情'} onClose={closeInspector} suspended={Boolean(create || relation || suggest)}>
         {relationId ? <>
-          <button className="text-button" type="button" onClick={() => setRelationId(null)}>返回成果详情</button>
+          {selected && <button className="text-button" type="button" onClick={() => setRelationId(null)}>返回成果详情</button>}
           {relationError && <div role="alert"><p>{relationError}</p><button className="text-button" type="button" onClick={() => void getOutcomeRelation(relationId).then(value => { setDetail(value); setRelationError(''); setRevoke(false); revokeKey.current = null; }).catch(reason => setRelationError(graphError(reason)))}>重新读取关系</button></div>}
           {!detail && !relationError && <p role="status">正在读取关系…</p>}
           {detail && <>
@@ -122,8 +145,8 @@ export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => voi
           <section className="outcome-graph__relations" aria-label="这个成果的关系"><h3>关联成果</h3>{(allData?.relations ?? []).filter(item => item.source_outcome_id === selected.id || item.target_outcome_id === selected.id).map(item => <article key={item.id}><button className="text-button" type="button" onClick={() => setRelationId(item.id)}>{nodeTitle(item.source_outcome_id)} {relationLabels[item.relation_type]} {nodeTitle(item.target_outcome_id)}{item.status === 'active' ? '' : item.status === 'revoked' ? ' · 已撤销' : ' · 说明已清除'}</button></article>)}</section>
           {!!selected.task_links.length && <details><summary>关联任务（{selected.task_links.length}）</summary>{selected.task_links.map(item => <p key={`${item.action_id}:${item.plan_id}`}>{item.action_title}</p>)}</details>}
           {!!selected.evidence_links.length && <details><summary>已有证据引用（{selected.evidence_links.length}）</summary><p>这些依据仍属于原来的成果和标准。</p><button className="text-button" type="button" onClick={() => onEvidence(selected.id)}>查看作答、产出与证据判断</button></details>}
-        </> : <><h3>选一个成果</h3><p className="outcome-graph__muted">点开节点查看依据和关联；点开关系查看说明与历史。</p></>}
-      </aside>
+        </> : null}
+      </GraphInspector>}
     </div>}
     {create && <OutcomeCreateDialog onClose={() => setCreate(false)} onCreated={async id => { setPlan('all'); location('graph_plan', 'all'); await refresh('all', id); setRelationId(null); setCreate(false); }} />}
     {relation && <RelationDialog nodes={allNodes} currentPlanId={currentPlan} initial={relation === 'new' ? undefined : relation} initialSource={selectedId ?? undefined} onClose={() => setRelation(null)} onSaved={async () => { await refresh(); if (detail && relation !== 'new') setDetail(await getOutcomeRelation(detail.id)); setRelation(null); }} />}
