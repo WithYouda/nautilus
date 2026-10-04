@@ -5,6 +5,7 @@ import ScopedModelControl from './ModelControl';
 import GoalClosure, { goalIsClosed, goalStatusLabel } from './GoalClosure';
 import LearningPlanOrganization, { PlanCreateDialog, PlanTaskDialog } from './LearningPlanOrganization';
 import LearningPaths from './LearningPaths';
+import LearningCommitments from './LearningCommitments';
 
 export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   onCreate: (planId?: string) => void; onOpenRecord: (delegationId: string) => void; onLearning: (brief: LearningRoomBrief) => void;
@@ -16,7 +17,7 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   const [reviewGoalId, setReviewGoalId] = useState<string | null>(null);
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [taskPlanId, setTaskPlanId] = useState<string | null>(null);
-  const [planView, setPlanView] = useState<'tasks'|'path'>(() => new URLSearchParams(window.location.search).get('plan_view') === 'path' ? 'path' : 'tasks');
+  const [planView, setPlanView] = useState<'tasks'|'path'|'commitments'>(() => {const value=new URLSearchParams(window.location.search).get('plan_view');return value==='path'||value==='commitments'?value:'tasks';});
   useEffect(() => { getLearningState().then(setState).catch(reason => setError(reason.message)); }, []);
   const plans = state?.plans ?? [];
   const selected = plans.find(plan => plan.id === planId) ?? (planId ? null : plans[0]);
@@ -42,7 +43,7 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
     setPlanId(id);
     const url = new URL(window.location.href); url.searchParams.set('plan', id); url.searchParams.delete('path_version'); url.searchParams.delete('path_node'); window.history.replaceState(null, '', url);
   }
-  function changePlanView(next:'tasks'|'path') {
+  function changePlanView(next:'tasks'|'path'|'commitments') {
     setPlanView(next);
     const url=new URL(window.location.href);url.searchParams.set('plan_view',next);window.history.replaceState(null,'',url);
   }
@@ -74,8 +75,8 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
       {selected ? <section className="learning-plan-detail" aria-label="计划详情">
         <header>{goal && <p className="eyebrow">学习目标</p>}<h2>{goal?.title || selected.title}</h2>{goal && <span className="learning-state-label">{goalStatusLabel(goal.status)}</span>}{goal?.description && <p>{goal.description}</p>}{goal && <p className="learning-plan-detail__route">{selected.title}</p>}{!goal && selected.description && <p>{selected.description}</p>}{goal && <button className="text-button" onClick={() => setReviewGoalId(goal.id)}>调整目标状态</button>}</header>
         <ScopedModelControl key={selected.id} kind="plan" id={selected.id} />
-        <nav className="learning-plan-views" aria-label="计划视图"><button className="text-button" aria-pressed={planView==='tasks'} onClick={()=>changePlanView('tasks')}>任务</button><button className="text-button" aria-pressed={planView==='path'} onClick={()=>changePlanView('path')}>路径图</button></nav>
-        {planView === 'path' ? <LearningPaths key={`${selected.id}:${tasks.map(task=>task.id).join(',')}`} planId={selected.id} state={state!} onLearning={onLearning} onOpenRecord={onOpenRecord} onRefresh={refresh} closed={closedGoal || selected.status !== 'active'} onAddTask={()=>setTaskPlanId(selected.id)} onPlanCreated={id=>{select(id);void refresh().catch(reason=>setError(reason.message));}} /> : <>
+        <nav className="learning-plan-views" aria-label="计划视图"><button className="text-button" aria-pressed={planView==='tasks'} onClick={()=>changePlanView('tasks')}>任务</button><button className="text-button" aria-pressed={planView==='path'} onClick={()=>changePlanView('path')}>路径图</button><button className="text-button" aria-pressed={planView==='commitments'} onClick={()=>changePlanView('commitments')}>近期安排</button></nav>
+        {planView==='commitments'?<LearningCommitments key={selected.id} planId={selected.id} state={state!} onLearning={onLearning} onOpenRecord={onOpenRecord} onRefresh={refresh} closed={closedGoal||selected.status!=='active'} />:planView === 'path' ? <LearningPaths key={`${selected.id}:${tasks.map(task=>task.id).join(',')}`} planId={selected.id} state={state!} onLearning={onLearning} onOpenRecord={onOpenRecord} onRefresh={refresh} closed={closedGoal || selected.status !== 'active'} onAddTask={()=>setTaskPlanId(selected.id)} onPlanCreated={id=>{select(id);void refresh().catch(reason=>setError(reason.message));}} /> : <>
         <div className="learning-plan-detail__heading"><h3>学习任务</h3>{selected.status === 'active' && !closedGoal && <button className="button button--accent" onClick={() => setTaskPlanId(selected.id)}>添加下一步</button>}</div>
         {closedGoal && <p>目标{goalStatusLabel(goal!.status)}。已有任务和学习记录仍可查看；重新开启目标后可继续安排学习。</p>}
         <LearningPlanOrganization key={`${selected.id}:${tasks.map(task => task.id).join(',')}`} planId={selected.id} renderTask={renderTask} onRefresh={refresh} closed={closedGoal || selected.status !== 'active'} />

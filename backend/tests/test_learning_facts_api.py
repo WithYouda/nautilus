@@ -142,6 +142,8 @@ def test_learning_database_is_independent_from_legacy_database(client):
         "042_outcome_graph",
         "043_plan_organization",
         "044_learning_paths",
+        "045_learning_commitments",
+        "046_learning_signal_feedback",
     ]
 
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { chooseReturnReview, getLearningRoom, reviewEvidenceClaim, type LearningRoomBrief, type ReturnReview } from './api';
+import SessionFeedback from './SessionFeedback';
 import { goalIsClosed, goalStatusLabel } from './GoalClosure';
 
 export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged, onOpenRecord, onOpenPlan }: {
@@ -63,6 +64,7 @@ export default function ReturnReviewCard({ card, onContinue, onSetup, onChanged,
       </>}
       {!closedGoal && card.position.plan_id && <button className="text-button" onClick={() => onOpenPlan(card.position.plan_id!)}>查看计划</button>}
     </div>
+    {card.position.last_session && card.what_happened.session_status!=='running' && <SessionFeedback key={card.position.last_session} sessionId={card.position.last_session} onSaved={onChanged} />}
     {stopped && <p role="status">学习位置已保存。</p>}
     {error && <p role="alert" className="workspace-alert">{error}</p>}
     <button className="text-button learning-observations-toggle" aria-expanded={details} onClick={() => { setDetails(!details); if (!details) void chooseReturnReview(card.id, 'evidence_viewed', `evidence:${card.id}`).catch(() => setError('查看记录未保存。')); }}>学习判断详情{card.evidence_details.filter(item => item.status === 'candidate').length ? ' · 有待复核观察' : ''}</button>

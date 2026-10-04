@@ -1,0 +1,58 @@
+.learning-commitments, .session-feedback { min-width: 0; }
+.commitment-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin: 8px 0 22px; }
+.commitment-toolbar > p { margin: 0; color: var(--muted); font-size: 13px; }
+.commitment-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.commitment-item { min-width: 0; padding: 16px 0; border-top: 1px solid var(--line); }
+.commitment-item--next { padding: 22px; border: 1px solid var(--line-strong, var(--line)); border-inline-start: 3px solid var(--accent); border-radius: 5px; margin-bottom: 20px; }
+.commitment-item h4 { margin: 6px 0 10px; font-size: 17px; overflow-wrap: anywhere; }
+.commitment-item p, .session-feedback-summary p { margin: 8px 0 14px; overflow-wrap: anywhere; }
+.commitment-item small, .commitment-item > div > p, .commitment-muted { font-size: 12px; color: var(--muted); }
+.learning-commitments details, .session-feedback details { margin-top: 16px; }
+.learning-commitments summary, .session-feedback summary { cursor: pointer; font-size: 13px; }
+.learning-commitments details > p, .session-feedback details > p { font-size: 13px; line-height: 1.65; }
+.commitment-candidates { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); }
+.commitment-candidates > article, .commitment-rest > div, .session-feedback details > article { padding: 12px 0; }
+.commitment-axis-list { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 16px 0; font-size: 12px; }
+.commitment-axis-list > div { display: flex; gap: 12px; }
+.commitment-axis-list dt { color: var(--muted); }
+.commitment-axis-list dd { margin: 0; }
+.commitment-calibration ul, .commitment-preview ul, .commitment-preview ol { padding-inline-start: 22px; font-size: 13px; line-height: 1.85; }
+.commitment-run { margin: 14px 0; border-inline-start: 2px solid var(--line); padding-inline-start: 14px; }
+.attachment-dialog.commitment-dialog { padding: 0; display: flex; flex-direction: column; width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; border-radius: 6px; }
+.commitment-dialog > header { position: sticky; top: 0; z-index: 2; padding: 16px 20px; background: var(--paper); border-bottom: 1px solid var(--line); }
+.commitment-dialog > header .icon-button { flex-shrink: 0; }
+.commitment-dialog > form { display: contents; }
+.commitment-dialog-body { min-width: 0; padding: 20px; }
+.commitment-dialog-body > p:first-child { margin-top: 0; }
+.commitment-dialog-footer { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--line); background: var(--paper); padding: 14px 20px; }
+.commitment-dialog-body .field, .session-feedback-form .field { margin-top: 14px; min-width: 0; }
+.commitment-dialog-body .field > span, .session-feedback-form .field > span { font-size: 12px; }
+.commitment-dialog-body input, .commitment-dialog-body select, .commitment-dialog-body textarea, .session-feedback-form input, .session-feedback-form select, .session-feedback-form textarea { min-width: 0; width: 100%; box-sizing: border-box; }
+.commitment-dialog-body textarea, .session-feedback-form textarea { min-height: 65px; }
+.commitment-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; }
+.commitment-dialog-body fieldset, .session-feedback-form fieldset { min-width: 0; margin: 14px 0; padding: 10px 14px 16px; border: 1px solid var(--line); }
+.commitment-dialog-body legend, .session-feedback-form legend { padding: 0 5px; font-size: 12px; }
+.commitment-editor-item > .commitment-actions { margin-top: 14px; }
+.commitment-dialog-body details { margin: 16px 0; }
+.commitment-shorten { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
+.commitment-shorten input { max-width: 130px; }
+.commitment-shorten .text-button { margin-bottom: 8px; }
+.commitment-purge-dialog { width: min(520px, calc(100vw - 32px)); }
+.session-feedback { margin: 18px 0; padding: 14px 0; border-top: 1px solid var(--line); }
+.session-feedback > summary { color: var(--muted); font-size: 13px; cursor: pointer; }
+.session-feedback-form { max-width: 700px; margin-top: 16px; }
+.session-feedback .commitment-actions { margin-top: 18px; }
+.commitment-purge { margin-top: 14px; }
+.commitment-purge p { font-size: 12px; }
+.commitment-conflict { padding: 12px 0; }
+@media (max-width: 600px) {
+  .commitment-item--next { padding: 17px; }
+  .attachment-dialog.commitment-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
+  .commitment-dialog > header, .commitment-dialog-body { padding: 16px; }
+  .commitment-dialog > header h2 { font-size: 17px; }
+  .commitment-dialog-footer { padding: 12px 16px; }
+  .commitment-field-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .commitment-dialog-body fieldset { padding: 8px 10px 14px; }
+  .commitment-dialog-body input[type="datetime-local"], .session-feedback-form input[type="datetime-local"] { max-width: 100%; }
+  .commitment-toolbar { align-items: flex-start; }
+}

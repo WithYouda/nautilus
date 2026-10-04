@@ -139,6 +139,9 @@ def _erase_delayed(connection, owner, follow_up_ids, now):
 
 
 def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifact_ids=()):
+    from .commitment_integrations import erase_managed
+    if erase_managed(connection,owner,kind,object_id,now,submission_ids=submission_ids,artifact_ids=artifact_ids):
+        return
     if kind == 'path_content':
         if columns(connection,'learning_path_version'):
             row=connection.execute('SELECT private_object_id FROM learning_path_version WHERE owner_id=? AND id=?',(owner,object_id)).fetchone()

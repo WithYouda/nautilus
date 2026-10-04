@@ -12,6 +12,7 @@ from typing import Any
 from .config import PROJECT_ROOT
 from .learning_storage import open_learning_database
 from .purge_storage import register_backup, unregister_missing_backup, storage_lock, receipts
+from .commitment_integrations import PURGE_TABLES as COMMITMENT_PURGE_TABLES, PURGE_BARRIERS as COMMITMENT_PURGE_BARRIERS, PRIVATE_COLUMNS as COMMITMENT_PRIVATE_COLUMNS
 
 
 class ProductionLearningDatabaseError(RuntimeError):
@@ -196,6 +197,7 @@ def _backup_loses_purge_barriers(
         if not purges.issubset(retained):
             return True
     barriers = (
+        *COMMITMENT_PURGE_BARRIERS,
         ('learning_path_private',('owner_id','object_id','revision')),
         ('learning_path_private_tombstone',('owner_id','object_id')),
         ('learning_path_version',('owner_id','id')),
@@ -493,7 +495,7 @@ def _check_purge_receipts(target_path, candidate_path):
         if receipt['status'] != 'complete':
             raise ProductionLearningDatabaseError('purged content cleanup is incomplete; finish it before restoring')
         kind, owner, object_id = (receipt[key] for key in ('kind', 'owner', 'object_id'))
-        table, key = {'plan_content': ('learning_plan_private', 'object_id'),
+        table, key = {**COMMITMENT_PURGE_TABLES,'plan_content': ('learning_plan_private', 'object_id'),
                       'path_content': ('learning_path_version','id'),
                       'module_content': ('learning_plan_private', 'object_id'),
                       'artifact': ('learning_raw_artifact', 'artifact_id'),
@@ -536,6 +538,7 @@ def _check_purge_receipts(target_path, candidate_path):
                 if not connection.execute("SELECT 1 FROM learning_event WHERE owner_id=? AND event_type='artifact.purged' AND json_extract(payload_json,'$.artifact_id')=?", (owner, artifact_id)).fetchone():
                     raise ProductionLearningDatabaseError('backup would lose deletion facts for purged content')
             private_columns = {
+                **COMMITMENT_PRIVATE_COLUMNS,
                 'learning_plan_private': ['content_json','content_hash'],
                 'learning_path_private': ['content_json','content_hash'],
                 'learning_plan': ['title','description'],

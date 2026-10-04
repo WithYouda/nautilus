@@ -1445,7 +1445,7 @@ function LearningRoomBriefCard({ brief, conversationId, visibleMessages, chatBus
     <section className="ai-room-brief" aria-label="本次学习安排">
       <details>
         <summary>学习安排 · {brief.action_title}</summary>
-        <div className="ai-room-brief__route">{brief.goal_title} / {brief.plan_title}</div>
+        <div className="ai-room-brief__route">{brief.goal_title ? `${brief.goal_title} / ${brief.plan_title}` : brief.plan_title}</div>
         <div className="ai-room-brief__items">
           <span><b>成果</b>{brief.outcome_object}；{brief.outcome_behavior}</span>
           {brief.boundaries && <span><b>边界</b>{brief.boundaries}</span>}
@@ -1462,7 +1462,7 @@ function LearningRoomBriefCard({ brief, conversationId, visibleMessages, chatBus
 function LearningRoomBriefDetails({ brief }: { brief: LearningRoomBrief }) {
   return (
     <dl>
-      <div><dt>目标</dt><dd>{brief.goal_title}</dd></div>
+      <>{brief.goal_title && <div><dt>目标</dt><dd>{brief.goal_title}</dd></div>}</>
       <div><dt>任务</dt><dd>{brief.action_title}</dd></div>
       <div><dt>成果</dt><dd>{brief.outcome_object}；{brief.outcome_behavior}</dd></div>
       {brief.boundaries && <div><dt>边界</dt><dd>{brief.boundaries}</dd></div>}

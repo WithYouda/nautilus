@@ -17,6 +17,8 @@ from .agent_runtime import AgentRuntime
 from .ai_runtime import AiRunManager
 from .plan_organization import PlanOrganization
 from .learning_paths import LearningPaths
+from .commitments import Commitments
+from .routers import commitments
 from .routers import learning_paths
 from .routers import plan_organization
 from .outcome_graph import OutcomeGraph
@@ -150,6 +152,11 @@ def create_app(
         ai_run_manager = AiRunManager(conversation_service, transport=provider_transport)
         graph_service = OutcomeGraph(learning_service, evidence_provider_service, provider_transport, ai_run_manager._provider_slots)
         graph_service.recover()
+        learning_paths_service=LearningPaths(learning_service,conversation_service)
+        commitments_service=Commitments(learning_service,conversation_service,learning_paths_service,
+            transport=provider_transport,provider_slots=ai_run_manager._provider_slots)
+        commitments_service.recover()
+        app.state.commitments=commitments_service
         app.state.outcome_graph = graph_service
         model_discovery = ModelDiscoveryService(transport=provider_transport)
         identity = auth_service.ensure_local_identity()
@@ -170,7 +177,7 @@ def create_app(
         app.state.plan_editor = plan_editor_service
         app.state.layouts = layout_service
         app.state.plan_organization = PlanOrganization(learning_service)
-        app.state.learning_paths = LearningPaths(learning_service, conversation_service)
+        app.state.learning_paths = learning_paths_service
         app.state.learning = learning_service
         app.state.learning_setup = learning_setup_service
         app.state.verification = verification_service
@@ -208,6 +215,7 @@ def create_app(
             yield
         finally:
             outbound_approvals.close()
+            await commitments_service.shutdown()
             await graph_service.shutdown()
             await discussion_service.shutdown()
             await ai_run_manager.shutdown()
@@ -268,6 +276,8 @@ def create_app(
     app.include_router(outcome_graph.router)
     app.include_router(plan_organization.router)
     app.include_router(learning_paths.router)
+    app.include_router(commitments.router)
+    app.include_router(commitments.feedback_router)
     app.include_router(practice.router)
     app.include_router(delayed_follow_up.router)
     app.include_router(ai.router)

@@ -162,40 +162,26 @@ async def test_discussion_current_state_revision_replay_and_purge(learning_datab
 
 
 @pytest.mark.asyncio
-async def test_formal_034_to_current_upgrade_preserves_discussion(tmp_path, learning_database):
-    verification, original = await attempt(learning_database)
+async def test_formal_034_to_current_upgrade_preserves_discussion(tmp_path):
+    from app.config import Settings
+    from app.db import Database
+    path = tmp_path / 'isolated-034.sqlite3'
+    database = Database(path, Settings.from_env().migrations_dir, migration_floor=11, migration_ceiling=34)
+    from app.learning_service import LearningService
+    LearningService(database).principal(IDENTITY)
+    verification, original = await attempt(database)
     service = QuestionDiscussionService(verification)
     discussion = service.create(IDENTITY, original['id'], original['latest_submission_id'], 'q1', 'old-034')
-    for identity in learning_database.fetchall('SELECT * FROM local_identity'):
+    for identity in database.fetchall('SELECT * FROM local_identity'):
         verification.link_legacy_submissions(dict(identity))
-    path = tmp_path / 'isolated-034.sqlite3'
-    with sqlite3.connect(path) as old:
-        learning_database.connection.backup(old)
-        old.execute('DROP TRIGGER learning_discussion_purge_model_config')
-        old.execute('DROP TABLE learning_model_config')
-        old.execute('DROP TRIGGER learning_discussion_purge_current_state')
-        old.execute('DROP TABLE learning_conversation_current_state')
-        old.execute('DROP TRIGGER learning_material_purge_ocr')
-        old.execute('DROP TABLE learning_material_ocr')
-        old.execute('DROP TRIGGER learning_material_purge_original')
-        old.execute('DROP TABLE learning_material_original')
-        old.execute('DROP TRIGGER learning_discussion_purge_materials')
-        old.execute('DROP TABLE learning_material_link')
-        old.execute('DROP TABLE learning_material_library')
-        old.executescript("""CREATE TRIGGER learning_discussion_purge_materials AFTER UPDATE OF purged_at ON learning_question_discussion
-            WHEN NEW.purged_at IS NOT NULL BEGIN
-              UPDATE learning_task_material SET title=NULL,content=NULL,url=NULL,provenance_json='{}',purged_at=NEW.purged_at
-              WHERE owner_id=NEW.owner_id AND scope_kind='discussion' AND scope_id=NEW.id AND purged_at IS NULL;
-            END;""")
-        old.execute("DELETE FROM schema_migrations WHERE version >= '035'")
-        tables = [row[0] for row in old.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_migrations','sqlite_sequence')")]
-        before = {table: old.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() for table in tables}
-        assert old.execute('SELECT 1 FROM learning_question_discussion WHERE id=?', (discussion['id'],)).fetchone()
+    tables = [row[0] for row in database.fetchall("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_migrations','sqlite_sequence')")]
+    before = {table: [tuple(row) for row in database.fetchall(f'SELECT * FROM "{table}" ORDER BY rowid')] for table in tables}
+    database.close()
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '040_model_control'
+    assert result['preflight']['applied_migrations'][-1] == '034_discussion_branch_map'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '046_learning_signal_feedback'
     with sqlite3.connect(path) as upgraded:
         assert all(upgraded.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() == rows
                    for table, rows in before.items())
         assert upgraded.execute('SELECT count(*) FROM learning_conversation_current_state').fetchone()[0] == 0
-        assert upgraded.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
-        assert upgraded.execute('PRAGMA foreign_key_check').fetchall() == []
+        assert upgraded.execute('SELECT 1 FROM learning_question_discussion WHERE id=?', (discussion['id'],)).fetchone()

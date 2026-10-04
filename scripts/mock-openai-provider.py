@@ -193,6 +193,49 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
+        commitment_prompt = any(message.get('role') == 'system' and '为Nautilus用户提出近期安排草案' in str(message.get('content', ''))
+                                for message in payload.get('messages', []))
+        if commitment_prompt:
+            STATE.requested('commitment:' + model)
+            if model == 'mock-error':
+                self._json(401, {'error': {'message': 'Synthetic commitment provider rejection'}})
+                return
+            if model == 'mock-slow':
+                time.sleep(3)
+            inputs = json.loads(payload['messages'][-1]['content'])
+            route = inputs.get('route') or {}
+            nodes = route.get('nodes', [])
+            tasks = {task['id']: task for task in inputs.get('tasks', [])}
+            allowed = inputs.get('source_refs', [])
+            maximum = min(30, inputs.get('calibration', {}).get('max_sessions', 1))
+            recommended = min(maximum, max(1, inputs.get('calibration', {}).get('recommended_sessions', 1)))
+            result = []
+            # Keep executed promises exactly as supplied; no new task identities
+            # or fabricated evidence are created by this local test provider.
+            for item in inputs.get('current_items', []):
+                if len(result) >= maximum:
+                    break
+                if item.get('executed') and item.get('status') not in {'completed', 'skipped'}:
+                    result.append({key: item.get(key) for key in ('id', 'node_id', 'action_id', 'delegation_id',
+                        'estimate_min_minutes', 'estimate_max_minutes', 'due_at', 'timezone')} | {'reason': '合成建议：保留已经发生的安排。', 'source_refs': []})
+            ordered = sorted(nodes, key=lambda node: node['id'] != route.get('current_node_id'))
+            for node in ordered:
+                for action_id in node.get('action_ids', []):
+                    task = tasks.get(action_id)
+                    if not task or task.get('status') != 'open' or task.get('delegation_status') not in {'ready', 'active'}:
+                        continue
+                    if any(item['action_id'] == action_id for item in result):
+                        continue
+                    if len(result) >= recommended:
+                        break
+                    result.append(dict(id=None, node_id=node['id'], action_id=action_id, delegation_id=task['delegation_id'],
+                        estimate_min_minutes=None, estimate_max_minutes=None, due_at=None, timezone=None,
+                        reason='合成建议：先明确尝试这一小步，投入与日期保持未知。',
+                        source_refs=[ref for ref in allowed if (ref['kind'] == 'action' and ref['id'] == action_id)
+                            or (ref['kind'] == 'path_version' and ref['id'] == route.get('version_id'))]))
+            content = json.dumps(dict(items=result, explanation='合成近期安排，仅使用冻结输入中的当前路径和任务。'), ensure_ascii=False)
+            self._json(200, {'choices': [{'message': {'role': 'assistant', 'content': content}}]})
+            return
         graph_prompt = any(message.get('role') == 'system' and '你为Nautilus提出个人成果关系候选' in str(message.get('content', ''))
                            for message in payload.get('messages', []))
         if graph_prompt:

@@ -39,6 +39,9 @@ from .events import (
 )
 
 PROJECTION_TABLES = (
+    'learning_session_feedback_history', 'learning_session_feedback', 'learning_commitment_execution',
+    'learning_commitment_item', 'learning_commitment_version', 'learning_commitment_draft',
+    'learning_commitment_availability', 'learning_commitment_run', 'learning_plan_commitment_state',
     'learning_path_checkpoint',
     'learning_path_decision',
     'learning_path_version',
@@ -152,6 +155,10 @@ class LearningCore:
         return result
 
     def _dispatch(self, connection, principal, command, command_id, key, now):
+        from .commitment_commands import CommitmentCommand
+        if isinstance(command, CommitmentCommand):
+            from .commitments import dispatch_commitment
+            return dispatch_commitment(self, connection, principal, command, command_id, key, now)
         from .path_commands import PathCommand
         if isinstance(command, PathCommand):
             from .learning_paths import dispatch_path

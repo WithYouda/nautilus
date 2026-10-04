@@ -85,4 +85,6 @@ class LearningRecords:
         verifications = [dict(r) for r in self.db.fetchall('''SELECT id, mode, status, session_id, created_at, submitted_at, purged_at
             FROM learning_verification WHERE owner_id=? AND delegation_id=? ORDER BY rowid DESC''', (owner, delegation_id))]
         room = LearningRoomService(self.learning, self.verification.conversations).get(identity, item['session_id']) if item['session_id'] else None
-        return dict(record=item, verifications=verifications, brief=room['brief'] if room else None)
+        sessions=[dict(row) for row in self.db.fetchall('''SELECT id,status,started_at,ended_at
+            FROM learning_session WHERE owner_id=? AND delegation_id=? ORDER BY rowid DESC''',(owner,delegation_id))]
+        return dict(record=item, verifications=verifications, brief=room['brief'] if room else None,sessions=sessions)
