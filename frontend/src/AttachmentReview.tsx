@@ -5,12 +5,13 @@ import ImageModelSettings from './ImageModelSettings';
 import { attachmentChanged, attachmentError, attachmentName } from './AttachmentSupport';
 import './styles/composer-attachments.css';
 
-export function AttachmentDialog({ title, onClose, children, className = '', closeLabel = '关闭附件预览' }: { title: string; onClose: () => void; children: ReactNode; className?: string; closeLabel?: string }) {
+export function AttachmentDialog({ title, onClose, children, className = '', closeLabel = '关闭附件预览', suspended = false }: { title: string; onClose: () => void; children: ReactNode; className?: string; closeLabel?: string; suspended?: boolean }) {
   const dialog = useRef<HTMLElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const closeRef = useRef(onClose); closeRef.current = onClose;
   const heading = useId();
   useEffect(() => {
+    if (suspended) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     close.current?.focus();
     const handle = (event: KeyboardEvent) => {
@@ -24,9 +25,9 @@ export function AttachmentDialog({ title, onClose, children, className = '', clo
     };
     document.addEventListener('keydown', handle, true);
     return () => { document.removeEventListener('keydown', handle, true); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
-  }, []);
+  }, [suspended]);
   return <DialogPortal><div className="dialog-backdrop attachment-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className={`attachment-dialog ${className}`} ref={dialog} role="dialog" aria-modal="true" aria-labelledby={heading}>
+    <section className={`attachment-dialog ${className}`} ref={dialog} role="dialog" aria-modal="true" aria-labelledby={heading} aria-hidden={suspended || undefined}>
       <header><h2 id={heading}>{title}</h2><button ref={close} type="button" className="icon-button" aria-label={closeLabel} onClick={onClose}>×</button></header>{children}
     </section>
   </div></DialogPortal>;

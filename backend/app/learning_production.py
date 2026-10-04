@@ -196,6 +196,10 @@ def _backup_loses_purge_barriers(
         if not purges.issubset(retained):
             return True
     barriers = (
+        ("learning_graph_private", ("owner_id", "kind", "object_id", "revision")),
+        ("learning_outcome_relation", ("owner_id", "id")),
+        ("learning_graph_run", ("owner_id", "id")),
+        ("learning_graph_candidate", ("owner_id", "id")),
         ("learning_raw_artifact", ("owner_id", "artifact_id", "content_version")),
         ("learning_verification", ("owner_id", "id")),
         ("learning_verification_submission", ("owner_id", "id")),
@@ -484,6 +488,8 @@ def _check_purge_receipts(target_path, candidate_path):
             raise ProductionLearningDatabaseError('purged content cleanup is incomplete; finish it before restoring')
         kind, owner, object_id = (receipt[key] for key in ('kind', 'owner', 'object_id'))
         table, key = {'artifact': ('learning_raw_artifact', 'artifact_id'),
+                      'graph_relation': ('learning_outcome_relation','id'),
+                      'graph_run': ('learning_graph_run','id'),
                       'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id'),
                       'practice': ('learning_practice', 'id'),
                       'delayed': ('learning_delayed_follow_up', 'id'),
@@ -519,6 +525,7 @@ def _check_purge_receipts(target_path, candidate_path):
                 if not connection.execute("SELECT 1 FROM learning_event WHERE owner_id=? AND event_type='artifact.purged' AND json_extract(payload_json,'$.artifact_id')=?", (owner, artifact_id)).fetchone():
                     raise ProductionLearningDatabaseError('backup would lose deletion facts for purged content')
             private_columns = {
+                'learning_graph_private': ['content_json','content_hash'],
                 'learning_raw_artifact': ['content', 'content_hash'],
                 'learning_verification': ['challenge_json', 'answer_key_json', 'submission_json', 'result_json', 'contract_snapshot_json'],
                 'learning_verification_submission': ['content_json'],

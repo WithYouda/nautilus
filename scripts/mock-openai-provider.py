@@ -193,6 +193,29 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
+        graph_prompt = any(message.get('role') == 'system' and '你为Nautilus提出个人成果关系候选' in str(message.get('content', ''))
+                           for message in payload.get('messages', []))
+        if graph_prompt:
+            STATE.requested('graph:' + model)
+            if model == 'mock-error':
+                self._json(401, {'error': {'message': 'Synthetic graph provider failure'}})
+                return
+            if model == 'mock-slow':
+                time.sleep(4)
+            selected = json.loads(payload['messages'][-1]['content'])['selected_outcomes']
+            composite = next((item for item in selected if item['kind'] == 'composite'), None)
+            pairs = ([(composite, item, 'contains') for item in selected if item['id'] != composite['id']]
+                     if composite else [(left, right, 'overlap') for index, left in enumerate(selected) for right in selected[index + 1:]])
+            if composite and len(pairs) < 3:
+                others = [item for item in selected if item['id'] != composite['id']]
+                pairs.extend((left, right, 'overlap') for index, left in enumerate(others) for right in others[index + 1:])
+            candidates = [dict(source_outcome_id=left['id'], target_outcome_id=right['id'], relation_type=kind,
+                context_key='个人学习', rationale='依据所选合成成果声明提出的组织建议。', uncertainty='这是尚未独立核验的合成候选。',
+                source_refs=[dict(kind='outcome', id=item['id'], version=1) for item in (left, right)])
+                for left, right, kind in pairs[:3]]
+            self._json(200, {'model': model, 'choices': [{'message': {'role': 'assistant',
+                'content': json.dumps({'candidates': candidates}, ensure_ascii=False)}}]})
+            return
         capability_check = any(message.get('role') == 'system' and '这是一次应用能力检查' in str(message.get('content', ''))
                                for message in payload.get('messages', []))
         if capability_check:

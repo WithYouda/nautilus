@@ -21,6 +21,7 @@ class ChangeGoalStatus(Command):
 
 
 class CreateOutcome(Command):
+    kind: Literal['atomic', 'composite'] = 'atomic'
     object_description: str = Field(min_length=1, max_length=500)
     behavior: str = Field(min_length=1, max_length=500)
     context_key: str = Field(min_length=1, max_length=200)

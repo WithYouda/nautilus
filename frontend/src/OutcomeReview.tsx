@@ -31,8 +31,8 @@ const completionLabel = { unverified: '未经过验证', external_material: '用
 const condition = (value: string | null) => value ? conditionLabels[value] ?? value : '帮助条件未记录';
 
 type Attempt = Review['attempts'][number];
-export default function OutcomeReview({ id, refreshKey, onBack, onOpenVerification, onOpenRecord }: {
-  id: string; refreshKey?: number; onBack: () => void;
+export default function OutcomeReview({ id, refreshKey, onBack, onOpenVerification, onOpenRecord, backLabel = '返回委托历史' }: {
+  id: string; refreshKey?: number; onBack: () => void; backLabel?: string;
   onOpenVerification: (attempt: Attempt) => void; onOpenRecord: (id: string) => void;
 }) {
   const [review, setReview] = useState<Review | null>(null);
@@ -77,7 +77,7 @@ export default function OutcomeReview({ id, refreshKey, onBack, onOpenVerificati
   }
   function rawArtifact(artifactId: string, version: number) { setSelectedArtifact({ id: artifactId, version }); }
   return <section className="outcome-review" aria-label="单成果依据回看">
-    <div className="outcome-review__heading"><h3>这个成果的依据</h3><button className="button button--quiet" type="button" onClick={onBack}>返回委托历史</button></div>
+    <div className="outcome-review__heading"><h3>这个成果的依据</h3><button className="button button--quiet" type="button" onClick={onBack}>{backLabel}</button></div>
     {error && <p role="alert">{error}</p>}
     {!review && !error && <p role="status">正在读取成果记录…</p>}
     {review && <>

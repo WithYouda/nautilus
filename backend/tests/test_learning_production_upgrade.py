@@ -17,7 +17,7 @@ from test_evidence_claims import authorize, create_standard_chain
 
 
 @pytest.mark.asyncio
-async def test_upgrade_039_to_040_preserves_every_old_table_and_discussion_snapshot(tmp_path):
+async def test_upgrade_039_to_current_preserves_every_old_table_and_discussion_snapshot(tmp_path):
     from app.config import Settings
     from app.db import Database
     from app.learning_service import LearningService
@@ -48,7 +48,7 @@ async def test_upgrade_039_to_040_preserves_every_old_table_and_discussion_snaps
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '039_material_ocr'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '040_model_control'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '042_outcome_graph'
     assert result['pre_upgrade_backup']['applied_migrations'][-1] == '039_material_ocr'
     assert result['pre_upgrade_backup']['integrity_check'] == 'ok'
     assert len(list((tmp_path / 'backups').glob('*.sqlite3'))) == 2
@@ -56,7 +56,9 @@ async def test_upgrade_039_to_040_preserves_every_old_table_and_discussion_snaps
     with closing(sqlite3.connect(path)) as connection:
         after = _business_rows(connection)
         assert {table: after[table] for table in before} == before
-        assert set(after) - set(before) == {'learning_model_config'}
+        assert set(after) - set(before) == {'learning_model_config','learning_model_defaults','learning_outcome_kind',
+            'learning_outcome_relation','learning_outcome_relation_history','learning_graph_run',
+            'learning_graph_candidate','learning_graph_private','learning_graph_source'}
         assert after['learning_model_config'] == []
         assert {name: connection.execute('SELECT sql FROM sqlite_master WHERE name=?', (name,)).fetchone()[0]
                 for name in definitions} == definitions
@@ -79,7 +81,7 @@ def test_upgrade_029_to_current_preserves_existing_learning_facts(tmp_path):
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '029_discussion_reasoning'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '040_model_control'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '042_outcome_graph'
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute('SELECT * FROM learning_event ORDER BY position').fetchall() == before
         assert connection.execute('SELECT status FROM learning_session WHERE id=?', (context['session_id'],)).fetchone()[0] == 'running'

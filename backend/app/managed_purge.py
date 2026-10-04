@@ -19,6 +19,7 @@ EXTERNAL_LIMITS = [
     '操作系统快照、磁盘历史块及存储介质内部副本：应用无法验证清除；本结果针对受管理 SQLite 文件及其日志。',
 ]
 TABLES = {'artifact': ('learning_raw_artifact', 'artifact_id'),
+          'graph_relation': ('learning_outcome_relation', 'id'), 'graph_run': ('learning_graph_run','id'),
           'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id'),
           'practice': ('learning_practice', 'id'),
           'delayed': ('learning_delayed_follow_up', 'id')}

@@ -39,6 +39,11 @@ from .events import (
 )
 
 PROJECTION_TABLES = (
+    "learning_graph_candidate",
+    "learning_graph_run",
+    "learning_outcome_relation_history",
+    "learning_outcome_relation",
+    "learning_outcome_kind",
     # Analysis runs and evidence claims are retained as historical evidence
     # references; fact replay must not sever their foreign keys.
     "learning_artifact",
@@ -108,6 +113,8 @@ class LearningCore:
         if not idempotency_key.strip() or len(idempotency_key) > 200:
             raise DomainError("invalid_idempotency_key", 422)
         payload = command.model_dump(mode="json")
+        if isinstance(command, CreateOutcome) and command.kind == 'atomic':
+            payload.pop('kind')
         # Preserve idempotency hashes issued before plan continuation existed.
         if isinstance(command, ConfirmLearningSetup) and command.plan_id is None:
             payload.pop("plan_id")
@@ -138,6 +145,10 @@ class LearningCore:
         return result
 
     def _dispatch(self, connection, principal, command, command_id, key, now):
+        from .graph_commands import GraphCommand
+        if isinstance(command, GraphCommand):
+            from .outcome_graph import dispatch_graph
+            return dispatch_graph(connection, principal, command, command_id, key, now)
         repository = LearningRepository(self.database, principal)
         object_id = str(uuid4())
         payload = {"id": object_id, **command.model_dump(exclude={"expected_version"})}

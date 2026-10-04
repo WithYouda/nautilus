@@ -138,6 +138,8 @@ def test_learning_database_is_independent_from_legacy_database(client):
         "038_material_library_removal",
         "039_material_ocr",
         "040_model_control",
+        "041_reasoning_control",
+        "042_outcome_graph",
     ]
 
 

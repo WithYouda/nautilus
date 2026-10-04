@@ -139,6 +139,10 @@ def _erase_delayed(connection, owner, follow_up_ids, now):
 
 
 def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifact_ids=()):
+    from .core.outcome_graph import erase_graph, erase_graph_sources
+    if kind in {'graph_relation','graph_run'}:
+        erase_graph(connection,owner,'relation' if kind=='graph_relation' else 'run',object_id,now)
+        return
     """Keeps unrelated rows, object identities and execution facts intact."""
     if kind == 'completion':
         _update(connection, 'learning_completion', dict(content_json=None, contract_snapshot_json=None,
@@ -244,4 +248,5 @@ def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifac
                 # A batch's per-claim reviews share the same private reason.
                 for claim in json.loads(row['claim_ids_json']):
                     _update(connection, 'learning_review_action', dict(reason=None), 'owner_id=? AND claim_id=? AND request_key=?', (owner, claim, f"{row['request_key']}:{claim}"))
+    erase_graph_sources(connection,owner,artifacts,now)
     _redact_events(connection, owner, claims, now)

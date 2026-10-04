@@ -15,6 +15,8 @@ from .routers import diagnostics
 from . import __version__
 from .agent_runtime import AgentRuntime
 from .ai_runtime import AiRunManager
+from .outcome_graph import OutcomeGraph
+from .routers import outcome_graph
 from .auth import AuthService
 from .config import Settings
 from .conversations import ConversationService
@@ -142,6 +144,9 @@ def create_app(
         if interrupted_title_runs:
             logger.warning("Recovered %s interrupted conversation title runs.", interrupted_title_runs)
         ai_run_manager = AiRunManager(conversation_service, transport=provider_transport)
+        graph_service = OutcomeGraph(learning_service, evidence_provider_service, provider_transport, ai_run_manager._provider_slots)
+        graph_service.recover()
+        app.state.outcome_graph = graph_service
         model_discovery = ModelDiscoveryService(transport=provider_transport)
         identity = auth_service.ensure_local_identity()
         app_settings.runtime_token_path.parent.mkdir(parents=True, exist_ok=True)
@@ -197,6 +202,7 @@ def create_app(
             yield
         finally:
             outbound_approvals.close()
+            await graph_service.shutdown()
             await discussion_service.shutdown()
             await ai_run_manager.shutdown()
             await ocr_service.shutdown()
@@ -253,6 +259,7 @@ def create_app(
     app.include_router(plans.router)
     app.include_router(layouts.router)
     app.include_router(learning.router)
+    app.include_router(outcome_graph.router)
     app.include_router(practice.router)
     app.include_router(delayed_follow_up.router)
     app.include_router(ai.router)

@@ -95,6 +95,9 @@ class LearningRepository:
     def validate_binding(self, action_id: str, outcome_id: str, criterion_id: str | None) -> dict:
         action = self.action(action_id)
         self._owned("learning_outcome", outcome_id)
+        if self.database.fetchone("SELECT 1 FROM sqlite_master WHERE name='learning_outcome_kind'") and self.database.fetchone('SELECT 1 FROM learning_outcome_kind WHERE owner_id=? AND outcome_id=?',
+                                  (self.principal.owner_id, outcome_id)):
+            raise DomainError('composite_not_verifiable', 422)
         if criterion_id is None:
             return {"criterion": None, "reason": "no_criterion"}
         criterion = self._owned("learning_criterion_version", criterion_id)

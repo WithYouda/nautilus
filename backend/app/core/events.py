@@ -15,6 +15,8 @@ SUPPORTED_EVENT_TYPES = frozenset({
     "plan.step_added",
     "action.created",
     "outcome.created",
+    "graph.relation_created", "graph.relation_revised", "graph.relation_revoked", "graph.relation_purged",
+    "graph.run_started", "graph.run_finished", "graph.run_canceled", "graph.run_purged", "graph.candidate_reviewed",
     "delegation.created",
     "session.started",
     "session.ended",
@@ -142,7 +144,10 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
     occurred_at = event["occurred_at"]
     event_type = event["event_type"]
 
-    if event_type == 'goal.status_changed':
+    if event_type.startswith('graph.'):
+        from .outcome_graph import apply_graph_event
+        apply_graph_event(connection, event, payload)
+    elif event_type == 'goal.status_changed':
         if event['aggregate_type'] != 'goal' or payload.get('id') != event['aggregate_id']:
             raise DomainError('event_scope_invalid')
         previous, target = payload.get('previous_status'), payload.get('status')
@@ -255,6 +260,10 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
             )
         elif tuple(existing) != expected:
             raise DomainError("event_scope_invalid")
+        if payload.get('kind', 'atomic') == 'composite':
+            connection.execute('INSERT INTO learning_outcome_kind VALUES (?,?,?)', (owner,payload['id'],'composite'))
+        elif payload.get('kind', 'atomic') != 'atomic':
+            raise DomainError('event_scope_invalid')
     elif event_type == "delegation.created":
         if event["aggregate_type"] != "action" or payload.get("action_id") != event["aggregate_id"]:
             raise DomainError("event_scope_invalid")
@@ -477,6 +486,8 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
         )
         from ..verification_content import purge_artifact_copies
         purge_artifact_copies(connection, owner, payload["artifact_id"], occurred_at)
+        from .outcome_graph import erase_graph_sources
+        erase_graph_sources(connection,owner,[payload['artifact_id']],occurred_at)
 
     if event["aggregate_type"] == "action":
         changed = connection.execute(
