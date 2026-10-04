@@ -12,7 +12,36 @@ export function graphError(reason: unknown): string {
     const labels: Record<string, string> = { version_conflict: '这项关系已在其他页面更新。请重新读取后再保存。', duplicate_relation: '这两个成果已有相同关系，请查看已有关系。', relation_cycle: '这项关系会形成循环，请调整两个成果或关系方向。', idempotency_conflict: '这次保存的内容发生了变化，请重新尝试。', relation_conflict: '这两个成果已有不相容的关系，请先调整已有关系。' };
     return labels[reason.kind] ?? reason.message;
   }
-  const labels: Record<string, string> = { contains_requires_composite: '包含关系的起点需要是综合成果。', self_relation: '请选择两个不同的成果。', source_unavailable: '引用的来源当前不可查看，请重新选择依据。', provider_not_configured: '请先在设置中配置可用的 AI。', no_provider: '请先在设置中配置可用的 AI。', generation_failed: 'AI 暂时无法生成关系建议，请重试或手动关联。', interrupted: '上次分析被中断，请重新分析。', user_canceled: '这次分析已取消。' };
+  const labels: Record<string, string> = {
+    contains_requires_composite: '包含关系的起点需要是综合成果。', self_relation: '请选择两个不同的成果。',
+    source_unavailable: '引用的来源当前不可查看，请重新选择依据。',
+    provider_not_configured: '请先在设置中配置可用的 AI。', no_provider: '请先在设置中配置可用的 AI。',
+    timeout: 'AI 服务响应超时，未生成建议。请稍后重试。',
+    network_error: '连接 AI 服务时发生异常，未生成建议。请重试。',
+    auth_error: 'AI 服务鉴权失败，请在设置中检查该服务的 API 密钥。',
+    rate_limited: 'AI 服务暂时限制了请求频率，请稍后重试。',
+    endpoint_not_found: 'AI 服务地址不可用，请在设置中检查服务地址。',
+    request_error: 'AI 服务不接受本次请求，请检查所选模型的配置。',
+    upstream_error: 'AI 服务暂时出错，请稍后重试。',
+    output_truncated: 'AI 返回内容超过本次长度限制，请减少选中的成果后重试。',
+    reasoning_only: 'AI 只返回了思考过程，没有给出关系建议。请重试。',
+    content_filtered: 'AI 服务没有提供本次结果，可以调整选中的成果或手动关联。',
+    protocol_error: 'AI 服务返回了无法读取的响应，请重试或检查模型配置。',
+    config_error: 'AI 配置不可用，请在设置中检查服务和模型。',
+    provider_error: 'AI 服务调用失败，请重试或检查连接。',
+    invalid_json: 'AI 返回的建议格式不完整，请重新分析。',
+    invalid_response_structure: 'AI 返回的建议缺少必要内容或格式不正确，请重新分析。',
+    graph_self_relation: 'AI 建议把成果关联到自身，这批建议未保存。请重新分析。',
+    graph_contains_requires_composite: 'AI 建议的包含方向不正确，这批建议未保存。请重新分析。',
+    graph_candidate_out_of_scope: 'AI 建议引用了未选中的成果，这批建议未保存。请重新分析。',
+    graph_relation_conflict: 'AI 建议与已有关系冲突，这批建议未保存。可重新分析或手动关联。',
+    graph_relation_cycle: 'AI 建议会形成循环，这批建议未保存。可重新分析或手动关联。',
+    graph_input_changed: '选中的成果已变化，请重新选择并分析。',
+    graph_source_version_required: 'AI 建议缺少来源版本，请重新分析。',
+    event_integrity_failed: '建议依据未通过完整性检查，请重新读取成果图。',
+    generation_failed: 'AI 暂时无法生成关系建议，请重试或手动关联。',
+    interrupted: '上次分析被中断，请重新分析。', user_canceled: '这次分析已取消。',
+  };
   return reason instanceof Error ? labels[reason.message] ?? reason.message : '暂时无法完成，请重试。';
 }
 export function OutcomeCreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => Promise<void> }) {

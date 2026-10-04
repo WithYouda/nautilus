@@ -63,6 +63,12 @@
 .outcome-graph__inspector small, .outcome-graph__muted { color: var(--v6-muted, #65716e); font-size: 12px; line-height: 1.7; }
 .outcome-graph__standards, .outcome-graph__relations, .outcome-graph__history { display: grid; gap: 12px; }
 .outcome-graph__standards article, .outcome-graph__relations article, .outcome-graph__candidate { display: grid; gap: 9px; padding: 14px 0; border-top: 1px solid var(--v6-rule, #d8dedb); }
+.outcome-graph__relations article.outcome-graph__related { grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; }
+.outcome-graph__related > div { display: grid; gap: 4px; }
+.outcome-graph__neighbor { padding: 0; border: 0; background: transparent; color: var(--v6-navy, #273039); font: inherit; font-size: 13px; font-weight: 600; line-height: 1.6; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.outcome-graph__neighbor:hover { text-decoration: underline; text-underline-offset: 3px; }
+.outcome-graph__neighbor:disabled { color: var(--v6-muted, #716958); cursor: default; }
+.outcome-graph__related .outcome-graph__relation-action { font-size: 12px; color: var(--v6-muted, #716958); line-height: 1.7; white-space: nowrap; padding: 0; }
 .outcome-graph__standards ul, .outcome-graph__history { padding-left: 18px; margin: 8px 0; }
 .outcome-graph__inspector summary { cursor: pointer; font-size: 13px; }
 .outcome-graph__dialog { width: min(620px, calc(100vw - 24px)); }

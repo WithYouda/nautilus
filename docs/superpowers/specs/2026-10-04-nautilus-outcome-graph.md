@@ -33,6 +33,10 @@ run：`{id,revision,status:"running"|"succeeded"|"failed"|"canceled"|"purged",re
 
 node：`{id,kind,object_description,behavior,context_key,source,created_at,plan_ids,task_links,evidence_links,coverage,overall_evidence_required}`。task_links：`[{action_id,action_title,plan_id}]`，evidence_links：`[{claim_id,artifact_id,content_version,fact_event_id,criterion_id,dimension_id,stance,available}]`，只引用真实现有证据。coverage：`{status:"no_standard"|"unknown"|"insufficient"|"provisional"|"supported"|"conflicting"|"mixed",standards:[{id,version,context_key,review_status,availability,package_id,package_title,package_version,sources,scope,limitations,dimensions:[{id,label,state}]}]}`。保留全部标准版本、情境及审核/可用状态；没有合格标准显示 no_standard，有合格标准而无证据显示 unknown。混合状态不压成百分比，composite 默认 unknown、overall_evidence_required=true。点节点继续现有 OutcomeReview 依据回看。
 
+10-04失败修正：`reason`区分连接/超时/鉴权/限流/服务响应、输出截断/仅思考、JSON/结构错误和候选关系校验等固定分类；诊断只记录阶段与错误分类，不保存模型原响应或异常正文。旧`generation_failed`不能回填为猜测原因。新运行的`provider_snapshot.max_tokens`冻结实际单次输出预算：默认32768，已知模型输出上限为正整数时取较低值，保留所选模型、思考强度与超时；预算更改不修改已接受运行，也不自动追加请求。提示版本2补齐非空情境与字段长度约束；截断/无效输出仍不保存候选，不改变批次拒绝、重复跳过或用户逐项确认语义。
+
+10-04关联入口修正：右侧显示相邻成果本身的名称和简短关系方向，点击名称使用同一ID定位、选中并打开图中成果；另设“关系详情”查看说明/来源/历史。搜索或计划筛选遮住相邻节点时先揭示该节点，再定位，不创建新身份或改写关系。
+
 ## 事务、冲突与生命周期
 
 正式成果/关系及候选审查走 Core 命令，在同事务追加事件、更新投影和幂等结果。旧 revision 返回 409 `version_conflict`；duplicate/cycle/type/source/scope 错误不留下半条关系。关系说明、来源正文及冻结 AI 输入置于可清除的独立私文存储，事件只引用身份和版本；回放读取原私文及清除屏障，不复活清除内容。

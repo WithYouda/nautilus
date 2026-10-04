@@ -97,7 +97,7 @@ test('manual composition, standard coverage, original evidence, CAS and revoked 
   await page.getByLabel('查找成果', { exact: true }).fill('');
   await page.reload(); await expect(node(page, composite.object_description)).toBeVisible();
   await select(page, composite.object_description);
-  await inspector(page).getByRole('button', { name: `${composite.object_description} 包含 ${supported.object_description}`, exact: true }).click();
+  await inspector(page).locator('.outcome-graph__related').filter({ has: page.getByRole('button', { name: supported.object_description, exact: true }) }).getByRole('button', { name: '关系详情', exact: true }).click();
   const relationDetails = page.getByRole('complementary', { name: '关系详情', exact: true });
   await relationDetails.getByRole('button', { name: '调整关系', exact: true }).click();
   const edit = page.getByRole('dialog', { name: '调整关系', exact: true });
@@ -182,7 +182,13 @@ test('AI only selected outcomes, saved candidate adopt/edit/reject, cancel/failu
   expect((await (await page.request.get(graphApi)).json() as OutcomeGraphData).relations).toEqual(data.relations);
   await page.getByRole('button',{name:'关闭 AI 关系建议'}).click();
   await provider(page,'mock-error');
-  dialog=await selectedSuggestion(page,[comp.object_description,c.object_description]); await expect(dialog.getByRole('status')).toContainText('分析失败'); await expect(dialog).toContainText('AI 暂时无法生成关系建议');
+  dialog=await selectedSuggestion(page,[comp.object_description,c.object_description]); await expect(dialog.getByRole('status')).toContainText('分析失败'); await expect(dialog).toContainText('AI 服务鉴权失败，请在设置中检查该服务的 API 密钥。');
+  const failedRun=((await (await page.request.get(graphApi)).json()) as OutcomeGraphData).runs.find(item=>item.status==='failed' && item.reason==='auth_error')!;
+  expect(failedRun).toBeTruthy();
+  await page.route(`**${graphApi}/suggestions/${failedRun.id}`,async route=>{const response=await route.fetch(); await route.fulfill({response,json:{...await response.json(),reason:'network_error'}});});
+  await dialog.getByText('先前的分析',{exact:true}).click(); await dialog.getByRole('combobox',{name:'选择分析记录',exact:true}).selectOption(failedRun.id);
+  await expect(dialog).toContainText('连接 AI 服务时发生异常，未生成建议。请重试。'); await expect(dialog.getByRole('button',{name:'重新分析这组成果',exact:true})).toBeVisible();
+  await page.unroute(`**${graphApi}/suggestions/${failedRun.id}`); await dialog.getByText('先前的分析',{exact:true}).click();
   await provider(page,'mock-slow'); await dialog.getByRole('button',{name:'重新分析这组成果',exact:true}).click(); await expect(dialog.getByRole('button',{name:'取消分析',exact:true})).toBeVisible(); await dialog.getByRole('button',{name:'取消分析',exact:true}).click(); await expect(dialog.getByRole('status')).toContainText('已取消');
   // A failed poll must resume after explicit reread even while run id/status are unchanged.
   await page.route(`**${graphApi}/suggestions/*`, async route => { if (route.request().method() === 'GET') await route.fulfill({ status:503,json:{detail:'合成读取中断'} }); else await route.continue(); });
@@ -207,7 +213,7 @@ test('AI only selected outcomes, saved candidate adopt/edit/reject, cancel/failu
   await page.getByRole('button',{name:'关闭 AI 关系建议'}).click();
   const openDrawer=page.locator('.outcome-graph__drawer'); if(await openDrawer.count()) await openDrawer.getByRole('button',{name:'关闭成果详情',exact:true}).click();
   await select(page,comp.object_description);
-  await inspector(page).getByRole('button',{name:`${comp.object_description} 包含 ${a.object_description}`,exact:true}).click();
+  await inspector(page).locator('.outcome-graph__related').filter({has:page.getByRole('button',{name:a.object_description,exact:true})}).getByRole('button',{name:'关系详情',exact:true}).click();
   const relationDetails=page.getByRole('complementary',{name:'关系详情',exact:true}); await relationDetails.getByText('更多操作',{exact:true}).click(); await relationDetails.getByRole('button',{name:'彻底清除关系说明',exact:true}).click();
   confirmation=page.getByRole('dialog',{name:'清除这项关系说明？',exact:true}); await confirmation.getByRole('button',{name:'确认清除',exact:true}).click(); await expect(confirmation).toHaveCount(0); await expect(relationDetails.getByLabel('内容清除结果')).toContainText('受管理副本已清除');
 });

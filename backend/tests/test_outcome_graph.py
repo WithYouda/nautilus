@@ -10,7 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import create_app
 from app.core.commands import CreateOutcome
-from app.core.graph_commands import FinishGraphRun
+from app.core.graph_commands import FinishGraphRun, StartGraphRun
+from app.core.outcome_graph import outcome_input
 from app.learning_domain import Principal, DomainError
 from app.learning_production import create_learning_backup, restore_learning_backup, ProductionLearningDatabaseError
 from app.purge_storage import register_backup, storage_lock
@@ -204,13 +205,32 @@ def ai_client(tmp_path,calls,mode='success',delay=None):
         inputs=json.loads(payload['messages'][-1]['content'])['selected_outcomes']
         if delay:
             await delay.wait()
-        if mode=='error':
-            return httpx.Response(500,json={'error':{'message':'synthetic failure'}})
+        statuses={'error':500,'auth':401,'limited':429,'endpoint':404,'request':400}
+        if mode in statuses:
+            return httpx.Response(statuses[mode],json={'error':{'message':'PROVIDER_PRIVATE_SENTINEL'}})
+        if mode=='timeout':
+            raise httpx.ReadTimeout('PROVIDER_PRIVATE_SENTINEL',request=request)
         candidates=[fields(inputs[0]['id'],item['id'],'contains',rationale='AI_PRIVATE_SENTINEL',
             source_refs=[{'kind':'outcome','id':inputs[0]['id'],'version':1},{'kind':'outcome','id':item['id'],'version':1}]) for item in inputs[1:]]
         if mode=='invalid':
             candidates[0]['target_outcome_id']='outside-selection'
-        return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps({'candidates':candidates})}}]})
+        if mode=='invalid_structure':
+            candidates[0]['context_key']=''
+        if mode=='invalid_contains':
+            candidates[0].update(source_outcome_id=inputs[1]['id'],target_outcome_id=inputs[0]['id'])
+        if mode=='invalid_json':
+            content='{"candidates": [MODEL_PRIVATE_SENTINEL'
+        else:
+            content=json.dumps({'candidates':candidates})
+        message={'content':content}
+        if mode=='reasoning_only':
+            message={'content':None,'reasoning_content':'MODEL_PRIVATE_SENTINEL'}
+        if mode=='filtered':
+            message={'content':None,'refusal':'MODEL_PRIVATE_SENTINEL'}
+        if mode=='protocol':
+            return httpx.Response(200,json={'PRIVATE_RESPONSE_SENTINEL':'no choices'})
+        return httpx.Response(200,json={'choices':[{'message':message,
+            **({'finish_reason':'length'} if mode=='truncated' else {})}]})
     return TestClient(create_app(build_settings(tmp_path),provider_transport=httpx.MockTransport(handler)))
 
 
@@ -218,6 +238,67 @@ def configure(client):
     response=client.put('/api/ai/provider',json={'display_name':'synthetic graph','base_url':'https://synthetic.example.com/v1',
         'model':'mock-graph','api_key':'sk-synthetic-graph-key','request_timeout_seconds':11})
     assert response.status_code==200,response.text
+
+
+@pytest.mark.parametrize('model_limit,expected_budget',[(None,32768),(16384,16384),(65536,32768)])
+def test_graph_request_budget_honors_known_cap_and_frozen_high_settings(tmp_path,model_limit,expected_budget):
+    calls=[]
+    with ai_client(tmp_path,calls) as client:
+        authorize(client);configure(client)
+        profile=client.get('/api/ai/providers').json()[0]
+        path=f"/api/ai/providers/{profile['id']}/models/{profile['default_model_id']}/reasoning-support"
+        current=client.get(path).json()
+        configured=client.put(path,json={'expected_revision':current['revision'],
+            'profile_id':'openai_gpt54','default_choice':{'mode':'effort','effort':'high'}})
+        assert configured.status_code==200,configured.text
+        db=client.app.state.conversations.database
+        row=db.fetchone('SELECT capabilities_json FROM provider_model WHERE id=?',(profile['default_model_id'],))
+        capabilities=json.loads(row['capabilities_json'])
+        capabilities['max_output_tokens']=model_limit
+        with db.transaction() as connection:
+            connection.execute('UPDATE provider_model SET capabilities_json=? WHERE id=?',
+                (json.dumps(capabilities),profile['default_model_id']))
+        ids=[node(client,'budget-parent','composite'),node(client,'budget-child')]
+        payload={'request_key':'budget-freeze','outcome_ids':ids}
+        run=wait_run(client,client.post(BASE+'/suggestions',json=payload).json()['id'])
+        assert run['status']=='succeeded' and len(calls)==1
+        assert run['provider_snapshot']['max_tokens']==expected_budget
+        assert calls[0]['max_tokens']==expected_budget
+        assert calls[0]['reasoning_effort']=='high'
+        assert run['provider_snapshot']['reasoning_parameters']=={'reasoning_effort':'high'}
+        assert run['provider_snapshot']['timeout_seconds']==11
+        current=client.get(path).json()
+        changed=client.put(path,json={'expected_revision':current['revision'],
+            'profile_id':'openai_gpt54','default_choice':{'mode':'effort','effort':'low'}})
+        assert changed.status_code==200,changed.text
+        capabilities['max_output_tokens']=8192
+        with db.transaction() as connection:
+            connection.execute('UPDATE provider_model SET capabilities_json=? WHERE id=?',
+                (json.dumps(capabilities),profile['default_model_id']))
+        assert client.post(BASE+'/suggestions',json=payload).json()==run
+        assert len(calls)==1
+        assert client.get(BASE).json()['relations']==[]
+
+
+def test_historical_snapshot_without_budget_stays_unchanged_on_request_retry(tmp_path):
+    calls=[]
+    with ai_client(tmp_path,calls) as client:
+        identity=authorize(client)
+        ids=[node(client,'historical-parent','composite'),node(client,'historical-child')]
+        learning=client.app.state.learning
+        with learning.database.transaction() as connection:
+            inputs=[outcome_input(connection,identity['id'],item) for item in ids]
+        principal=Principal.user(identity['id'])
+        started=learning.core.execute(principal,StartGraphRun(outcome_ids=ids,inputs=inputs,
+            provider_snapshot={'prompt_schema_version':1,'model':'historical-synthetic'}),'historical-key')
+        learning.core.execute(principal,FinishGraphRun(run_id=started['id'],expected_revision=1,
+            status='failed',reason='generation_failed'),'historical-failed')
+        before=client.get(BASE+'/suggestions/'+started['id']).json()
+        repeated=client.post(BASE+'/suggestions',json={'request_key':'historical-key','outcome_ids':ids})
+        assert repeated.status_code==201 and repeated.json()==before
+        assert 'max_tokens' not in repeated.json()['provider_snapshot']
+        assert calls==[] and client.get(BASE).json()['relations']==[]
+        assert learning.replay(identity)['comparison']['matched']
 
 
 def test_ai_scope_freeze_per_item_edit_reject_idempotency_and_no_evidence_mutation(tmp_path):
@@ -267,17 +348,42 @@ def test_ai_scope_freeze_per_item_edit_reject_idempotency_and_no_evidence_mutati
         assert client.app.state.learning.replay(identity)['comparison']['matched']
 
 
-@pytest.mark.parametrize('mode',['error','invalid'])
-def test_ai_failure_does_not_publish_candidates_or_formal_relations(tmp_path,mode):
+@pytest.mark.parametrize('mode,reason,phase',[
+    ('error','upstream_error','initial_response'),
+    ('auth','auth_error','initial_response'),
+    ('limited','rate_limited','initial_response'),
+    ('endpoint','endpoint_not_found','initial_response'),
+    ('request','request_error','initial_response'),
+    ('timeout','timeout','initial_response'),
+    ('truncated','output_truncated','initial_response'),
+    ('reasoning_only','reasoning_only','initial_response'),
+    ('filtered','content_filtered','initial_response'),
+    ('protocol','protocol_error','initial_response'),
+    ('invalid_json','invalid_json','output_validation'),
+    ('invalid_structure','invalid_response_structure','output_validation'),
+    ('invalid','graph_candidate_out_of_scope','candidate_validation'),
+    ('invalid_contains','graph_contains_requires_composite','candidate_validation'),
+])
+def test_ai_failure_does_not_publish_candidates_or_formal_relations(tmp_path,mode,reason,phase):
     calls=[]
     with ai_client(tmp_path,calls,mode) as client:
         authorize(client);configure(client)
+        assert client.put('/api/diagnostics/settings',json={'enabled':True}).status_code==200
         ids=[node(client,'parent','composite'),node(client,'child')]
         run=client.post(BASE+'/suggestions',json={'request_key':'failed','outcome_ids':ids}).json()
         result=wait_run(client,run['id'])
         assert result['status']=='failed' and result['candidates']==[]
+        assert result['reason']==reason
         assert client.get(BASE).json()['relations']==[]
         assert len(calls)==1
+        logs=[row for row in client.get('/api/diagnostics').json()['entries'] if row.get('run_id')==run['id']]
+        assert logs[-1]['event']=='ai.run_finished' and logs[-1]['result']=='failed'
+        assert logs[-1]['scope_kind']=='outcome_graph' and logs[-1]['phase']==phase
+        assert logs[-1]['code']==('read_timeout' if mode=='timeout' else reason)
+        logged=json.dumps(logs)
+        assert all(marker not in logged for marker in (
+            'AI_PRIVATE_SENTINEL','PROVIDER_PRIVATE_SENTINEL','MODEL_PRIVATE_SENTINEL',
+            'PRIVATE_RESPONSE_SENTINEL','sk-synthetic-graph-key'))
 
 
 def test_cancel_and_late_response_are_durable_and_cross_owner_hidden(tmp_path):
@@ -299,6 +405,38 @@ def test_cancel_and_late_response_are_durable_and_cross_owner_hidden(tmp_path):
         with pytest.raises(DomainError,match='not_found'):
             client.app.state.outcome_graph.run(other,run['id'])
         assert client.app.state.learning.replay(identity)['comparison']['matched']
+
+
+@pytest.mark.parametrize('action',['cancel','purge'])
+def test_terminal_run_diagnostics_preserve_cancel_and_purge_without_private_text(tmp_path,action):
+    calls=[]
+    with ai_client(tmp_path,calls,delay=asyncio.Event()) as client:
+        authorize(client);configure(client)
+        assert client.put('/api/diagnostics/settings',json={'enabled':True}).status_code==200
+        ids=[node(client,'DIAGNOSTIC_INPUT_PRIVATE','composite'),node(client,'diagnostic-child')]
+        run=client.post(BASE+'/suggestions',json={'request_key':'diagnostic-terminal','outcome_ids':ids}).json()
+        for _ in range(100):
+            if calls:
+                break
+            time.sleep(.01)
+        assert len(calls)==1
+        payload={'request_key':'terminal-'+action,'expected_revision':1}
+        if action=='purge':
+            payload['confirmation']='PURGE'
+        response=client.post(BASE+'/suggestions/'+run['id']+'/'+action,json=payload)
+        assert response.status_code==200,response.text
+        terminal='canceled' if action=='cancel' else 'purged'
+        assert response.json()['status']==terminal
+        for _ in range(100):
+            logs=[row for row in client.get('/api/diagnostics').json()['entries'] if row.get('run_id')==run['id']]
+            if logs:
+                break
+            time.sleep(.01)
+        assert logs[-1]['event']=='ai.run_finished' and logs[-1]['result']==terminal
+        assert logs[-1]['code']=='canceled'
+        assert client.get(BASE+'/suggestions/'+run['id']).json()['status']==terminal
+        assert client.get(BASE).json()['relations']==[]
+        assert 'DIAGNOSTIC_INPUT_PRIVATE' not in json.dumps(logs)
 
 
 def test_restart_marks_running_proposal_interrupted_without_new_model_calls(tmp_path):

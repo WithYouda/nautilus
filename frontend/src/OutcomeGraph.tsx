@@ -23,9 +23,10 @@ function nodeLabels(node: OutcomeGraphNode): GraphNodeDisplay['labels'] {
   return labels.length ? labels : [{ text: '仍待判断', tone: 'unknown' }];
 }
 
-function GraphInspector({ title, onClose, suspended, children }: { title: string; onClose: () => void; suspended: boolean; children: ReactNode }) {
+function GraphInspector({ title, selectionKey, onClose, suspended, children }: { title: string; selectionKey: string; onClose: () => void; suspended: boolean; children: ReactNode }) {
   const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 760px)').matches);
   const [nestedDialog, setNestedDialog] = useState(false);
+  const inspector = useRef<HTMLElement>(null);
   useEffect(() => {
     const query = window.matchMedia('(max-width: 760px)');
     const update = () => setMobile(query.matches);
@@ -39,7 +40,12 @@ function GraphInspector({ title, onClose, suspended, children }: { title: string
     update(); const observer = new MutationObserver(update); observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, [mobile]);
-  const content = <aside className="outcome-graph__inspector" aria-label={title}>
+  useEffect(() => {
+    if (!inspector.current) return;
+    inspector.current.scrollTop = 0;
+    if (mobile && !suspended && !nestedDialog) inspector.current.closest('[role="dialog"]')?.querySelector<HTMLButtonElement>('header button')?.focus({ preventScroll: true });
+  }, [selectionKey, mobile, suspended, nestedDialog]);
+  const content = <aside ref={inspector} className="outcome-graph__inspector" aria-label={title}>
     {!mobile && <header className="outcome-graph__inspector-header"><strong>{title}</strong><button className="icon-button" type="button" aria-label={`关闭${title}`} onClick={onClose}>×</button></header>}
     {children}
   </aside>;
@@ -52,6 +58,8 @@ export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => voi
   const [plan, setPlan] = useState<string | null>(query.get('graph_plan'));
   const [currentPlan, setCurrentPlan] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(query.get('graph_node'));
+  const [focusTarget, setFocusTarget] = useState<{ id: string; request: number } | null>(null);
+  const focusSerial = useRef(0);
   const [search, setSearch] = useState(''), [error, setError] = useState(''), [loading, setLoading] = useState(true);
   const [create, setCreate] = useState(false), [relation, setRelation] = useState<OutcomeRelation | 'new' | null>(null), [suggest, setSuggest] = useState(false);
   const [relationId, setRelationId] = useState<string | null>(null), [detail, setDetail] = useState<OutcomeRelationDetail | null>(null), [relationError, setRelationError] = useState('');
@@ -96,8 +104,22 @@ export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => voi
   const selected = nodes.find(node => node.id === selectedId);
   const allNodes = allData?.nodes ?? [];
   const nodeTitle = (id: string) => allNodes.find(node => node.id === id)?.object_description ?? '成果当前不可查看';
-  function select(id: string) { setSelectedId(id); location('graph_node', id); setRelationId(null); }
-  function closeInspector() { setSelectedId(null); location('graph_node', null); setRelationId(null); }
+  function select(id: string) { setSelectedId(id); location('graph_node', id); setRelationId(null); setFocusTarget(null); }
+  async function visitNeighbor(id: string) {
+    if (!allNodes.some(node => node.id === id)) return;
+    if (!visibleIds.has(id)) setSearch('');
+    if (!data?.nodes.some(node => node.id === id)) {
+      setPlan('all'); location('graph_plan', 'all'); setLoading(true);
+      try { await refresh('all', id); }
+      catch (reason) { setError(graphError(reason)); setLoading(false); return; }
+    } else { setSelectedId(id); location('graph_node', id); }
+    setRelationId(null); setFocusTarget({ id, request: ++focusSerial.current });
+  }
+  function closeInspector() {
+    const returnId = selectedId;
+    setSelectedId(null); location('graph_node', null); setRelationId(null); setFocusTarget(null);
+    if (returnId) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-outcome="${CSS.escape(returnId)}"]`)?.focus({ preventScroll: true }));
+  }
   async function revokeRelation() {
     if (!detail || busy) return;
     if (!revokeKey.current) revokeKey.current = requestKey();
@@ -116,8 +138,8 @@ export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => voi
     {error && <div role="alert"><p>{error}</p><button className="text-button" type="button" onClick={() => { setLoading(true); void refresh().catch(reason => { setError(graphError(reason)); setLoading(false); }); }}>重新读取成果图</button></div>}
     {loading && <p role="status">正在读取成果图…</p>}
     {!loading && !error && <div className={`outcome-graph__layout ${selected || relationId ? 'has-inspector' : ''}`}>
-      {nodes.length ? <OutcomeGraphCanvas nodes={nodes.map(node => ({ id: node.id, title: node.object_description, behavior: node.behavior, kind: node.kind, labels: nodeLabels(node) }))} edges={edges.map(edge => ({ id: edge.id, source: edge.source_outcome_id, target: edge.target_outcome_id, kind: edge.relation_type, label: relationLabels[edge.relation_type] }))} selected={selectedId} selectedRelation={relationId} onSelect={select} onRelation={setRelationId} /> : <div className="outcome-graph__empty"><h3>{search ? '没有找到匹配的成果' : '这个范围还没有成果'}</h3><p className="outcome-graph__muted">{search ? '试试其他名称，或清空搜索。' : '可以新建综合成果，再关联已有成果。'}</p>{plan !== 'all' && <button className="button button--quiet" type="button" onClick={() => void filter('all')}>查看全部成果</button>}</div>}
-      {(selected || relationId) && <GraphInspector title={relationId ? '关系详情' : '成果详情'} onClose={closeInspector} suspended={Boolean(create || relation || suggest)}>
+      {nodes.length ? <OutcomeGraphCanvas nodes={nodes.map(node => ({ id: node.id, title: node.object_description, behavior: node.behavior, kind: node.kind, labels: nodeLabels(node) }))} edges={edges.map(edge => ({ id: edge.id, source: edge.source_outcome_id, target: edge.target_outcome_id, kind: edge.relation_type, label: relationLabels[edge.relation_type] }))} selected={selectedId} selectedRelation={relationId} focusTarget={focusTarget} onSelect={select} onRelation={setRelationId} /> : <div className="outcome-graph__empty"><h3>{search ? '没有找到匹配的成果' : '这个范围还没有成果'}</h3><p className="outcome-graph__muted">{search ? '试试其他名称，或清空搜索。' : '可以新建综合成果，再关联已有成果。'}</p>{plan !== 'all' && <button className="button button--quiet" type="button" onClick={() => void filter('all')}>查看全部成果</button>}</div>}
+      {(selected || relationId) && <GraphInspector title={relationId ? '关系详情' : '成果详情'} selectionKey={relationId ?? selectedId ?? ''} onClose={closeInspector} suspended={Boolean(create || relation || suggest)}>
         {relationId ? <>
           {selected && <button className="text-button" type="button" onClick={() => setRelationId(null)}>返回成果详情</button>}
           {relationError && <div role="alert"><p>{relationError}</p><button className="text-button" type="button" onClick={() => void getOutcomeRelation(relationId).then(value => { setDetail(value); setRelationError(''); setRevoke(false); revokeKey.current = null; }).catch(reason => setRelationError(graphError(reason)))}>重新读取关系</button></div>}
@@ -142,7 +164,16 @@ export default function OutcomeGraph({ onBack, onEvidence }: { onBack: () => voi
             {selected.kind !== 'composite' && selected.coverage.status === 'unknown' && <p>已有合格标准，尚无足够依据。</p>}
             {!!selected.coverage.standards.filter(standard => standard.review_status !== 'approved' || standard.availability).length && <details><summary>其他标准版本</summary>{selected.coverage.standards.filter(standard => standard.review_status !== 'approved' || standard.availability).map(standard => <p key={standard.id}>{standard.package_title ?? '达成标准'} · v{standard.version} · {standard.review_status === 'approved' ? '已批准' : '候选'}{standard.availability ? ` · ${standard.availability === 'retired' ? '已停用' : '已失效'}` : ''}</p>)}</details>}
           </section>}
-          <section className="outcome-graph__relations" aria-label="这个成果的关系"><h3>关联成果</h3>{(allData?.relations ?? []).filter(item => item.source_outcome_id === selected.id || item.target_outcome_id === selected.id).map(item => <article key={item.id}><button className="text-button" type="button" onClick={() => setRelationId(item.id)}>{nodeTitle(item.source_outcome_id)} {relationLabels[item.relation_type]} {nodeTitle(item.target_outcome_id)}{item.status === 'active' ? '' : item.status === 'revoked' ? ' · 已撤销' : ' · 说明已清除'}</button></article>)}</section>
+          <section className="outcome-graph__relations" aria-label="这个成果的关系"><h3>关联成果</h3>{(allData?.relations ?? []).filter(item => item.source_outcome_id === selected.id || item.target_outcome_id === selected.id).map(item => {
+            const outgoing = item.source_outcome_id === selected.id;
+            const neighbor = outgoing ? item.target_outcome_id : item.source_outcome_id;
+            const label = item.relation_type === 'contains' ? outgoing ? '包含' : '属于' : item.relation_type === 'prerequisite' ? outgoing ? '后续成果' : '前置成果' : relationLabels[item.relation_type];
+            return <article key={item.id} className="outcome-graph__related" data-related-relation={item.id}>
+              <div><button className="outcome-graph__neighbor" type="button" disabled={!allNodes.some(node => node.id === neighbor)} onClick={() => void visitNeighbor(neighbor)}>{nodeTitle(neighbor)}</button>
+                <small>{label}{item.status === 'active' ? '' : item.status === 'revoked' ? ' · 已撤销' : ' · 说明已清除'}</small></div>
+              <button className="text-button outcome-graph__relation-action" type="button" onClick={() => setRelationId(item.id)}>关系详情</button>
+            </article>;
+          })}</section>
           {!!selected.task_links.length && <details><summary>关联任务（{selected.task_links.length}）</summary>{selected.task_links.map(item => <p key={`${item.action_id}:${item.plan_id}`}>{item.action_title}</p>)}</details>}
           {!!selected.evidence_links.length && <details><summary>已有证据引用（{selected.evidence_links.length}）</summary><p>这些依据仍属于原来的成果和标准。</p><button className="text-button" type="button" onClick={() => onEvidence(selected.id)}>查看作答、产出与证据判断</button></details>}
         </> : null}

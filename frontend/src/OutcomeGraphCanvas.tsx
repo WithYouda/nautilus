@@ -10,8 +10,9 @@ const minimumScale = .25, maximumScale = 1.8;
 const clampScale = (value: number) => Math.min(maximumScale, Math.max(minimumScale, value));
 const legend = [{ kind: 'contains', text: '包含' }, { kind: 'prerequisite', text: '前置' }, { kind: 'equivalent', text: '等价' }, { kind: 'overlap', text: '重叠' }];
 
-export default function OutcomeGraphCanvas({ nodes, edges, selected, selectedRelation, onSelect, onRelation }: {
+export default function OutcomeGraphCanvas({ nodes, edges, selected, selectedRelation, focusTarget, onSelect, onRelation }: {
   nodes: GraphNodeDisplay[]; edges: GraphEdgeDisplay[]; selected: string | null; selectedRelation?: string | null;
+  focusTarget?: { id: string; request: number } | null;
   onSelect: (id: string) => void; onRelation: (id: string) => void;
 }) {
   const viewport = useRef<HTMLDivElement>(null), viewRef = useRef<View>({ x: 0, y: 0, scale: 1 });
@@ -56,6 +57,15 @@ export default function OutcomeGraphCanvas({ nodes, edges, selected, selectedRel
     root.addEventListener('wheel', wheel, { passive: false });
     return () => { observer.disconnect(); root.removeEventListener('wheel', wheel); };
   }, [graph]);
+  useLayoutEffect(() => {
+    if (!focusTarget) return;
+    const position = graph.positions.get(focusTarget.id), root = viewport.current;
+    if (!position || !root) return;
+    const width = root.clientWidth, height = root.clientHeight;
+    const scale = Math.min(Math.max(.85, viewRef.current.scale), (width - 48) / GRAPH_NODE_WIDTH, maximumScale);
+    root.scrollLeft = 0; root.scrollTop = 0; fitMode.current = false;
+    updateView({ scale, x: width / 2 - (position.x + GRAPH_NODE_WIDTH / 2) * scale, y: height / 2 - (position.y + GRAPH_NODE_HEIGHT / 2) * scale });
+  }, [focusTarget, graph]);
   function point(event: ReactPointerEvent): Point {
     const bounds = viewport.current!.getBoundingClientRect();
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
