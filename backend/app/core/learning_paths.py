@@ -10,7 +10,7 @@ from ..learning_domain import DomainError
 from .commands import EndSession, StartSession
 from .events import append_event, canonical, digest
 from .path_commands import (SavePathDraft, ConfirmPathDecision, SetPathPosition,
-                            StartPathTask, PurgePathContent, PathFields, TransferFields, TransferPathToPlan, CreatePathTask)
+                            StartPathTask, PurgePathContent, PathFields, TransferFields, TransferPathToPlan, CreatePathTask, RemovePathTask)
 
 
 PATH_EVENT_TYPES = frozenset({'path.draft_saved', 'path.decision_confirmed', 'path.transfer_departed',
@@ -233,6 +233,9 @@ def dispatch_path(core, connection, principal, command, command_id, key, now):
                         'path.content_purged', dict(object_ids=affected))
         return dict(plan_id=plan_id, version_id=version['id'], revision=event['aggregate_version'])
     writable_plan(connection, owner, plan_id)
+    if isinstance(command, RemovePathTask):
+        from .path_tasks import remove_path_task
+        return remove_path_task(core, connection, principal, command, command_id, key, now)
     if isinstance(command, CreatePathTask):
         from .organization_commands import CreatePlanTask, TaskFields
         if command.expected_organization_revision != organization_revision(connection, owner, plan_id):

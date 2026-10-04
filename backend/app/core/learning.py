@@ -39,6 +39,7 @@ from .events import (
 )
 
 PROJECTION_TABLES = (
+    'learning_action_removal',
     'learning_session_feedback_history', 'learning_session_feedback', 'learning_commitment_execution',
     'learning_commitment_item', 'learning_commitment_version', 'learning_commitment_draft',
     'learning_commitment_availability', 'learning_commitment_run', 'learning_plan_commitment_state',

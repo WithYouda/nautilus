@@ -179,7 +179,7 @@ async def test_formal_034_to_current_upgrade_preserves_discussion(tmp_path):
     database.close()
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['preflight']['applied_migrations'][-1] == '034_discussion_branch_map'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '046_learning_signal_feedback'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '047_learning_task_removal'
     with sqlite3.connect(path) as upgraded:
         assert all(upgraded.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() == rows
                    for table, rows in before.items())

@@ -1,7 +1,7 @@
 """Owner-scoped plan organization application boundary."""
 from .core.organization_commands import (CreatePlan, CreateModule, ReviseModule, PlaceTask,
     OrderChildren, CreatePlanTask, PurgePlanContent, PurgeModuleContent)
-from .core.plan_organization import require_plan, children, revision
+from .core.plan_organization import require_plan, children, revision, removed_task_ids
 from .managed_purge import ManagedPurge
 
 
@@ -25,9 +25,10 @@ class PlanOrganization:
             positions = {row['id']:row['position'] for row in state if row['kind']=='module'}
             for module in modules:
                 module['position'] = positions[module['id']]
+            removed = removed_task_ids(connection,owner,plan_id)
             tasks = [dict(row) for row in connection.execute('''SELECT a.id,a.title,a.status FROM learning_action a
                 JOIN learning_action_link l ON l.owner_id=a.owner_id AND l.action_id=a.id
-                WHERE l.owner_id=? AND l.plan_id=? ORDER BY l.created_at,a.id''', (owner,plan_id))]
+                WHERE l.owner_id=? AND l.plan_id=? ORDER BY l.created_at,a.id''', (owner,plan_id)) if row['id'] not in removed]
             return {'plan':{key:plan[key] for key in ('id','title','description','goal_id','status')} | content_state('plan',plan_id),
                     'revision':revision(connection,owner,plan_id),'modules':modules,'children':state,'tasks':tasks}
 

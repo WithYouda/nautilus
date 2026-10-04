@@ -39,6 +39,11 @@ class PlaceTask(PlanRevision):
     module_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
+class RemovePlanTask(PlanRevision):
+    action_id: str = Field(min_length=1, max_length=100)
+    expected_action_version: int = Field(ge=1)
+
+
 class ChildReference(BaseModel):
     model_config = ConfigDict(extra='forbid')
     kind: Literal['module', 'task']

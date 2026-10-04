@@ -6,6 +6,12 @@ export type PathTaskTarget = {
   version_id?: string; draft_id?: string; expected_draft_revision?: number;
 };
 export type PathTaskResult = { action_id: string; node_id: string; version_id?: string; draft_id?: string; path: LearningPathView };
+export type PathTaskRemovalInput = {
+  node_id: string; action_id: string; version_id?: string; draft_id?: string; expected_draft_revision?: number;
+  expected_revision: number; expected_organization_revision: number; expected_action_version: number;
+  mode: 'detach' | 'delete';
+};
+export type PathTaskRemovalPreview = { review_key: string; affected_sessions: Array<{ id: string; action_title: string }>; commitment_changes: PathCommitmentChange[] };
 
 export type LearningPathNode = { id: string; title: string; action_ids: string[]; outcome_ids: string[] };
 export type LearningPathEdge = { source: string; target: string };
@@ -113,6 +119,12 @@ export function createLearningPathTask(planId: string, target: PathTaskTarget, t
   const { node_title: _title, ...position } = target;
   const { expected_revision: organizationRevision, ...fields } = task;
   return post(`${path(planId)}/tasks`, { ...fields, ...position, expected_organization_revision: organizationRevision });
+}
+export function previewLearningPathTaskRemoval(planId: string, payload: PathTaskRemovalInput): Promise<PathTaskRemovalPreview> {
+  return post(`${path(planId)}/task-removal-preview`, payload);
+}
+export function removeLearningPathTask(planId: string, payload: PathTaskRemovalInput & { review_key: string; request_key: string }): Promise<LearningPathView> {
+  return post(`${path(planId)}/task-removals`, payload);
 }
 export function saveLearningPathDraft(planId: string, payload: LearningPathDraftInput): Promise<LearningPathView & { draft_id: string }> {
   return post(`${path(planId)}/drafts`, payload);

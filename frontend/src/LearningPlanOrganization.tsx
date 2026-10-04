@@ -157,7 +157,7 @@ function OrganizationEditor({ data, closed, onClose, onRead, onSaved, suspended 
   function list(parentId: string | null, depth = 0, ancestors = new Set<string>()): ReactNode {
     return siblings(data, parentId).map(child => {
       const item = child.kind === 'module' ? data.modules.find(module => module.id === child.id) : data.tasks.find(task => task.id === child.id);
-      if (!item || ancestors.has(child.id)) return null;
+      if (!item || ancestors.has(child.id) || child.kind === 'task' && data.tasks.find(task => task.id === child.id)?.status === 'cancelled') return null;
       const next = new Set(ancestors); next.add(child.id);
       return <div key={`${child.kind}:${child.id}`}><button className="learning-organization-item" type="button" aria-label={`${child.kind === 'module' ? '编辑模块' : '移动任务'}：${item.title}`} aria-pressed={selection?.kind === child.kind && selection.id === child.id} disabled={busy} onClick={() => choose(child.kind, child.id)} style={{ paddingInlineStart: `${12 + Math.min(depth, 4) * 14}px` }}><small>{child.kind === 'module' ? '模块' : '任务'}</small><span>{item.title}</span></button>{child.kind === 'module' && list(child.id, depth + 1, next)}</div>;
     });
@@ -257,7 +257,7 @@ export function PlanCreateDialog({ goals, onClose, onCreated, onCreateGoal }: {
 }
 
 export function PlanTaskDialog({ planId, onClose, onCreated, pathTarget }: {
-  planId: string; onClose: () => void; onCreated: (path?: LearningPathView) => void | Promise<void>; pathTarget?: PathTaskTarget;
+  planId: string; onClose: () => void; onCreated: (path?: LearningPathView, actionId?: string) => void | Promise<void>; pathTarget?: PathTaskTarget;
 }) {
   const [target, setTarget] = useState(pathTarget);
   const [data, setData] = useState<PlanOrganization | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -326,14 +326,14 @@ export function PlanTaskDialog({ planId, onClose, onCreated, pathTarget }: {
     try {
       const task = { ...payload, request_key: attemptKey(attempt, { ...payload, target }) };
       const result = target ? await createLearningPathTask(planId, target, task) : await createPlanTask(planId, task);
-      if (alive.current) await onCreated('path' in result ? result.path : undefined);
+      if (alive.current) await onCreated('path' in result ? result.path : undefined, result.action_id);
     }
     catch (reason) { if (alive.current) { if (conflict(reason)) { setStale('stale'); setError(''); } else setError(message(reason)); } }
     finally { if (alive.current) setBusy(false); }
   }
   const disabled = busy || !!stale;
   const chosenStandard = standards.find(item => item.id === criterionId);
-  return <AttachmentDialog title="添加下一步" closeLabel="关闭添加下一步" className="learning-organization-dialog learning-plan-task-dialog" onClose={() => { if (!busy) onClose(); }}><form onSubmit={save}><div className="learning-organization-dialog__body">
+  return <AttachmentDialog title="添加任务" closeLabel="关闭添加任务" className="learning-organization-dialog learning-plan-task-dialog" onClose={() => { if (!busy) onClose(); }}><form onSubmit={save}><div className="learning-organization-dialog__body">
     {!data && !error && <p role="status">正在读取计划…</p>}
     {target && <p className="form-hint">添加到阶段：{target.node_title}</p>}
     <ConflictNotice state={stale} busy={busy} onRead={() => void readLatest()} onReviewed={() => setStale(null)} />

@@ -257,7 +257,7 @@ def test_plan_and_module_private_all_revisions_online_backup_restore_replay(clie
     assert denied.status_code==404
 
 
-def test_042_to_046_formal_upgrade_preserves_old_rows_columns(tmp_path):
+def test_042_to_047_formal_upgrade_preserves_old_rows_columns(tmp_path):
     path=tmp_path/'old.sqlite3'
     db=Database(path,Settings.from_env().migrations_dir,migration_floor=11,migration_ceiling=42)
     learning=LearningService(db)
@@ -269,7 +269,7 @@ def test_042_to_046_formal_upgrade_preserves_old_rows_columns(tmp_path):
     db.close()
     result=upgrade_learning_database(path,tmp_path/'backups',authorized=True)
     assert result['preflight']['applied_migrations'][-1]=='042_outcome_graph'
-    assert result['post_upgrade_backup']['applied_migrations'][-1]=='046_learning_signal_feedback'
+    assert result['post_upgrade_backup']['applied_migrations'][-1]=='047_learning_task_removal'
     assert result['post_upgrade_backup']['integrity_check']=='ok'
     with closing(sqlite3.connect(path)) as connection:
         for table in tables:
@@ -281,7 +281,8 @@ def test_042_to_046_formal_upgrade_preserves_old_rows_columns(tmp_path):
             'learning_path_version','learning_path_decision','learning_path_checkpoint',
             'learning_plan_commitment_state','learning_commitment_draft','learning_commitment_version','learning_commitment_item',
             'learning_commitment_execution','learning_commitment_availability','learning_commitment_run','learning_commitment_private',
-            'learning_commitment_private_tombstone','learning_commitment_source','learning_session_feedback','learning_session_feedback_history'}
+            'learning_commitment_private_tombstone','learning_commitment_source','learning_session_feedback','learning_session_feedback_history',
+            'learning_action_removal'}
 
 
 def test_goal_constraints_binding_and_new_plan_legacy_header_do_not_copy_private(client,tmp_path):

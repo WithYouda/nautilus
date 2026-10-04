@@ -24,7 +24,7 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   const goal = state?.goals.find(item => item.id === selected?.goal_id);
   const closedGoal = goal ? goalIsClosed(goal.status) : false;
   const taskIds = new Set(state?.action_links.filter(link => link.plan_id === selected?.id).map(link => link.action_id));
-  const tasks = state?.actions.filter(action => taskIds.has(action.id)).sort((a, b) => a.created_at.localeCompare(b.created_at)) ?? [];
+  const tasks = state?.actions.filter(action => taskIds.has(action.id) && !action.deleted && action.status !== 'cancelled').sort((a, b) => a.created_at.localeCompare(b.created_at)) ?? [];
   async function refresh() { setState(await getLearningState()); }
   async function continueTask(delegationId: string) {
     if (busy || closedGoal) return;
@@ -68,7 +68,7 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
     {!!plans.length && <div className="learning-plans__layout">
       <nav className="learning-plans__list" aria-label="计划列表">{plans.map(plan => {
         const ids = new Set(state!.action_links.filter(link => link.plan_id === plan.id).map(link => link.action_id));
-        const actions = state!.actions.filter(action => ids.has(action.id));
+        const actions = state!.actions.filter(action => ids.has(action.id) && !action.deleted && action.status !== 'cancelled');
         const planGoal = state!.goals.find(item => item.id === plan.goal_id);
         return <button key={plan.id} aria-pressed={selected?.id === plan.id} onClick={() => select(plan.id)}><strong>{plan.title}</strong><span>{planGoal?.title}{planGoal && ` · ${goalStatusLabel(planGoal.status)}`}</span><small>{actions.filter(action => action.status === 'completed').length} / {actions.length} 项任务已完成</small></button>;
       })}</nav>
@@ -77,10 +77,10 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
         <ScopedModelControl key={selected.id} kind="plan" id={selected.id} />
         <nav className="learning-plan-views" aria-label="计划视图"><button className="text-button" aria-pressed={planView==='tasks'} onClick={()=>changePlanView('tasks')}>任务</button><button className="text-button" aria-pressed={planView==='path'} onClick={()=>changePlanView('path')}>路径图</button><button className="text-button" aria-pressed={planView==='commitments'} onClick={()=>changePlanView('commitments')}>近期安排</button></nav>
         {planView==='commitments'?<LearningCommitments key={selected.id} planId={selected.id} state={state!} onLearning={onLearning} onOpenRecord={onOpenRecord} onRefresh={refresh} closed={closedGoal||selected.status!=='active'} />:planView === 'path' ? <LearningPaths key={selected.id} planId={selected.id} state={state!} onLearning={onLearning} onOpenRecord={onOpenRecord} onRefresh={refresh} closed={closedGoal || selected.status !== 'active'} onPlanCreated={id=>{select(id);void refresh().catch(reason=>setError(reason.message));}} /> : <>
-        <div className="learning-plan-detail__heading"><h3>学习任务</h3>{selected.status === 'active' && !closedGoal && <button className="button button--accent" onClick={() => setTaskPlanId(selected.id)}>添加下一步</button>}</div>
+        <div className="learning-plan-detail__heading"><h3>学习任务</h3>{selected.status === 'active' && !closedGoal && <button className="button button--accent" onClick={() => setTaskPlanId(selected.id)}>添加任务</button>}</div>
         {closedGoal && <p>目标{goalStatusLabel(goal!.status)}。已有任务和学习记录仍可查看；重新开启目标后可继续安排学习。</p>}
         <LearningPlanOrganization key={`${selected.id}:${tasks.map(task => task.id).join(',')}`} planId={selected.id} renderTask={renderTask} onRefresh={refresh} closed={closedGoal || selected.status !== 'active'} />
-        {!tasks.length && <p>{closedGoal ? '这个目标尚无任务。' : '还没有任务，添加下一步开始学习。'}</p>}
+        {!tasks.length && <p>{closedGoal ? '这个目标尚无任务。' : '还没有任务，添加任务后选择从哪里开始。'}</p>}
         </>}
       </section> : <p>这个计划不存在或当前不可查看，请从左侧重新选择。</p>}
     </div>}

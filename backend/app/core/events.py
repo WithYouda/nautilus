@@ -16,11 +16,12 @@ SUPPORTED_EVENT_TYPES = frozenset({
     'feedback.recorded', 'feedback.purged',
     'path.draft_saved', 'path.decision_confirmed', 'path.position_selected', 'path.content_purged', 'path.transfer_departed',
     "organization.initialized", "organization.module_created", "organization.module_revised",
-    "organization.task_added", "organization.task_placed", "organization.children_ordered", "organization.content_purged",
+    "organization.task_added", "organization.task_placed", "organization.task_removed", "organization.children_ordered", "organization.content_purged",
     "goal.status_changed",
     "setup.confirmed",
     "plan.step_added",
     "action.created",
+    "action.removed",
     "outcome.created",
     "graph.relation_created", "graph.relation_revised", "graph.relation_revoked", "graph.relation_purged",
     "graph.run_started", "graph.run_finished", "graph.run_canceled", "graph.run_purged", "graph.candidate_reviewed",
@@ -261,6 +262,28 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
             "INSERT INTO learning_action VALUES (?, ?, ?, ?, 'open', ?, ?)",
             (payload["id"], owner, payload["title"], payload["context_key"], version, occurred_at),
         )
+    elif event_type == "action.removed":
+        action_id, plan_id, previous = payload.get('action_id'), payload.get('plan_id'), payload.get('previous_status')
+        if event['aggregate_type'] != 'action' or action_id != event['aggregate_id'] or previous not in {'open','completed','cancelled'}:
+            raise DomainError('event_scope_invalid')
+        link = connection.execute('SELECT plan_id FROM learning_action_link WHERE owner_id=? AND action_id=?',
+                                  (owner,action_id)).fetchone()
+        if not link or link['plan_id'] != plan_id or connection.execute(
+            'SELECT 1 FROM learning_action_removal WHERE owner_id=? AND action_id=?', (owner,action_id)).fetchone():
+            raise DomainError('event_scope_invalid')
+        if connection.execute('''SELECT 1 FROM learning_session s JOIN learning_delegation d
+            ON d.owner_id=s.owner_id AND d.id=s.delegation_id
+            WHERE d.owner_id=? AND d.action_id=? AND s.status='running' ''', (owner,action_id)).fetchone():
+            raise DomainError('event_scope_invalid')
+        changed = connection.execute('''UPDATE learning_action SET status=?,version=?
+            WHERE owner_id=? AND id=? AND status=? AND version=?''',
+            ('cancelled' if previous=='open' else previous,version,owner,action_id,previous,version-1)).rowcount
+        if changed != 1:
+            raise DomainError('event_scope_invalid')
+        connection.execute('''UPDATE learning_delegation SET status='cancelled',version=version+1
+            WHERE owner_id=? AND action_id=? AND status IN ('ready','active','paused')''', (owner,action_id))
+        connection.execute('INSERT INTO learning_action_removal VALUES (?,?,?,?,?,?)',
+                           (owner,action_id,plan_id,previous,event['event_id'],occurred_at))
     elif event_type == "outcome.created":
         if event["aggregate_type"] != "outcome" or payload.get("id") != event["aggregate_id"]:
             raise DomainError("event_scope_invalid")

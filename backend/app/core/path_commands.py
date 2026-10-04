@@ -77,7 +77,8 @@ class PathCommand(Command):
     pass
 
 
-class PathTaskFields(TaskFields):
+class PathTaskReference(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     node_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=1)
     expected_organization_revision: int = Field(ge=0)
@@ -94,8 +95,23 @@ class PathTaskFields(TaskFields):
         return self
 
 
+class PathTaskFields(TaskFields, PathTaskReference):
+    pass
+
+
 class CreatePathTask(PathCommand, PathTaskFields):
     plan_id: str
+
+
+class PathTaskRemovalFields(PathTaskReference):
+    action_id: str = Field(min_length=1, max_length=100)
+    expected_action_version: int = Field(ge=1)
+    mode: Literal['detach', 'delete']
+
+
+class RemovePathTask(PathCommand, PathTaskRemovalFields):
+    plan_id: str
+    review_key: str = Field(min_length=1, max_length=100)
 
 
 class SavePathDraft(PathCommand, PathFields):

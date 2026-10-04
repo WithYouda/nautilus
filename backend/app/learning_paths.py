@@ -5,7 +5,7 @@ import json
 
 from .conversations import ConversationError
 from .core.path_commands import (SavePathDraft, ConfirmPathDecision, StartPathTask,
-                                SetPathPosition, PurgePathContent, TransferFields, TransferPathToPlan, CreatePathTask)
+                                SetPathPosition, PurgePathContent, TransferFields, TransferPathToPlan, CreatePathTask, PathTaskRemovalFields, RemovePathTask)
 from .core.learning_paths import (owned, plan_state, organization_revision, read_private,
                                  reference_hash, version_fields, review, transfer_review)
 from .learning_domain import DomainError
@@ -128,6 +128,24 @@ class LearningPaths:
     def create_task(self, identity, plan_id, payload, key):
         result = self.learning.core.execute(self.learning.principal(identity), CreatePathTask(plan_id=plan_id, **payload), key)
         return {**result, 'path': self.data(identity, plan_id)}
+
+    def task_removal_preview(self, identity, plan_id, payload):
+        from .core.path_tasks import task_removal_review
+        owner = self._owner(identity)
+        with self.db.transaction() as connection:
+            checked = task_removal_review(connection, owner, plan_id, PathTaskRemovalFields(**payload))
+            self._require_not_generating(owner, [payload['action_id']] if payload['mode'] == 'delete' else
+                [session['action_id'] for session in checked['affected_sessions']])
+            return dict(review_key=checked['review_key'],
+                affected_sessions=[{name:session[name] for name in ('id', 'action_title')} for session in checked['affected_sessions']],
+                commitment_changes=checked['commitments']['changes'])
+
+    def remove_task(self, identity, plan_id, payload, key):
+        owner = self._owner(identity)
+        if self.db.fetchone('SELECT 1 FROM learning_command WHERE owner_id=? AND actor_id=? AND idempotency_key=?', (owner, owner, key)) is None:
+            self.task_removal_preview(identity, plan_id, {name:value for name,value in payload.items() if name != 'review_key'})
+        self.learning.core.execute(self.learning.principal(identity), RemovePathTask(plan_id=plan_id, **payload), key)
+        return self.data(identity, plan_id)
 
     def restore_draft(self, identity, plan_id, payload, key):
         owner = self._owner(identity)

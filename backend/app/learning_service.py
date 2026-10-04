@@ -125,6 +125,11 @@ class LearningService:
                 (owner,),
             )
         ]
+        from .core.plan_organization import removed_task_ids
+        with self.database.transaction() as connection:
+            removed = removed_task_ids(connection,owner)
+        for action in actions:
+            action['deleted'] = action['id'] in removed
         outcomes = [
             dict(row)
             for row in self.database.fetchall(

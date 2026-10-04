@@ -9,7 +9,7 @@ from .commands import CreateLearningAction, CreateOutcome, CreateDelegation
 from .events import append_event, canonical, digest
 from .outcome_graph import owned
 from .organization_commands import (CreatePlan, CreateModule, ReviseModule, PlaceTask,
-    OrderChildren, CreatePlanTask, PurgePlanContent, PurgeModuleContent)
+    OrderChildren, CreatePlanTask, RemovePlanTask, PurgePlanContent, PurgeModuleContent)
 
 CLEARED_TITLE = '内容已清除'
 
@@ -101,16 +101,29 @@ def _fields(connection, owner, kind, object_id, value):
     return read_private(connection, owner, kind, object_id, value) or {'title':CLEARED_TITLE, 'description':''}
 
 
+def removed_task_ids(connection, owner, plan_id=None):
+    # Retained older schema snapshots have no administrative removal records.
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='learning_action_removal'").fetchone():
+        return set()
+    if plan_id is None:
+        return {row['action_id'] for row in connection.execute(
+            'SELECT action_id FROM learning_action_removal WHERE owner_id=?', (owner,))}
+    return {row['action_id'] for row in connection.execute(
+        'SELECT action_id FROM learning_action_removal WHERE owner_id=? AND plan_id=?', (owner,plan_id))}
+
+
 def children(connection, owner, plan_id):
+    removed = removed_task_ids(connection,owner,plan_id)
     if revision(connection, owner, plan_id):
         return [dict(row) for row in connection.execute('''SELECT kind,child_id AS id,parent_module_id,position
             FROM learning_plan_child WHERE owner_id=? AND plan_id=? ORDER BY COALESCE(parent_module_id,''),position,kind,child_id''',
-            (owner, plan_id))]
+            (owner, plan_id)) if row['kind']!='task' or row['id'] not in removed]
     # This is today's deterministic compatibility view, not a historical move.
     members = [dict(kind='module', id=row['id'], parent_module_id=row['parent_module_id'], created_at=row['created_at'])
         for row in connection.execute('SELECT * FROM learning_module WHERE owner_id=? AND plan_id=?', (owner,plan_id))]
     members += [dict(kind='task', id=row['action_id'], parent_module_id=row['module_id'], created_at=row['created_at'])
-        for row in connection.execute('SELECT * FROM learning_action_link WHERE owner_id=? AND plan_id=?', (owner,plan_id))]
+        for row in connection.execute('SELECT * FROM learning_action_link WHERE owner_id=? AND plan_id=?', (owner,plan_id))
+        if row['action_id'] not in removed]
     result, counts = [], {}
     for item in sorted(members, key=lambda row:(row['created_at'],row['id'],row['kind'])):
         parent = item['parent_module_id']
@@ -122,6 +135,7 @@ def children(connection, owner, plan_id):
 def _validate_children(connection, owner, plan_id, state):
     modules = {row['id'] for row in connection.execute('SELECT id FROM learning_module WHERE owner_id=? AND plan_id=?', (owner,plan_id))}
     tasks = {row['action_id'] for row in connection.execute('SELECT action_id FROM learning_action_link WHERE owner_id=? AND plan_id=?', (owner,plan_id))}
+    tasks -= removed_task_ids(connection,owner,plan_id)
     expected = {('module',item) for item in modules} | {('task',item) for item in tasks}
     keys = [(row.get('kind'),row.get('id')) for row in state]
     if len(keys) != len(set(keys)) or set(keys) != expected:
@@ -227,12 +241,23 @@ def dispatch_organization(core, connection, principal, command, command_id, key,
         raise DomainError('version_conflict')
     if isinstance(command,(CreateModule,OrderChildren)):
         require_module(connection,owner,command.plan_id,command.parent_module_id)
-    if isinstance(command,PlaceTask):
-        require_module(connection,owner,command.plan_id,command.module_id)
+    if isinstance(command,(PlaceTask,RemovePlanTask)):
+        if isinstance(command,PlaceTask):
+            require_module(connection,owner,command.plan_id,command.module_id)
         link = connection.execute('SELECT * FROM learning_action_link WHERE owner_id=? AND plan_id=? AND action_id=?',
                                   (owner,command.plan_id,command.action_id)).fetchone()
         if not link:
             raise DomainError('not_found',404)
+        if command.action_id in removed_task_ids(connection,owner,command.plan_id):
+            raise DomainError('task_removed')
+        if isinstance(command,RemovePlanTask):
+            action = owned(connection,owner,'learning_action',command.action_id)
+            if action['version'] != command.expected_action_version:
+                raise DomainError('version_conflict')
+            if connection.execute('''SELECT 1 FROM learning_session s JOIN learning_delegation d
+                ON d.owner_id=s.owner_id AND d.id=s.delegation_id
+                WHERE d.owner_id=? AND d.action_id=? AND s.status='running' ''', (owner,command.action_id)).fetchone():
+                raise DomainError('task_session_running')
     if isinstance(command,(ReviseModule,PurgeModuleContent)):
         require_module(connection,owner,command.plan_id,command.module_id)
     if isinstance(command,PurgePlanContent) and not isinstance(command,PurgeModuleContent):
@@ -269,6 +294,14 @@ def dispatch_organization(core, connection, principal, command, command_id, key,
         if old['parent_module_id'] != command.module_id:
             state = _append_child([row for row in state if row is not old], 'task',object_id,command.module_id)
         event_type, payload = 'organization.task_placed', {'action_id':object_id,'children':state}
+    elif isinstance(command,RemovePlanTask):
+        object_id = command.action_id
+        append_event(connection,principal,command_id=command_id,key=key,now=now,
+            aggregate_type='action',aggregate_id=object_id,expected_version=command.expected_action_version,
+            event_type='action.removed',payload={'action_id':object_id,'plan_id':command.plan_id,
+                                               'previous_status':action['status']})
+        state = _normalized([row for row in state if row['kind']!='task' or row['id']!=object_id])
+        event_type, payload = 'organization.task_removed', {'action_id':object_id,'children':state}
     elif isinstance(command,OrderChildren):
         current = [row for row in state if row['parent_module_id']==command.parent_module_id]
         desired = [(row.kind,row.id) for row in command.children]
@@ -389,6 +422,19 @@ def apply_organization_event(connection, event, payload):
                                (owner,task['id'],plan_id,task['created_at']))
     elif kind == 'organization.task_placed':
         if not connection.execute('SELECT 1 FROM learning_action_link WHERE owner_id=? AND plan_id=? AND action_id=?', (owner,plan_id,payload['action_id'])).fetchone():
+            raise DomainError('event_scope_invalid')
+    elif kind == 'organization.task_removed':
+        action_id = payload.get('action_id')
+        if not connection.execute('''SELECT 1 FROM learning_action_removal r JOIN learning_action_link l
+            ON l.owner_id=r.owner_id AND l.action_id=r.action_id AND l.plan_id=r.plan_id
+            WHERE r.owner_id=? AND r.plan_id=? AND r.action_id=?''', (owner,plan_id,action_id)).fetchone():
+            raise DomainError('event_scope_invalid')
+        current = [dict(row) for row in connection.execute('''SELECT kind,child_id AS id,parent_module_id,position
+            FROM learning_plan_child WHERE owner_id=? AND plan_id=?''', (owner,plan_id))]
+        if not any(row['kind']=='task' and row['id']==action_id for row in current):
+            raise DomainError('event_scope_invalid')
+        expected = _normalized([row for row in current if row['kind']!='task' or row['id']!=action_id])
+        if payload.get('children') != expected:
             raise DomainError('event_scope_invalid')
     elif kind == 'organization.content_purged':
         object_kind, object_id = payload['kind'],payload['object_id']

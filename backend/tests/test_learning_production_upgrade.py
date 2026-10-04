@@ -48,7 +48,7 @@ async def test_upgrade_039_to_current_preserves_every_old_table_and_discussion_s
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '039_material_ocr'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '046_learning_signal_feedback'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '047_learning_task_removal'
     assert result['pre_upgrade_backup']['applied_migrations'][-1] == '039_material_ocr'
     assert result['pre_upgrade_backup']['integrity_check'] == 'ok'
     assert len(list((tmp_path / 'backups').glob('*.sqlite3'))) == 2
@@ -64,7 +64,8 @@ async def test_upgrade_039_to_current_preserves_every_old_table_and_discussion_s
             'learning_path_version','learning_path_decision','learning_path_checkpoint',
             'learning_plan_commitment_state','learning_commitment_draft','learning_commitment_version','learning_commitment_item',
             'learning_commitment_execution','learning_commitment_availability','learning_commitment_run','learning_commitment_private',
-            'learning_commitment_private_tombstone','learning_commitment_source','learning_session_feedback','learning_session_feedback_history'}
+            'learning_commitment_private_tombstone','learning_commitment_source','learning_session_feedback','learning_session_feedback_history',
+            'learning_action_removal'}
         assert after['learning_model_config'] == []
         assert {name: connection.execute('SELECT sql FROM sqlite_master WHERE name=?', (name,)).fetchone()[0]
                 for name in definitions} == definitions
@@ -87,7 +88,7 @@ def test_upgrade_029_to_current_preserves_existing_learning_facts(tmp_path):
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '029_discussion_reasoning'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '046_learning_signal_feedback'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '047_learning_task_removal'
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute('SELECT * FROM learning_event ORDER BY position').fetchall() == before
         assert connection.execute('SELECT status FROM learning_session WHERE id=?', (context['session_id'],)).fetchone()[0] == 'running'

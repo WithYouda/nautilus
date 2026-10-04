@@ -1360,6 +1360,7 @@ export type LearningAction = {
   version: number;
   created_at: string;
   aggregate_version: number;
+  deleted?: boolean;
 };
 
 export type LearningOutcome = {

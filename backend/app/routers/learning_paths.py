@@ -3,7 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from ..dependencies import current_identity
-from ..core.path_commands import PathFields, TransferFields, PathTaskFields
+from ..core.path_commands import PathFields, TransferFields, PathTaskFields, PathTaskRemovalFields
 from ..learning_domain import DomainError
 from ..managed_purge import ManagedPurge
 
@@ -48,6 +48,9 @@ class Start(Position):
 class Task(PathTaskFields,Key):
     pass
 
+class TaskRemoval(PathTaskRemovalFields,Key):
+    review_key:str=Field(min_length=1,max_length=100)
+
 class Restore(Key):
     version_id:str
     node_id:str|None=None
@@ -85,6 +88,9 @@ def fail(error):
         'path_restore_required':'请选择要恢复的历史路线。',
         'path_node_missing':'这个路线节点不存在，请重新选择。',
         'path_node_task_limit':'这个阶段的关联已满，请先调整阶段再添加任务。',
+        'path_task_missing':'任务与所选阶段的关联已变化，请重新选择。',
+        'task_removed':'这项任务已删除，已有学习记录仍可查看。',
+        'task_session_running':'这项任务仍在学习中，请重新核对暂停影响。',
         'delegation_not_startable':'这项任务已经结束，请查看记录或明确添加新练习。',
         'idempotency_conflict':'请求内容已改变，请核对后重新保存。'}
     raise HTTPException(status_code=error.status,detail=dict(kind=error.code,code=error.code,
@@ -141,6 +147,15 @@ def start(plan_id:str,payload:Start,request:Request,identity=Depends(current_ide
 def task(plan_id:str,payload:Task,request:Request,identity=Depends(current_identity)):
     data,key=values(payload)
     return call(request,identity,'create_task',plan_id,data,key)
+
+@router.post('/{plan_id}/path/task-removal-preview')
+def task_removal_preview(plan_id:str,payload:PathTaskRemovalFields,request:Request,identity=Depends(current_identity)):
+    return call(request,identity,'task_removal_preview',plan_id,payload.model_dump(mode='json'))
+
+@router.post('/{plan_id}/path/task-removals')
+def task_removal(plan_id:str,payload:TaskRemoval,request:Request,identity=Depends(current_identity)):
+    data,key=values(payload)
+    return call(request,identity,'remove_task',plan_id,data,key)
 
 @router.post('/{plan_id}/path/restore-draft')
 def restore(plan_id:str,payload:Restore,request:Request,identity=Depends(current_identity)):

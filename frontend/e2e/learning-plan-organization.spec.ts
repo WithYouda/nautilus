@@ -47,8 +47,8 @@ test('a plan can have no goal and explicitly saves tasks without starting a sess
   const before = await (await page.request.get('/api/learning/state')).json();
   const plan = before.plans.find((item: { title: string }) => item.title === title);
   expect(plan.goal_id).toBeNull();
-  await page.getByRole('button', { name: '添加下一步', exact: true }).click();
-  const task = page.getByRole('dialog', { name: '添加下一步', exact: true });
+  await page.getByRole('button', { name: '添加任务', exact: true }).click();
+  const task = page.getByRole('dialog', { name: '添加任务', exact: true });
   await task.getByLabel('任务名称', { exact: true }).fill('合成检查：清理一段文本');
   await task.getByLabel('学习对象', { exact: true }).fill('含空行的测试文本');
   await task.getByLabel('希望具备的能力', { exact: true }).fill('独立拆分并清理文本');
@@ -68,7 +68,7 @@ test('a plan can have no goal and explicitly saves tasks without starting a sess
   expect((await organization(page.request, plan.id)).children).toEqual([expect.objectContaining({ kind: 'task', id: actionId, parent_module_id: null })]);
   await expect(page.locator(`[data-task-id="${actionId}"]`).getByRole('button', { name: '开始学习', exact: true })).toBeVisible();
   // Explicitly reuse the same atomic outcome for a separate task, without copying its identity.
-  await page.getByRole('button', { name: '添加下一步', exact: true }).click();
+  await page.getByRole('button', { name: '添加任务', exact: true }).click();
   await task.getByLabel('任务名称', { exact: true }).fill('合成检查：再做一个不同输入');
   await task.getByLabel('做到哪里可以停', { exact: true }).fill('核对新的输入后停下');
   await task.getByText('情境、时间与已有成果', { exact: true }).click();
@@ -189,7 +189,7 @@ test('closed goals retain task records and disable organization and execution', 
   expect(closed.ok()).toBeTruthy();
   await openPlan(page, title);
   await expect(page.getByRole('button', { name: '组织任务', exact: true })).toBeDisabled();
-  await expect(page.locator('.learning-plan-detail').getByRole('button', { name: '添加下一步', exact: true })).toHaveCount(0);
+  await expect(page.locator('.learning-plan-detail').getByRole('button', { name: '添加任务', exact: true })).toHaveCount(0);
   const task = page.locator(`[data-task-id="${created.action_id}"]`);
   await expect(task.getByRole('button', { name: /开始学习|继续学习/ })).toHaveCount(0);
   await expect(task.getByRole('button', { name: '查看记录', exact: true })).toBeVisible();
