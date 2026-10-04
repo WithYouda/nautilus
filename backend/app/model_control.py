@@ -1,4 +1,4 @@
-"""Explicit model/timeout inheritance. Never grants data or tool permissions."""
+"""Model inheritance and Provider timeout defaults. Never grants permissions."""
 from __future__ import annotations
 
 import hashlib
@@ -154,19 +154,31 @@ class ModelControlService:
         values = normalize_override(None)
         sources = {'model': None, 'timeout': None}
         for layer in layers:
-            for field in values:
-                if layer['override'][field] is not None:
-                    values[field] = layer['override'][field]
-                    sources['model' if field == 'model' else 'timeout'] = {'kind': layer['kind'], 'id': layer['id']}
+            if layer['override']['model'] is not None:
+                values['model'] = layer['override']['model']
+                sources['model'] = {'kind': layer['kind'], 'id': layer['id']}
         override = normalize_override(run_override)
-        for field in values:
-            if override[field] is not None:
-                values[field] = override[field]
-                sources['model' if field == 'model' else 'timeout'] = {'kind': 'run', 'id': scope_id}
+        if override['model'] is not None:
+            values['model'] = override['model']
+            sources['model'] = {'kind': 'run', 'id': scope_id}
         profile, model, issues = self._selected(owner, values['model'])
+        timeout_policy = 'provider_default'
+        if profile:
+            values['timeout_seconds'] = int(profile['request_timeout_seconds'])
+            sources['timeout'] = {'kind': 'global', 'id': 'default'}
+            if override['timeout_seconds'] is not None:
+                if override['timeout_seconds'] < values['timeout_seconds']:
+                    raise ConversationError(f"仅本次超时不能少于所选提供方默认的{values['timeout_seconds']}秒")
+                values['timeout_seconds'] = override['timeout_seconds']
+                sources['timeout'] = {'kind': 'run', 'id': scope_id}
+                timeout_policy = 'run_extension'
+        # Scoped timeout columns are retained as legacy data, but neither new
+        # runtime choices nor editors treat them as an active override.
+        layers = [{**layer, 'override': {**layer['override'], 'timeout_seconds': None}}
+                  if layer['kind'] != 'global' else layer for layer in layers]
         # Check both the inheritance chain and the selected one-run model. A
         # changed endpoint/capability must invalidate an already shown preview.
-        token = _tag([layers, override,
+        token = _tag(['provider-timeout-default', layers, override,
                       [profile.get(k) for k in ('id', 'enabled', 'config_version', 'credential_version')] if profile else None,
                       [model.get(k) for k in ('id', 'enabled', 'discovery_status', 'updated_at', 'overrides_json', 'capabilities_json')] if model else None])
         has_key = False
@@ -183,7 +195,8 @@ class ModelControlService:
             provider_display_name=profile['display_name'] if profile else None,
             model_id=model['model_id'] if model else None, model_display_name=model['display_name'] if model else None,
             provider_kind=self.chats._protocol(profile, model['model_id']) if profile and model else None,
-            timeout_seconds=values['timeout_seconds'], provider_config_version=profile['config_version'] if profile else None,
+            timeout_seconds=values['timeout_seconds'], timeout_policy=timeout_policy,
+            provider_config_version=profile['config_version'] if profile else None,
             supports_image_input=capabilities.get('supports_image_input'), supports_reasoning=capabilities.get('supports_reasoning'),
             has_api_key=has_key, available=not issues)
         view = dict(scope_kind=kind, scope_id=scope_id, revision=layers[-1]['revision'], token=token,
@@ -196,6 +209,8 @@ class ModelControlService:
 
     def save(self, owner, kind, scope_id, override, expected_revision):
         value = normalize_override(override)
+        if kind != 'global' and value['timeout_seconds'] is not None:
+            raise ConversationError('超时使用所选提供方默认设置，需要延长时请使用仅本次')
         self._ensure_owner(owner)
         with self.lock, self.chats._provider_lock:
             current = self._layers(owner, kind, scope_id)[-1]
@@ -232,7 +247,7 @@ class ModelControlService:
                 (owner_id,scope_kind,scope_id,provider_profile_id,provider_model_id,timeout_seconds,revision,updated_at)
                 VALUES (?,?,?,?,?,?,1,?) ON CONFLICT(owner_id,scope_kind,scope_id) DO UPDATE SET
                 provider_profile_id=excluded.provider_profile_id,provider_model_id=excluded.provider_model_id,
-                timeout_seconds=excluded.timeout_seconds,revision=learning_model_config.revision+1,updated_at=excluded.updated_at''',
+                revision=learning_model_config.revision+1,updated_at=excluded.updated_at''',
                 (owner, kind, scope_id, model.get('provider_profile_id'), model.get('provider_model_id'), value['timeout_seconds'], utc_timestamp()))
         if connection is not None:
             write(connection)

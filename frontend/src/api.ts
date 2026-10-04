@@ -275,6 +275,7 @@ export type ModelEffective = {
   provider_profile_id: string | null; provider_model_id: string | null;
   provider_display_name: string | null; model_id: string | null; model_display_name: string | null;
   provider_kind: string | null; timeout_seconds: number | null; provider_config_version: number | null;
+  timeout_policy?: 'provider_default' | 'run_extension';
   supports_image_input: boolean | null; supports_reasoning: boolean | null; has_api_key: boolean; available: boolean;
 };
 export type ModelConfig = {

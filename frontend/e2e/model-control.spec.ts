@@ -44,7 +44,7 @@ async function waitOrdinary(page: Page, id: string): Promise<AiConversationDetai
   return (await page.request.get(`/api/ai/conversations/${id}`)).json();
 }
 
-test('plan and task inherit fields independently; ordinary only-once, history, conflict and restore on mobile', async ({ page }) => {
+test('model inheritance uses Provider timeout; ordinary only-once, history, conflict and restore on mobile', async ({ page }) => {
   test.setTimeout(90_000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const { provider, alternate } = await configure(page);
@@ -57,19 +57,21 @@ test('plan and task inherit fields independently; ordinary only-once, history, c
   await page.getByRole('navigation', { name: '计划列表' }).getByRole('button', { name: /合成模型计划/ }).click();
   const detail = page.getByRole('region', { name: '计划详情' });
   const plan = detail.locator(':scope > .model-control-entry'); await openEntry(plan);
+  await expect(plan.getByLabel('模型配置超时')).toHaveCount(0);
   await plan.getByLabel('模型配置选择').selectOption(`${provider.id}::${alternate}`);
   await plan.getByRole('button', { name: '保存配置', exact: true }).click();
   await expect.poll(async () => (await getConfig(page, 'plan', linked.plan_id)).sources.model?.kind).toBe('plan');
   const task = detail.locator('.learning-plan-task .model-control-entry'); await openEntry(task);
-  await task.getByLabel('模型配置超时').fill('31');
+  await expect(task.getByLabel('模型配置超时')).toHaveCount(0);
   await task.getByRole('button', { name: '保存配置', exact: true }).click();
-  await expect.poll(async () => (await getConfig(page, 'task', linked.action_id)).effective.timeout_seconds).toBe(31);
-  expect((await getConfig(page, 'task', linked.action_id)).sources).toMatchObject({ model: { kind: 'plan' }, timeout: { kind: 'task' } });
+  await expect.poll(async () => (await getConfig(page, 'task', linked.action_id)).effective.timeout_seconds).toBe(15);
+  expect((await getConfig(page, 'task', linked.action_id)).sources).toMatchObject({ model: { kind: 'plan' }, timeout: { kind: 'global' } });
   await detail.getByRole('button', { name: '开始学习', exact: true }).click();
   await expect(page.getByLabel('输入学习问题', { exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '对话配置', exact: true }).click();
   const panel = page.locator('#ai-conversation-config-panel');
-  await expect(panel).toContainText('来自计划'); await expect(panel).toContainText('来自任务');
+  await expect(panel).toContainText('来自计划'); await expect(panel).toContainText('来自提供方默认');
+  await expect(panel.getByLabel('模型配置超时')).toHaveCount(0);
   await expect(panel.getByLabel('模型配置选择')).toBeEnabled();
   const session = JSON.parse(await page.evaluate(() => sessionStorage.getItem('nautilus.ai.learning-room')) ?? '{}'); const id = session.conversationId;
   expect(id).toBeTruthy();
@@ -90,13 +92,15 @@ test('plan and task inherit fields independently; ordinary only-once, history, c
   expect((await getConfig(page, 'conversation', id)).override).toMatchObject({ model: null, timeout_seconds: null });
   await page.getByRole('button', { name: '对话配置', exact: true }).click(); await expect(panel).not.toContainText('仅本次覆盖已准备');
   await panel.getByRole('button', { name: '当前对话', exact: true }).click();
-  await panel.getByLabel('模型配置超时').fill('55'); await panel.getByRole('button', { name: '保存配置', exact: true }).click();
-  await expect.poll(async () => (await getConfig(page, 'conversation', id)).effective.timeout_seconds).toBe(55);
+  await expect(panel.getByLabel('模型配置超时')).toHaveCount(0);
+  await panel.getByLabel('模型配置选择').selectOption(`${provider.id}::${provider.default_model_id}`);
+  await panel.getByRole('button', { name: '保存配置', exact: true }).click();
+  await expect.poll(async () => (await getConfig(page, 'conversation', id)).sources.model?.kind).toBe('conversation');
   await page.reload(); await expect(page.getByLabel('输入学习问题', { exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: '对话配置', exact: true }).click(); await expect(panel).toContainText('55 秒');
-  await panel.getByRole('button', { name: '恢复继承', exact: true }).click(); await expect(panel).toContainText('31 秒');
+  await page.getByRole('button', { name: '对话配置', exact: true }).click(); await expect(panel).toContainText('15 秒');
+  await panel.getByRole('button', { name: '恢复继承', exact: true }).click(); await expect(panel).toContainText('来自计划');
   await page.getByRole('button', { name: '对话配置', exact: true }).click();
-  await putConfig(page, 'task', linked.action_id, { model: null, timeout_seconds: 33 });
+  await putConfig(page, 'task', linked.action_id, { model: { provider_profile_id: provider.id, provider_model_id: provider.default_model_id! } });
   const stale = await ordinary(page, '合成旧配置拒绝'); expect(stale.response.status()).toBe(409);
   await expect(page.getByRole('alert').filter({ hasText: /配置/ }).first()).toBeVisible();
   const after = await waitOrdinary(page, id); expect(after.messages).toHaveLength(saved.messages.length);
@@ -129,7 +133,8 @@ test('unknown acceptance replays the same ordinary override and request number a
   await expect(input).toHaveValue('合成未知发送结果');
   await expect(input).toBeEnabled();
   const stored = JSON.parse(await page.evaluate(() => sessionStorage.getItem('nautilus.ai.learning-room')) ?? '{}');
-  await putConfig(page, 'conversation', stored.conversationId, { model: { provider_profile_id: provider.id, provider_model_id: provider.default_model_id! }, timeout_seconds: 44 });
+  await putConfig(page, 'conversation', stored.conversationId, { model: { provider_profile_id: provider.id, provider_model_id: provider.default_model_id! } });
+  expect((await page.request.patch(`/api/ai/providers/${provider.id}`, { data: { request_timeout_seconds: 44 } })).ok()).toBeTruthy();
   await input.press('Enter'); await expect.poll(() => requests.length).toBe(2);
   expect(requests[1].client_message_id).toBe(requests[0].client_message_id);
   expect(requests[1].model_override).toEqual(requests[0].model_override);
@@ -229,10 +234,11 @@ test('discussion controls its own model and exposes saved per-answer history aft
   await page.getByRole('region', { name: '验证回看' }).getByRole('article', { name: '第 1 题回看' }).getByRole('button', { name: '讨论这道题', exact: true }).click();
   const room = page.getByRole('region', { name: '题目学习室' });
   const entry = room.locator('.model-control-entry'); await openEntry(entry);
+  await expect(entry.getByLabel('模型配置超时')).toHaveCount(0);
   await entry.getByLabel('模型配置选择').selectOption(`${provider.id}::${alternate}`);
-  await entry.getByLabel('模型配置超时').fill('35'); await entry.getByRole('button', { name: '保存配置', exact: true }).click();
+  await entry.getByRole('button', { name: '保存配置', exact: true }).click();
   const id = new URL(page.url()).searchParams.get('discussion')!;
-  await expect.poll(async () => (await getConfig(page, 'discussion', id)).effective.timeout_seconds).toBe(35);
+  await expect.poll(async () => (await getConfig(page, 'discussion', id)).sources.model?.kind).toBe('discussion');
   await entry.getByRole('button', { name: '仅本次', exact: true }).click();
   await entry.getByLabel('模型配置超时').fill('38'); await entry.getByRole('button', { name: '用于本次', exact: true }).click();
   await expect(entry).toContainText('仅本次覆盖已准备');
@@ -249,7 +255,8 @@ test('discussion controls its own model and exposes saved per-answer history aft
   await page.reload(); await expect(room.getByLabel('继续提问或回答拓展问题')).toBeEnabled();
   const history = room.locator('.model-config-history'); await history.locator('summary').click();
   await expect(history).toContainText('合成备选模型'); await expect(history).toContainText('38 秒');
-  await openEntry(room.locator('.model-control-entry')); await expect(room.locator('.model-control-entry')).toContainText('35 秒');
+  await openEntry(room.locator('.model-control-entry')); await expect(room.locator('.model-control-entry')).toContainText('15 秒');
+  await expect(room.locator('.model-control-entry')).toContainText('来自提供方默认');
   await room.locator('.model-control-entry').getByRole('button', { name: '恢复继承', exact: true }).click();
   await expect.poll(async () => (await getConfig(page, 'discussion', id)).sources.model?.kind).not.toBe('discussion');
   await page.setViewportSize({ width: 390, height: 844 });

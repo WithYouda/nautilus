@@ -86,11 +86,27 @@ def selection(profile):
     return {'provider_profile_id': profile['id'], 'provider_model_id': profile['default_model_id']}
 
 
-def another_provider(client, name='second', *, api_key=FAKE_API_KEY):
+def another_provider(client, name='second', *, api_key=FAKE_API_KEY, timeout=83):
     return checked(client.post('/api/ai/providers', json={
         'display_name': name, 'base_url': f'https://{name}.example.test/v1',
-        'model': f'{name}-model', 'api_key': api_key, 'request_timeout_seconds': 83,
+        'model': f'{name}-model', 'api_key': api_key, 'request_timeout_seconds': timeout,
     }), 201)['provider']
+
+
+def seed_legacy_timeout(client, kind, scope_id, timeout):
+    """Represent a scoped timeout already saved by the former five-level UI."""
+    service = client.app.state.model_control
+    owner = client.app.state.auth.ensure_local_identity()['id']
+    stored = service._layer(owner, kind, scope_id)['override']
+    service._write(owner, kind, scope_id, {**stored, 'timeout_seconds': timeout})
+    with service.db.transaction() as connection:
+        connection.execute('UPDATE learning_model_config SET timeout_seconds=? WHERE owner_id=? AND scope_kind=? AND scope_id=?',
+                           (timeout, owner, kind, scope_id))
+
+
+def stored_timeout(client, kind, scope_id):
+    return client.app.state.learning.database.fetchone(
+        'SELECT timeout_seconds FROM learning_model_config WHERE scope_kind=? AND scope_id=?', (kind, scope_id))[0]
 
 
 def new_chat(client):
@@ -170,43 +186,51 @@ def send(client, kind, scope_id, key='message', **extra):
 
 
 @pytest.mark.parametrize('kind', ['conversation', 'discussion'])
-def test_five_layers_resolve_fields_independently_and_inheritance_stays_live(tmp_path, kind):
+def test_five_model_layers_use_final_provider_timeout_and_inheritance_stays_live(tmp_path, kind):
     provider = RecordingProvider()
     with make_client(tmp_path, provider) as client:
         authorize(client)
         default = configure_provider(client)
-        second, third = another_provider(client), another_provider(client, 'third')
+        second, third = another_provider(client), another_provider(client, 'third', timeout=104)
         scope_id, context, _ = make_scope(client, provider, kind)
         before_calls = len(provider.calls)
         save(client, 'global', 'default', {'model': selection(default), 'timeout_seconds': 61})
         save(client, 'plan', context['plan_id'], {'model': selection(second)})
-        save(client, 'task', context['action_id'], {'timeout_seconds': 37})
-        current = save(client, kind, scope_id, {'model': selection(third)})
+        seed_legacy_timeout(client, 'task', context['action_id'], 37)
+        save(client, kind, scope_id, {'model': selection(third)})
+        seed_legacy_timeout(client, kind, scope_id, 44)
+        current = view(client, kind, scope_id)
         assert current['effective']['model_id'] == 'third-model'
-        assert current['effective']['timeout_seconds'] == 37
+        assert current['effective']['timeout_seconds'] == 104
+        assert current['override']['timeout_seconds'] is None
+        assert current['effective']['timeout_policy'] == 'provider_default'
         assert current['sources'] == {'model': {'kind': kind, 'id': scope_id},
-                                      'timeout': {'kind': 'task', 'id': context['action_id']}}
+                                      'timeout': {'kind': 'global', 'id': 'default'}}
         assert [(layer['kind'], layer['id']) for layer in current['layers']] == [
             ('global', 'default'), ('plan', context['plan_id']), ('task', context['action_id']), (kind, scope_id)]
-        transient = preview(client, kind, scope_id, {'model': selection(default), 'timeout_seconds': 49})
+        transient = preview(client, kind, scope_id, {'model': selection(default), 'timeout_seconds': 75})
         assert transient['effective']['model_id'] == 'gpt-4o'
-        assert transient['effective']['timeout_seconds'] == 49
+        assert transient['effective']['timeout_seconds'] == 75
+        assert transient['effective']['timeout_policy'] == 'run_extension'
         assert transient['sources'] == {field: {'kind': 'run', 'id': scope_id} for field in ('model', 'timeout')}
         assert transient['revision'] == current['revision']
         model_only = preview(client, kind, scope_id, {'model': selection(default)})
-        assert model_only['effective']['timeout_seconds'] == 37
-        assert model_only['sources']['timeout'] == {'kind': 'task', 'id': context['action_id']}
-        timeout_only = preview(client, kind, scope_id, {'timeout_seconds': 49})
+        assert model_only['effective']['timeout_seconds'] == 61
+        assert model_only['sources']['timeout'] == {'kind': 'global', 'id': 'default'}
+        timeout_only = preview(client, kind, scope_id, {'timeout_seconds': 120})
         assert timeout_only['effective']['model_id'] == 'third-model'
         assert timeout_only['sources']['model'] == {'kind': kind, 'id': scope_id}
         assert view(client, kind, scope_id) == current
         inherited = save(client, kind, scope_id, {})
         assert inherited['effective']['model_id'] == 'second-model'
-        save(client, 'plan', context['plan_id'], {'model': selection(third), 'timeout_seconds': 56})
+        assert inherited['effective']['timeout_seconds'] == 83
+        assert stored_timeout(client, kind, scope_id) == 44
+        save(client, 'plan', context['plan_id'], {'model': selection(third)})
         inherited = view(client, kind, scope_id)
-        assert inherited['effective']['model_id'] == 'third-model' and inherited['effective']['timeout_seconds'] == 37
+        assert inherited['effective']['model_id'] == 'third-model' and inherited['effective']['timeout_seconds'] == 104
         save(client, 'task', context['action_id'], {})
-        assert view(client, kind, scope_id)['effective']['timeout_seconds'] == 56
+        assert view(client, kind, scope_id)['effective']['timeout_seconds'] == 104
+        assert stored_timeout(client, 'task', context['action_id']) == 37
         save(client, 'plan', context['plan_id'], {})
         final = view(client, kind, scope_id)
         assert final['effective']['model_id'] == 'gpt-4o' and final['effective']['timeout_seconds'] == 61
@@ -238,6 +262,54 @@ def test_invalid_override_is_rejected_without_mutation(tmp_path, override):
         assert view(client, 'conversation', cid) == before
 
 
+def test_scoped_timeout_writes_are_explicitly_rejected_and_legacy_values_survive_model_saves(tmp_path):
+    provider = RecordingProvider()
+    with make_client(tmp_path, provider) as client:
+        authorize(client)
+        configure_provider(client)
+        second = another_provider(client)
+        did, context, _ = make_scope(client, provider, 'discussion')
+        for kind, scope_id in [('plan', context['plan_id']), ('task', context['action_id']),
+                               ('conversation', context['conversation_id']), ('discussion', did)]:
+            seed_legacy_timeout(client, kind, scope_id, 37)
+            before = view(client, kind, scope_id)
+            rejected = client.put(config_path(kind, scope_id), json={
+                'expected_revision': before['revision'], 'override': {'timeout_seconds': 97}})
+            assert rejected.status_code == 400 and '仅本次' in rejected.text
+            assert view(client, kind, scope_id) == before
+            for override in ({'model': selection(second)}, {'model': selection(second), 'timeout_seconds': None}, {}):
+                saved = save(client, kind, scope_id, override)
+                assert saved['override']['timeout_seconds'] is None
+                assert stored_timeout(client, kind, scope_id) == 37
+
+
+@pytest.mark.parametrize('kind', ['conversation', 'discussion'])
+def test_one_run_timeout_can_only_extend_final_provider_default(tmp_path, kind):
+    provider = RecordingProvider()
+    with make_client(tmp_path, provider) as client:
+        authorize(client)
+        configure_provider(client)
+        second = another_provider(client)
+        scope_id, _, _ = make_scope(client, provider, kind)
+        persistent = view(client, kind, scope_id)
+        for timeout in (None, 83, 105):
+            override = {'model': selection(second), 'timeout_seconds': timeout}
+            current = preview(client, kind, scope_id, override)
+            assert current['effective']['timeout_seconds'] == (83 if timeout is None else timeout)
+            assert current['sources']['timeout']['kind'] == ('global' if timeout is None else 'run')
+            answer = send(client, kind, scope_id, str(timeout), model_override=override, model_config_token=current['token'])
+            assert answer['model_config']['timeout_seconds'] == current['effective']['timeout_seconds']
+        before_calls = len(provider.calls)
+        for timeout in (82, 4, 601, True):
+            override = {'model': selection(second), 'timeout_seconds': timeout}
+            rejected = client.post(config_path(kind, scope_id) + '/preview', json={'override': override})
+            assert rejected.status_code == 400
+            rejected_send = client.post(message_path(kind, scope_id), json=message_payload(kind, f'bad-{timeout}', model_override=override))
+            assert rejected_send.status_code == 400
+        assert len(provider.calls) == before_calls
+        assert view(client, kind, scope_id) == persistent
+
+
 def test_cas_cross_owner_and_provider_model_pair_are_enforced(tmp_path):
     provider = RecordingProvider()
     with make_client(tmp_path, provider) as client:
@@ -247,7 +319,7 @@ def test_cas_cross_owner_and_provider_model_pair_are_enforced(tmp_path):
         did, context, _ = make_scope(client, provider, 'discussion')
         cid = context['conversation_id']
         before = view(client, 'conversation', cid)
-        changed = save(client, 'conversation', cid, {'timeout_seconds': 37})
+        changed = save(client, 'conversation', cid, {'model': selection(other)})
         assert changed['revision'] != before['revision']
         assert client.put(config_path('conversation', cid), json={
             'expected_revision': before['revision'], 'override': {}}).status_code == 409
@@ -307,13 +379,13 @@ def test_stale_persistent_and_one_run_preview_tokens_reject_new_requests(tmp_pat
         second = another_provider(client)
         scope_id, context, _ = make_scope(client, provider, kind)
         stale = view(client, kind, scope_id)['token']
-        save(client, 'task', context['action_id'], {'timeout_seconds': 31})
+        save(client, 'task', context['action_id'], {'model': selection(second)})
         before_calls = len(provider.calls)
         response = client.post(message_path(kind, scope_id), json=message_payload(kind, model_config_token=stale))
         assert response.status_code == 409, response.text
-        override = {'model': selection(second), 'timeout_seconds': 37}
+        override = {'model': selection(second), 'timeout_seconds': 97}
         stale_preview = preview(client, kind, scope_id, override)['token']
-        checked(client.patch(f"/api/ai/providers/{second['id']}", json={'display_name': 'Changed selection'}))
+        checked(client.patch(f"/api/ai/providers/{second['id']}", json={'request_timeout_seconds': 88}))
         response = client.post(message_path(kind, scope_id), json=message_payload(kind,
             model_override=override, model_config_token=stale_preview))
         assert response.status_code == 409, response.text
@@ -321,7 +393,7 @@ def test_stale_persistent_and_one_run_preview_tokens_reject_new_requests(tmp_pat
         fresh = preview(client, kind, scope_id, override)['token']
         assert fresh != stale_preview
         answer = send(client, kind, scope_id, model_override=override, model_config_token=fresh)
-        assert answer['model_config']['timeout_seconds'] == 37
+        assert answer['model_config']['timeout_seconds'] == 97
 
 
 @pytest.mark.parametrize('kind', ['conversation', 'discussion'])
@@ -333,7 +405,7 @@ def test_real_requests_freeze_one_run_config_and_replay_exact_override(tmp_path,
         second = another_provider(client)
         scope_id, _, _ = make_scope(client, provider, kind)
         persistent = view(client, kind, scope_id)
-        override = {'model': selection(second), 'timeout_seconds': 37}
+        override = {'model': selection(second), 'timeout_seconds': 97}
         token = preview(client, kind, scope_id, override)['token']
         payload = message_payload(kind, model_override=override, model_config_token=token)
         provider.calls.clear(); provider.hold = True
@@ -342,18 +414,18 @@ def test_real_requests_freeze_one_run_config_and_replay_exact_override(tmp_path,
                                202 if kind == 'conversation' else 200)
             assert provider.started.wait(5), 'mock stream did not start'
             assert view(client, kind, scope_id) == persistent
-            save(client, kind, scope_id, {'model': selection(default), 'timeout_seconds': 43})
+            save(client, kind, scope_id, {'model': selection(default)})
             checked(client.patch(f"/api/ai/providers/{second['id']}", json={'display_name': 'Later provider name'}))
         finally:
             provider.release.set()
         answer = finish(client, kind, scope_id, accepted)
         saved = answer['model_config']
-        assert saved['model_id'] == 'second-model' and saved['timeout_seconds'] == 37
+        assert saved['model_id'] == 'second-model' and saved['timeout_seconds'] == 97
         assert saved['provider_display_name'] == 'second'
         assert saved['sources'] == {field: {'kind': 'run', 'id': scope_id} for field in ('model', 'timeout')}
         answer_calls = provider.calls if kind == 'discussion' else [call for call in provider.calls if call['stream']]
         assert answer_calls
-        assert all(call['model'] == 'second-model' and call['timeout'] == 37 for call in answer_calls), answer_calls
+        assert all(call['model'] == 'second-model' and call['timeout'] == 97 for call in answer_calls), answer_calls
         before_calls = len(provider.calls)
         checked(client.patch(f"/api/ai/providers/{second['id']}", json={'enabled': False}))
         replay = checked(client.post(message_path(kind, scope_id), json=payload),
@@ -361,13 +433,13 @@ def test_real_requests_freeze_one_run_config_and_replay_exact_override(tmp_path,
         replay_answer = finish(client, kind, scope_id, replay)
         assert replay_answer['id'] == answer['id'] and replay_answer['model_config'] == saved
         assert len(provider.calls) == before_calls
-        changed_override = {**override, 'timeout_seconds': 38}
+        changed_override = {**override, 'timeout_seconds': 98}
         assert client.post(message_path(kind, scope_id), json={**payload, 'model_override': changed_override}).status_code == 409
         provider.hold = False
         retry_field = 'regenerate_message_id' if kind == 'conversation' else 'regenerate_turn_id'
         regenerated = send(client, kind, scope_id, 'regenerated', **{retry_field: answer['id']})
         assert regenerated['model_config']['model_id'] == 'gpt-4o'
-        assert regenerated['model_config']['timeout_seconds'] == 43
+        assert regenerated['model_config']['timeout_seconds'] == 60
         assert regenerated['model_config']['sources']['model'] == {'kind': kind, 'id': scope_id}
         if kind == 'conversation':
             history = checked(client.get(f'/api/ai/conversations/{scope_id}'))['messages']
@@ -376,23 +448,70 @@ def test_real_requests_freeze_one_run_config_and_replay_exact_override(tmp_path,
         assert next(item for item in history if item['id'] == answer['id'])['model_config'] == saved
 
 
+@pytest.mark.parametrize('kind', ['conversation', 'discussion'])
+def test_accepted_legacy_timeout_replay_keeps_its_old_snapshot_after_policy_change(tmp_path, kind):
+    provider = RecordingProvider()
+    with make_client(tmp_path, provider) as client:
+        authorize(client)
+        configure_provider(client)
+        second = another_provider(client)
+        scope_id, context, _ = make_scope(client, provider, kind)
+        override = {'model': selection(second), 'timeout_seconds': 97}
+        payload = message_payload(kind, model_override=override)
+        accepted = checked(client.post(message_path(kind, scope_id), json=payload),
+                           202 if kind == 'conversation' else 200)
+        answer = finish(client, kind, scope_id, accepted)
+        db = client.app.state.database if kind == 'conversation' else client.app.state.learning.database
+        if kind == 'conversation':
+            query = 'SELECT config_snapshot_json FROM ai_run WHERE response_message_id=?'
+            update = 'UPDATE ai_run SET config_snapshot_json=? WHERE response_message_id=?'
+        else:
+            query = 'SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?'
+            update = 'UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?'
+        snapshot = json.loads(db.fetchone(query, (answer['id'],))[0])
+        # A fixture captured by the former policy: scoped/default timeout could
+        # be shorter than the selected Provider and had no policy marker.
+        snapshot['model_control'].pop('timeout_policy')
+        snapshot['model_control']['timeout_seconds'] = 37
+        snapshot['model_control']['sources']['timeout'] = {'kind': 'task', 'id': context['action_id']}
+        snapshot['model_override']['timeout_seconds'] = 37
+        if kind == 'conversation':
+            snapshot['effective']['timeout_seconds'] = 37
+        else:
+            snapshot['timeout_seconds'] = 37
+        saved_snapshot = json.dumps(snapshot)
+        with db.transaction() as connection:
+            connection.execute(update, (saved_snapshot, answer['id']))
+        old_override = {**override, 'timeout_seconds': 37}
+        assert client.post(config_path(kind, scope_id) + '/preview', json={'override': old_override}).status_code == 400
+        checked(client.patch(f"/api/ai/providers/{second['id']}", json={'enabled': False}))
+        before_calls = len(provider.calls)
+        replay = checked(client.post(message_path(kind, scope_id), json={**payload, 'model_override': old_override}),
+                         202 if kind == 'conversation' else 200)
+        replay_answer = finish(client, kind, scope_id, replay)
+        assert replay_answer['id'] == answer['id']
+        assert replay_answer['model_config'] == snapshot['model_control']
+        assert db.fetchone(query, (answer['id'],))[0] == saved_snapshot
+        assert len(provider.calls) == before_calls
+
+
 def test_discussion_inherits_original_task_while_formal_verification_uses_latest_room(tmp_path):
     provider = RecordingProvider()
     with make_client(tmp_path, provider) as client:
         authorize(client); configure_provider(client)
-        task_model, room_model = another_provider(client, 'task'), another_provider(client, 'room')
+        task_model, room_model = another_provider(client, 'task'), another_provider(client, 'room', timeout=79)
         context = setup_room(client)
-        save(client, 'plan', context['plan_id'], {'timeout_seconds': 51})
+        seed_legacy_timeout(client, 'plan', context['plan_id'], 51)
         save(client, 'task', context['action_id'], {'model': selection(task_model)})
         did, original = create_discussion(client, provider, context)
         other_room = new_chat(client)
-        save(client, 'conversation', other_room, {'model': selection(room_model), 'timeout_seconds': 79})
+        save(client, 'conversation', other_room, {'model': selection(room_model)})
         checked(client.put(f"/api/learning/sessions/{context['session_id']}/room", json={'conversation_id': other_room}))
         current = view(client, 'discussion', did)
-        assert current['effective']['model_id'] == 'task-model' and current['effective']['timeout_seconds'] == 51
-        save(client, 'discussion', did, {'timeout_seconds': 33})
+        assert current['effective']['model_id'] == 'task-model' and current['effective']['timeout_seconds'] == 83
+        seed_legacy_timeout(client, 'discussion', did, 33)
         answer = send(client, 'discussion', did)
-        assert answer['model_config']['model_id'] == 'task-model' and answer['model_config']['timeout_seconds'] == 33
+        assert answer['model_config']['model_id'] == 'task-model' and answer['model_config']['timeout_seconds'] == 83
         verification = client.app.state.verification
         owner = client.app.state.auth.ensure_local_identity()['id']
         _, formal = verification._runtime(owner, context['session_id'])
@@ -409,9 +528,10 @@ def test_branches_copy_current_override_and_ownership_but_keep_original_run_hist
         default = configure_provider(client)
         second = another_provider(client)
         scope_id, context, original = make_scope(client, provider, kind)
-        save(client, 'task', context['action_id'], {'timeout_seconds': 51})
-        save(client, kind, scope_id, {'model': selection(default), 'timeout_seconds': 44})
-        answer = send(client, kind, scope_id, model_override={'model': selection(second), 'timeout_seconds': 37})
+        seed_legacy_timeout(client, 'task', context['action_id'], 51)
+        save(client, kind, scope_id, {'model': selection(default)})
+        seed_legacy_timeout(client, kind, scope_id, 44)
+        answer = send(client, kind, scope_id, model_override={'model': selection(second), 'timeout_seconds': 97})
         base = f'/api/ai/conversations/{scope_id}' if kind == 'conversation' else f'/api/learning/discussions/{scope_id}'
         field = 'message_id' if kind == 'conversation' else 'turn_id'
         branch_payload = {field: answer['id'], 'request_key': 'fork'}
@@ -421,17 +541,19 @@ def test_branches_copy_current_override_and_ownership_but_keep_original_run_hist
         copied = fork['messages'][-1] if kind == 'conversation' else fork['turns'][-1]
         assert copied['model_config'] == answer['model_config']
         branch_config = view(client, kind, bid)
-        assert branch_config['override'] == {'model': selection(default), 'timeout_seconds': 44}
+        assert branch_config['override'] == {'model': selection(default), 'timeout_seconds': None}
+        assert stored_timeout(client, kind, bid) == 44
         assert [layer['id'] for layer in branch_config['layers'][:-1]] == ['default', context['plan_id'], context['action_id']]
         if kind == 'discussion':
             assert fork['verification_id'] == original['id']
-        save(client, kind, scope_id, {'model': selection(second), 'timeout_seconds': 55})
+        save(client, kind, scope_id, {'model': selection(second)})
         assert view(client, kind, bid) == branch_config
-        save(client, kind, bid, {'timeout_seconds': 58})
-        assert view(client, kind, scope_id)['effective']['timeout_seconds'] == 55
+        save(client, kind, bid, {})
+        assert view(client, kind, scope_id)['effective']['timeout_seconds'] == 83
         repeated = checked(client.post(base + '/branches', json=branch_payload), 201)
         assert (repeated['conversation']['id'] if kind == 'conversation' else repeated['id']) == bid
-        assert view(client, kind, bid)['override'] == {'model': None, 'timeout_seconds': 58}
+        assert view(client, kind, bid)['override'] == {'model': None, 'timeout_seconds': None}
+        assert stored_timeout(client, kind, bid) == 44
         assert len(provider.calls) == before_calls
 
 
@@ -448,9 +570,12 @@ def test_legacy_conversation_override_is_used_until_explicit_inheritance_is_save
                 VALUES (?,?,?,?,7,'synthetic-time')''', (cid, second['id'], second['default_model_id'], 37))
         legacy = view(client, 'conversation', cid)
         assert legacy['revision'] == 'legacy:7' and legacy['effective']['model_id'] == 'second-model'
+        assert legacy['override']['timeout_seconds'] is None
+        assert legacy['effective']['timeout_seconds'] == 83
         inherited = save(client, 'conversation', cid, {})
         assert inherited['effective']['model_id'] == 'gpt-4o'
         assert db.fetchone('SELECT config_version FROM conversation_config WHERE conversation_id=?', (cid,))[0] == 7
+        assert db.fetchone('SELECT timeout_override_seconds FROM conversation_config WHERE conversation_id=?', (cid,))[0] == 37
         assert view(client, 'conversation', cid) == inherited
 
 
@@ -460,8 +585,8 @@ def test_hidden_chat_keeps_settings_inaccessible_and_verification_purge_removes_
         authorize(client); configure_provider(client)
         did, context, original = make_scope(client, provider, 'discussion')
         cid = context['conversation_id']
-        save(client, 'conversation', cid, {'timeout_seconds': 31})
-        save(client, 'discussion', did, {'timeout_seconds': 37})
+        seed_legacy_timeout(client, 'conversation', cid, 31)
+        seed_legacy_timeout(client, 'discussion', did, 37)
         answer = send(client, 'discussion', did)
         fork = checked(client.post(f'/api/learning/discussions/{did}/branches', json={
             'turn_id': answer['id'], 'request_key': 'fork'}), 201)
@@ -484,7 +609,8 @@ def test_interrupted_branch_copy_replays_creation_template_after_source_changes(
         second = another_provider(client)
         context = setup_room(client)
         cid = context['conversation_id']
-        save(client, 'conversation', cid, {'model': selection(second), 'timeout_seconds': 31})
+        save(client, 'conversation', cid, {'model': selection(second)})
+        seed_legacy_timeout(client, 'conversation', cid, 31)
         answer = send(client, 'conversation', cid)
         payload = {'message_id': answer['id'], 'request_key': 'interrupted-copy'}
         service = client.app.state.model_control
@@ -497,11 +623,12 @@ def test_interrupted_branch_copy_replays_creation_template_after_source_changes(
         with pytest.raises(RuntimeError, match='synthetic interruption'):
             client.post(f'/api/ai/conversations/{cid}/branches', json=payload)
         monkeypatch.setattr(service, 'copy_branch', real_copy)
-        save(client, 'conversation', cid, {'model': selection(default), 'timeout_seconds': 53})
+        save(client, 'conversation', cid, {'model': selection(default)})
         copied = checked(client.post(f'/api/ai/conversations/{cid}/branches', json=payload), 201)
         bid = copied['conversation']['id']
         config = view(client, 'conversation', bid)
-        assert config['override'] == {'model': selection(second), 'timeout_seconds': 31}
+        assert config['override'] == {'model': selection(second), 'timeout_seconds': None}
+        assert stored_timeout(client, 'conversation', bid) == 31
         assert [layer['id'] for layer in config['layers'][:-1]] == ['default', context['plan_id'], context['action_id']]
         assert copied['messages'][-1]['model_config'] == answer['model_config']
 
@@ -528,8 +655,7 @@ def test_legacy_answer_configuration_does_not_invent_missing_sources_or_change_s
                 snapshot.pop(field)
         with db.transaction() as connection:
             connection.execute(update, (json.dumps(snapshot), answer['id']))
-        save(client, kind, scope_id, {'timeout_seconds': 97})
-        checked(client.patch(f"/api/ai/providers/{default['id']}", json={'display_name': 'Current name'}))
+        checked(client.patch(f"/api/ai/providers/{default['id']}", json={'display_name': 'Current name', 'request_timeout_seconds': 97}))
         path = f'/api/ai/conversations/{scope_id}' if kind == 'conversation' else f'/api/learning/discussions/{scope_id}'
         history = checked(client.get(path))['messages' if kind == 'conversation' else 'turns']
         historical = next(item for item in history if item['id'] == answer['id'])['model_config']
@@ -554,7 +680,7 @@ def test_concurrent_discussion_and_config_reads_and_saves_finish(tmp_path):
             if index % 3 == 1:
                 return current.status_code
             return client.put(config_path('discussion', did), json={
-                'expected_revision': current.json()['revision'], 'override': {'timeout_seconds': 31 + index},
+                'expected_revision': current.json()['revision'], 'override': {},
             }).status_code
 
         executor = ThreadPoolExecutor(max_workers=3)

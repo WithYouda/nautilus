@@ -85,9 +85,10 @@ export function ModelControlNotice({ control, onOpen }: { control: ModelControlS
 
 export function ModelSummary({ value }: { value: ModelRunConfig }) {
   const model = value.model_display_name ?? value.model_id;
+  const timeoutSource = value.timeout_policy === 'provider_default' ? '提供方默认' : sourceName(value.sources?.timeout);
   return <div className="model-control__summary">
     <p>{[value.provider_display_name, model].filter(Boolean).join(' · ') || '尚未配置模型'}{sourceName(value.sources?.model) && <small>来自{sourceName(value.sources?.model)}</small>}</p>
-    {value.timeout_seconds != null && <p>超时 {value.timeout_seconds} 秒{sourceName(value.sources?.timeout) && <small>来自{sourceName(value.sources?.timeout)}</small>}</p>}
+    {value.timeout_seconds != null && <p>超时 {value.timeout_seconds} 秒{timeoutSource && <small>来自{timeoutSource}</small>}</p>}
   </div>;
 }
 export function ModelConfigHistory({ config }: { config?: ModelRunConfig | null }) {
@@ -102,6 +103,7 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
   const [message, setMessage] = useState('');
   const previousScope = useRef('');
   const config = control.config;
+  const global = config?.scope_kind === 'global';
   const scope = config ? `${config.scope_kind}:${config.scope_id}` : '';
   useEffect(() => {
     const update = () => { void listAiProviders().then(setProviders).catch(reason => setMessage(errorText(reason))); };
@@ -115,12 +117,15 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
   const override = once ? control.runOverride : control.saved?.override;
   useEffect(() => {
     setModel(override?.model ? `${override.model.provider_profile_id}::${override.model.provider_model_id}` : '');
-    setTimeout(override?.timeout_seconds != null ? String(override.timeout_seconds) : '');
+    setTimeout((once || global) && override?.timeout_seconds != null ? String(override.timeout_seconds) : '');
     setMessage('');
-  }, [override, once]);
+  }, [override, once, global]);
+  const selectedProviderId = model ? model.split('::')[0] : control.saved?.effective.provider_profile_id;
+  const defaultTimeout = providers.find(provider => provider.id === selectedProviderId)?.request_timeout_seconds ?? control.saved?.effective.timeout_seconds ?? 5;
   async function apply(reset = false) {
-    const value = timeout.trim() ? Number(timeout) : null;
+    const value = (once || global) && timeout.trim() ? Number(timeout) : null;
     if (!reset && value !== null && (!Number.isInteger(value) || value < 5 || value > 600)) { setMessage('超时请填写 5–600 秒。'); return; }
+    if (!reset && once && value !== null && value < defaultTimeout) { setMessage(`仅本次超时不能少于提供方默认的 ${defaultTimeout} 秒。`); return; }
     const [provider_profile_id, provider_model_id] = model.split('::');
     try {
       await control.save(reset ? emptyOverride() : { model: model ? { provider_profile_id, provider_model_id } : null, timeout_seconds: value }, once);
@@ -140,7 +145,7 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
       {model && !providers.some(provider => provider.models?.some(item => `${provider.id}::${item.id}` === model)) && <option value={model}>当前模型（不可用）</option>}
       {providers.flatMap(provider => (provider.models ?? []).map(item => <option key={item.id} value={`${provider.id}::${item.id}`} disabled={!provider.enabled || !item.enabled || item.discovery_status === 'unavailable'}>{provider.display_name} · {item.display_name}</option>))}
     </select></label>
-    <label><span>超时（秒）</span><input aria-label="模型配置超时" type="number" min={5} max={600} step={1} placeholder="继承上级" value={timeout} onChange={event => { setTimeout(event.target.value); setMessage(''); }} disabled={blocked} /></label>
+    {(once || global) && <label><span>{once ? '仅本次延长（秒）' : '提供方默认超时（秒）'}</span><input aria-label="模型配置超时" type="number" min={once ? defaultTimeout : 5} max={600} step={1} placeholder={`提供方默认（${defaultTimeout} 秒）`} value={timeout} onChange={event => { setTimeout(event.target.value); setMessage(''); }} disabled={blocked} /></label>}
     <div className="model-control__actions">
       <button type="button" className="button button--quiet" disabled={blocked} onClick={() => void apply()}>{once ? '用于本次' : '保存配置'}</button>
       <button type="button" className="text-button" disabled={blocked} onClick={() => { if (once) { control.clearOnce(); setMessage(''); } else void apply(true); }}>{once ? '取消本次覆盖' : '恢复继承'}</button>
