@@ -10,6 +10,9 @@ from ..learning_domain import DomainError, Principal
 PROJECTION_VERSION = 1
 SUPPORTED_EVENT_VERSIONS = frozenset({1})
 SUPPORTED_EVENT_TYPES = frozenset({
+    'path.draft_saved', 'path.decision_confirmed', 'path.position_selected', 'path.content_purged', 'path.transfer_departed',
+    "organization.initialized", "organization.module_created", "organization.module_revised",
+    "organization.task_added", "organization.task_placed", "organization.children_ordered", "organization.content_purged",
     "goal.status_changed",
     "setup.confirmed",
     "plan.step_added",
@@ -144,7 +147,13 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
     occurred_at = event["occurred_at"]
     event_type = event["event_type"]
 
-    if event_type.startswith('graph.'):
+    if event_type.startswith('path.'):
+        from .learning_paths import apply_path_event
+        apply_path_event(connection, event, payload)
+    elif event_type.startswith('organization.'):
+        from .plan_organization import apply_organization_event
+        apply_organization_event(connection, event, payload)
+    elif event_type.startswith('graph.'):
         from .outcome_graph import apply_graph_event
         apply_graph_event(connection, event, payload)
     elif event_type == 'goal.status_changed':

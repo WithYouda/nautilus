@@ -196,6 +196,12 @@ def _backup_loses_purge_barriers(
         if not purges.issubset(retained):
             return True
     barriers = (
+        ('learning_path_private',('owner_id','object_id','revision')),
+        ('learning_path_private_tombstone',('owner_id','object_id')),
+        ('learning_path_version',('owner_id','id')),
+        ('learning_path_draft',('owner_id','id')),
+        ("learning_plan_private", ("owner_id", "kind", "object_id", "revision")),
+        ("learning_plan_private_tombstone", ("owner_id", "kind", "object_id")),
         ("learning_graph_private", ("owner_id", "kind", "object_id", "revision")),
         ("learning_outcome_relation", ("owner_id", "id")),
         ("learning_graph_run", ("owner_id", "id")),
@@ -487,7 +493,10 @@ def _check_purge_receipts(target_path, candidate_path):
         if receipt['status'] != 'complete':
             raise ProductionLearningDatabaseError('purged content cleanup is incomplete; finish it before restoring')
         kind, owner, object_id = (receipt[key] for key in ('kind', 'owner', 'object_id'))
-        table, key = {'artifact': ('learning_raw_artifact', 'artifact_id'),
+        table, key = {'plan_content': ('learning_plan_private', 'object_id'),
+                      'path_content': ('learning_path_version','id'),
+                      'module_content': ('learning_plan_private', 'object_id'),
+                      'artifact': ('learning_raw_artifact', 'artifact_id'),
                       'graph_relation': ('learning_outcome_relation','id'),
                       'graph_run': ('learning_graph_run','id'),
                       'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id'),
@@ -499,8 +508,10 @@ def _check_purge_receipts(target_path, candidate_path):
             if 'purged_at' not in columns(connection, table):
                 raise ProductionLearningDatabaseError('backup would lose deletion barriers for purged content')
             object_ids = receipt.get('material_ids', [object_id]) if kind == 'material' else [object_id]
+            suffix = ' AND kind=?' if kind in {'plan_content','module_content'} else ''
             rows = [row for item_id in object_ids for row in connection.execute(
-                f'SELECT purged_at FROM {table} WHERE owner_id=? AND {key}=?', (owner, item_id)).fetchall()]
+                f'SELECT purged_at FROM {table} WHERE owner_id=? AND {key}=?' + suffix,
+                (owner,item_id,kind.split('_')[0]) if suffix else (owner,item_id)).fetchall()]
             if not rows or any(not row[0] for row in rows):
                 raise ProductionLearningDatabaseError('backup would lose deletion barriers for purged content')
             if kind == 'material':
@@ -525,6 +536,10 @@ def _check_purge_receipts(target_path, candidate_path):
                 if not connection.execute("SELECT 1 FROM learning_event WHERE owner_id=? AND event_type='artifact.purged' AND json_extract(payload_json,'$.artifact_id')=?", (owner, artifact_id)).fetchone():
                     raise ProductionLearningDatabaseError('backup would lose deletion facts for purged content')
             private_columns = {
+                'learning_plan_private': ['content_json','content_hash'],
+                'learning_path_private': ['content_json','content_hash'],
+                'learning_plan': ['title','description'],
+                'learning_module': ['title','description'],
                 'learning_graph_private': ['content_json','content_hash'],
                 'learning_raw_artifact': ['content', 'content_hash'],
                 'learning_verification': ['challenge_json', 'answer_key_json', 'submission_json', 'result_json', 'contract_snapshot_json'],

@@ -139,7 +139,18 @@ def _erase_delayed(connection, owner, follow_up_ids, now):
 
 
 def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifact_ids=()):
+    if kind == 'path_content':
+        if columns(connection,'learning_path_version'):
+            row=connection.execute('SELECT private_object_id FROM learning_path_version WHERE owner_id=? AND id=?',(owner,object_id)).fetchone()
+            if row:
+                from .core.learning_paths import erase_path_private
+                erase_path_private(connection,owner,row[0],now)
+        return
     from .core.outcome_graph import erase_graph, erase_graph_sources
+    if kind in {'plan_content', 'module_content'}:
+        from .core.plan_organization import erase_organization
+        erase_organization(connection,owner,kind.split('_')[0],object_id,now)
+        return
     if kind in {'graph_relation','graph_run'}:
         erase_graph(connection,owner,'relation' if kind=='graph_relation' else 'run',object_id,now)
         return

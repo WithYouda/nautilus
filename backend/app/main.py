@@ -15,6 +15,10 @@ from .routers import diagnostics
 from . import __version__
 from .agent_runtime import AgentRuntime
 from .ai_runtime import AiRunManager
+from .plan_organization import PlanOrganization
+from .learning_paths import LearningPaths
+from .routers import learning_paths
+from .routers import plan_organization
 from .outcome_graph import OutcomeGraph
 from .routers import outcome_graph
 from .auth import AuthService
@@ -165,6 +169,8 @@ def create_app(
         app.state.plans = plan_service
         app.state.plan_editor = plan_editor_service
         app.state.layouts = layout_service
+        app.state.plan_organization = PlanOrganization(learning_service)
+        app.state.learning_paths = LearningPaths(learning_service, conversation_service)
         app.state.learning = learning_service
         app.state.learning_setup = learning_setup_service
         app.state.verification = verification_service
@@ -260,6 +266,8 @@ def create_app(
     app.include_router(layouts.router)
     app.include_router(learning.router)
     app.include_router(outcome_graph.router)
+    app.include_router(plan_organization.router)
+    app.include_router(learning_paths.router)
     app.include_router(practice.router)
     app.include_router(delayed_follow_up.router)
     app.include_router(ai.router)

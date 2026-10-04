@@ -389,6 +389,28 @@ export default function AiLearningRoom({
   const searchChoice = sharedState.search;
   const searchSelection = searchChoice.value;
   const replyHistory = useReplyHistory(conversationId ?? '', (detail?.messages ?? []).map(message => ({ id: message.id, parentId: message.parent_message_id ?? null })), currentRun?.response_message_id, { leaf: sharedState.snapshot.leaf_id, paths: sharedState.snapshot.paths, ready: sharedState.ready, select: (leaf_id, paths) => sharedState.save({ leaf_id, paths }) });
+  const appliedPathAnchor = useRef<string | null>(null);
+  const [anchorRetry,setAnchorRetry]=useState(0);
+  const [anchorRestoreFailed,setAnchorRestoreFailed]=useState(false);
+  useEffect(() => {
+    const anchor=learningBrief?.path_anchor;
+    if (!anchor?.conversation_id || anchor.conversation_id !== conversationId || !sharedState.ready) return;
+    const key=`${learningBrief?.session_id}:${anchor.conversation_id}:${anchor.leaf_id ?? ''}:${anchorRetry}`;
+    if (appliedPathAnchor.current===key) return;
+    appliedPathAnchor.current=key;
+    setAnchorRestoreFailed(false);
+    if (anchor.leaf_id && !detail?.messages.some(message=>message.id===anchor.leaf_id)) {
+      setEntryReady(false);setError('原回答位置已不可读取，请返回路径选择当前可用任务。');return;
+    }
+    if (!anchor.leaf_id) { setEntryReady(true);return; }
+    if (sharedState.snapshot.leaf_id===anchor.leaf_id && JSON.stringify(sharedState.snapshot.paths)===JSON.stringify(anchor.paths ?? {})) { setEntryReady(true);return; }
+    setEntryReady(false);
+    void sharedState.save({leaf_id:anchor.leaf_id,paths:anchor.paths ?? {}}).then(saved=>{
+      if (!mountedRef.current || conversationIdRef.current!==anchor.conversation_id) return;
+      if (saved) setEntryReady(true);
+      else {setAnchorRestoreFailed(true);setError('原位置未能恢复。请核对后重试，或返回路径选择可用任务。');}
+    });
+  },[learningBrief?.session_id,learningBrief?.path_anchor?.conversation_id,learningBrief?.path_anchor?.leaf_id,conversationId,sharedState.ready,anchorRetry]);
   const visibleMessages = replyHistory.path.map(id => detail!.messages.find(message => message.id === id)!);
   const teachingPath = replyHistory.path.join(':');
   useEffect(() => { setSelectedTeachingMode(null); }, [conversationId, teachingPath]);
@@ -649,7 +671,13 @@ export default function AiLearningRoom({
       let candidate = !initialDraft && savedConversation && conversationMatchesEntry(savedConversation, effectiveScope, effectiveTargetId)
         ? savedConversation.id
         : null;
-      if (room) candidate = room.conversation_id;
+      if (room) {
+        const anchorConversation=learningBrief?.path_anchor?.conversation_id;
+        if (anchorConversation && !room.conversation_ids.includes(anchorConversation)) {
+          throw new Error('原对话位置已不可读取，请返回路径选择当前可用任务。');
+        }
+        candidate=anchorConversation ?? room.conversation_id;
+      }
       if (!room && !candidate && !initialDraft) {
         candidate = conversationItems.find((item) => conversationMatchesEntry(item, effectiveScope, effectiveTargetId))?.id ?? null;
       }
@@ -663,7 +691,8 @@ export default function AiLearningRoom({
             if (accepted) persistSession({ pending: undefined });
             else setError('上次发送结果尚未确认，请用原问题重试。');
           }
-        } catch {
+        } catch (reason) {
+          if (learningBrief?.path_anchor?.conversation_id) throw reason;
           pendingSubmissionRef.current = null;
           pendingContentRef.current = null;
           conversationContextRef.current = null;
@@ -675,14 +704,14 @@ export default function AiLearningRoom({
         setDraft("");
         setStatus("idle");
       }
-      if (mountedRef.current) setEntryReady(true);
+      if (mountedRef.current && !learningBrief?.path_anchor?.leaf_id) setEntryReady(true);
     } catch (reason: unknown) {
       if (!mountedRef.current) return;
       setHistoryLoading(false);
       setStatus("failed");
       setError(reason instanceof Error ? reason.message : "学习室加载失败");
     }
-  }, [activateConversation, effectiveScope, effectiveTargetId, initialDraft, learningBrief?.session_id]);
+  }, [activateConversation, effectiveScope, effectiveTargetId, initialDraft, learningBrief?.session_id, learningBrief?.path_anchor?.conversation_id, learningBrief?.path_anchor?.leaf_id]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1238,6 +1267,7 @@ export default function AiLearningRoom({
 
       <div className="ai-chat-with-map">
       <ConversationStateNotice state={sharedState} onSelectPath={() => { void sharedState.save({ leaf_id: detail?.messages.filter(message => !message.source_scope?.purged).at(-1)?.id ?? null, paths: {} }); }} />
+      {anchorRestoreFailed && <button className="text-button" type="button" disabled={sharedState.busy} onClick={() => {void sharedState.reload().then(()=>{setError('');setAnchorRetry(value=>value+1);});}}>重试恢复原位置</button>}
       {conversationId && <BranchMap kind="conversation" id={conversationId} revision={`${detail?.conversation.title}:${detail?.messages.at(-1)?.status}:${detail?.messages.length}`} disabled={branchBusy || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
         onNavigate={async (id, source) => { await handleConversationSwitch(id); if (source) setMapLocation({ id, source }); }}
         onRenamed={async () => { const [next, list] = await Promise.all([getAiConversation(conversationId), listAiConversations()]); if (conversationIdRef.current === conversationId) { setDetail(next); setConversations(list); } }} />}

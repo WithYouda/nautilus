@@ -845,6 +845,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+// New learning-domain modules share the existing authentication and error boundary.
+export { request as learningRequest };
+
 export function getHealth(): Promise<Health> {
   return request<Health>("/api/health");
 }
@@ -1682,6 +1685,7 @@ export type LearningSetupDraft = {
 };
 
 export type LearningRoomBrief = {
+  path_anchor?: { kind?: string; conversation_id?: string; leaf_id?: string | null; paths?: Record<string,string>; state_revision?: number | null; annotation_revision?: number | null };
   history_only?: boolean;
   continuity_review_id?: string;
   open_verification?: boolean;

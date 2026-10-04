@@ -48,7 +48,7 @@ async def test_upgrade_039_to_current_preserves_every_old_table_and_discussion_s
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '039_material_ocr'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '042_outcome_graph'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '044_learning_paths'
     assert result['pre_upgrade_backup']['applied_migrations'][-1] == '039_material_ocr'
     assert result['pre_upgrade_backup']['integrity_check'] == 'ok'
     assert len(list((tmp_path / 'backups').glob('*.sqlite3'))) == 2
@@ -58,7 +58,10 @@ async def test_upgrade_039_to_current_preserves_every_old_table_and_discussion_s
         assert {table: after[table] for table in before} == before
         assert set(after) - set(before) == {'learning_model_config','learning_model_defaults','learning_outcome_kind',
             'learning_outcome_relation','learning_outcome_relation_history','learning_graph_run',
-            'learning_graph_candidate','learning_graph_private','learning_graph_source'}
+            'learning_graph_candidate','learning_graph_private','learning_graph_source',
+            'learning_plan_organization','learning_plan_child','learning_plan_private','learning_plan_private_tombstone',
+            'learning_plan_path_state','learning_path_draft','learning_path_private','learning_path_private_tombstone',
+            'learning_path_version','learning_path_decision','learning_path_checkpoint'}
         assert after['learning_model_config'] == []
         assert {name: connection.execute('SELECT sql FROM sqlite_master WHERE name=?', (name,)).fetchone()[0]
                 for name in definitions} == definitions
@@ -81,7 +84,7 @@ def test_upgrade_029_to_current_preserves_existing_learning_facts(tmp_path):
     result = upgrade_learning_database(path, tmp_path / 'backups', authorized=True)
     assert result['status'] == 'upgraded'
     assert result['preflight']['applied_migrations'][-1] == '029_discussion_reasoning'
-    assert result['post_upgrade_backup']['applied_migrations'][-1] == '042_outcome_graph'
+    assert result['post_upgrade_backup']['applied_migrations'][-1] == '044_learning_paths'
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute('SELECT * FROM learning_event ORDER BY position').fetchall() == before
         assert connection.execute('SELECT status FROM learning_session WHERE id=?', (context['session_id'],)).fetchone()[0] == 'running'

@@ -28,6 +28,9 @@
 .learning-plan-detail__route { margin-bottom: 0; font-size: 13px; color: var(--v6-muted, #65716e); }
 .learning-plan-detail__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 0; }
 .learning-plan-detail__heading h3 { margin: 0; font-size: 16px; }
+.learning-plan-views { display:flex;gap:20px;margin-top:18px;border-bottom:1px solid var(--v6-rule); }
+.learning-plan-views .text-button { padding:10px 2px;border-bottom:2px solid transparent;text-decoration:none; }
+.learning-plan-views .text-button[aria-pressed="true"] { border-bottom-color:var(--v6-navy);font-weight:600; }
 .learning-plan-task { border: 1px solid var(--v6-rule, #d8dedb); background: var(--v6-paper-hi, #fafbf9); margin-bottom: 14px; padding: 20px; }
 .learning-plan-task__title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .learning-plan-task__number { font-size: 12px; color: var(--v6-muted, #65716e); }

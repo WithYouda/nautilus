@@ -18,7 +18,10 @@ EXTERNAL_LIMITS = [
     '其他已打开的浏览器页面、浏览器自行保存的历史副本：不能远程确认清除，请关闭或刷新相关页面。',
     '操作系统快照、磁盘历史块及存储介质内部副本：应用无法验证清除；本结果针对受管理 SQLite 文件及其日志。',
 ]
-TABLES = {'artifact': ('learning_raw_artifact', 'artifact_id'),
+TABLES = {'plan_content': ('learning_plan_private', 'object_id'),
+          'path_content': ('learning_path_version','id'),
+          'module_content': ('learning_plan_private', 'object_id'),
+          'artifact': ('learning_raw_artifact', 'artifact_id'),
           'graph_relation': ('learning_outcome_relation', 'id'), 'graph_run': ('learning_graph_run','id'),
           'verification': ('learning_verification', 'id'), 'completion': ('learning_completion', 'id'),
           'practice': ('learning_practice', 'id'),
@@ -85,7 +88,9 @@ class ManagedPurge:
             raise DomainError('not_found', 404)
         owner = self.learning.principal(identity).owner_id
         table, key = TABLES[kind]
-        if not self.db.fetchone(f'SELECT 1 FROM {table} WHERE owner_id=? AND {key}=?', (owner, object_id)):
+        suffix = ' AND kind=?' if kind in {'plan_content','module_content'} else ''
+        params = (owner,object_id,kind.split('_')[0]) if suffix else (owner,object_id)
+        if not self.db.fetchone(f'SELECT 1 FROM {table} WHERE owner_id=? AND {key}=?' + suffix, params):
             raise DomainError('not_found', 404)
         return owner
 

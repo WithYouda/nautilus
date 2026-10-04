@@ -140,6 +140,8 @@ def test_learning_database_is_independent_from_legacy_database(client):
         "040_model_control",
         "041_reasoning_control",
         "042_outcome_graph",
+        "043_plan_organization",
+        "044_learning_paths",
     ]
 
 

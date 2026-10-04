@@ -39,6 +39,13 @@ from .events import (
 )
 
 PROJECTION_TABLES = (
+    'learning_path_checkpoint',
+    'learning_path_decision',
+    'learning_path_version',
+    'learning_path_draft',
+    'learning_plan_path_state',
+    "learning_plan_child",
+    "learning_plan_organization",
     "learning_graph_candidate",
     "learning_graph_run",
     "learning_outcome_relation_history",
@@ -145,10 +152,18 @@ class LearningCore:
         return result
 
     def _dispatch(self, connection, principal, command, command_id, key, now):
+        from .path_commands import PathCommand
+        if isinstance(command, PathCommand):
+            from .learning_paths import dispatch_path
+            return dispatch_path(self, connection, principal, command, command_id, key, now)
         from .graph_commands import GraphCommand
         if isinstance(command, GraphCommand):
             from .outcome_graph import dispatch_graph
             return dispatch_graph(connection, principal, command, command_id, key, now)
+        from .organization_commands import OrganizationCommand
+        if isinstance(command, OrganizationCommand):
+            from .plan_organization import dispatch_organization
+            return dispatch_organization(self, connection, principal, command, command_id, key, now)
         repository = LearningRepository(self.database, principal)
         object_id = str(uuid4())
         payload = {"id": object_id, **command.model_dump(exclude={"expected_version"})}
@@ -456,6 +471,15 @@ class LearningCore:
                 "time_budget_minutes": command.time_budget_minutes,
             }, now=now,
         )
+        from .plan_organization import revision, append_task
+        private_plan_header = bool(existing_plan and revision(connection, principal.owner_id, existing_plan["id"])
+            and connection.execute("SELECT 1 FROM learning_plan_private WHERE owner_id=? AND kind='plan' AND object_id=?",
+                                   (principal.owner_id, existing_plan["id"])).fetchone())
+        # Legacy step projection uses plan.id only, while requiring a nonempty
+        # header. D2 private names must never be copied into this immutable event.
+        plan_header = {"title":"计划", "description":""} if private_plan_header else {
+            "title":existing_plan["title"] if existing_plan else command.plan_title,
+            "description":existing_plan["description"] if existing_plan else command.plan_description}
         setup_id = str(uuid4())
         goal_id = existing_goal["id"] if existing_goal else str(uuid4())
         plan_id = existing_plan["id"] if existing_plan else str(uuid4())
@@ -471,7 +495,7 @@ class LearningCore:
                     "title": existing_goal["title"] if existing_goal else command.goal_title,
                     "description": existing_goal["description"] if existing_goal else command.goal_description,
                 },
-                "plan": {"id": plan_id, "title": existing_plan["title"] if existing_plan else command.plan_title, "description": existing_plan["description"] if existing_plan else command.plan_description},
+                "plan": {"id": plan_id, **plan_header},
                 "action_link": {"action_id": action_id, "plan_id": plan_id, "module_id": None},
                 "setup": {
                     "original_intent": command.original_intent,
@@ -482,6 +506,8 @@ class LearningCore:
                 },
             }, now=now,
         )
+        if revision(connection, principal.owner_id, plan_id):
+            append_task(connection, principal, command_id, key, now, plan_id, action_id, delegation_id, outcome_id, existing_link=True)
         return {
             "id": setup_id,
             "setup_id": setup_id,
