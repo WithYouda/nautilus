@@ -12,6 +12,8 @@ import FactWorkspace from "./FactWorkspace";
 import LearningPlans from "./LearningPlans";
 import LearningRecords from "./LearningRecords";
 import { DelayedHomePanel } from "./DelayedFollowUp";
+import { CoachSourceBar } from './BackgroundCoach';
+import { coachHref } from './background-coach-api';
 
 type WorkspaceView = "home" | "plans" | "records";
 type AiRoomEntry = { scope: AiContextScope; targetId: string | null; initialDraft?: string; learningBrief?: LearningRoomBrief };
@@ -79,6 +81,19 @@ export default function Workspace({ health, identity, onLogout }: {
   const v6LayoutRef = useRef(v6Layout);
   useEffect(() => { v6LayoutRef.current = v6Layout; }, [v6Layout]);
   useEffect(() => { const openSearch = () => { setSettingsSection('search'); setSettingsOpen(true); }; window.addEventListener("nautilus:open-search-settings", openSearch); return () => window.removeEventListener("nautilus:open-search-settings", openSearch); }, []);
+  useEffect(() => { const openCoach = () => { setSettingsSection('coach'); setSettingsOpen(true); }; window.addEventListener('nautilus:open-coach-settings', openCoach); return () => window.removeEventListener('nautilus:open-coach-settings', openCoach); }, []);
+  useEffect(() => {
+    const navigate = (event: Event) => {
+      const detail = (event as CustomEvent<{ href?: string }>).detail;
+      const href = coachHref(detail?.href);
+      if (!href) return;
+      closeStoredRoom();
+      window.history.pushState({}, '', href);
+      setView(restoredWorkspaceView()); setMode('manage'); setCreation(null); setPageKey(key => key + 1);
+    };
+    window.addEventListener('nautilus:coach-navigate', navigate);
+    return () => window.removeEventListener('nautilus:coach-navigate', navigate);
+  }, []);
   useEffect(() => { getAiProvider().then(result => setAiProvider(result.provider)).catch(reason => setError(reason.message)); }, []);
   useEffect(() => {
     const pop = () => { closeStoredRoom(); setView(restoredWorkspaceView()); setMode("manage"); setCreation(null); setPageKey(key => key + 1); };
@@ -193,6 +208,7 @@ export default function Workspace({ health, identity, onLogout }: {
         </div>
       </header>
       {error && <div className="workspace-alert" role="alert">{error}</div>}
+      {mode === 'manage' && <CoachSourceBar key={`coach-source-${pageKey}`} />}
       {mode === "ai" ? <AiLearningRoom task={null} contextScope={aiEntry.scope} targetId={aiEntry.targetId} initialDraft={aiEntry.initialDraft} learningBrief={aiEntry.learningBrief} provider={aiProvider} onBack={closeAiLearning} onProviderOpen={() => setProviderDialogOpen(true)} />
         : view === "home" ? <><DelayedHomePanel key={`delayed-${pageKey}`} /><FactWorkspace key={pageKey} creation={creation} onOpenPlans={id => chooseView("plans", id ? { plan: id } : {})} onOpenRecord={openRecord} onOpenLearningRoom={openRoom} /></>
         : view === "plans" ? <LearningPlans key={pageKey} onCreate={create} onOpenRecord={openRecord} onLearning={brief => openRoom("", brief)} />

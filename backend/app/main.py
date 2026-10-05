@@ -18,6 +18,8 @@ from .ai_runtime import AiRunManager
 from .plan_organization import PlanOrganization
 from .learning_paths import LearningPaths
 from .commitments import Commitments
+from .background_coach import BackgroundCoach
+from .routers import background_coach
 from .routers import commitments
 from .routers import learning_paths
 from .routers import plan_organization
@@ -156,6 +158,9 @@ def create_app(
         commitments_service=Commitments(learning_service,conversation_service,learning_paths_service,
             transport=provider_transport,provider_slots=ai_run_manager._provider_slots)
         commitments_service.recover()
+        coach_service=BackgroundCoach(learning_service,conversation_service,transport=provider_transport,provider_slots=ai_run_manager._provider_slots)
+        coach_service.recover()
+        app.state.background_coach=coach_service
         app.state.commitments=commitments_service
         app.state.outcome_graph = graph_service
         model_discovery = ModelDiscoveryService(transport=provider_transport)
@@ -212,9 +217,11 @@ def create_app(
         logger.info("Nautilus access token generated for this process.")
         logger.info("API access: http://%s:%s", wsl_ip(), app_settings.port)
         try:
+            coach_service.start_monitor()
             yield
         finally:
             outbound_approvals.close()
+            await coach_service.shutdown()
             await commitments_service.shutdown()
             await graph_service.shutdown()
             await discussion_service.shutdown()
@@ -273,6 +280,7 @@ def create_app(
     app.include_router(plans.router)
     app.include_router(layouts.router)
     app.include_router(learning.router)
+    app.include_router(background_coach.router)
     app.include_router(outcome_graph.router)
     app.include_router(plan_organization.router)
     app.include_router(learning_paths.router)

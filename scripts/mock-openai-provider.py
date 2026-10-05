@@ -31,7 +31,10 @@ MATH_TEXT = (
 
 
 def teaching_chunks(body: list[str], proposal: dict[str, Any], context: dict[str, Any]) -> list[str]:
+    assignment = proposal.get('assignment_signal')
     proposal = {key: proposal.get(key) for key in ('step', 'attempt', 'mode', 'help', 'practice', 'project', 'adaptation', 'learning')}
+    if assignment is not None:
+        proposal['assignment_signal'] = assignment
     proposal['adaptation'] = context.get('_mock_adaptation', proposal['adaptation'])
     if context.get('output_format') == 'json':
         chunks = ['{"reply":"', *(json.dumps(piece, ensure_ascii=False)[1:-1] for piece in body)]
@@ -193,6 +196,29 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
+        coach_prompt = any(message.get('role') == 'system' and '为Nautilus用户作一次后台学习复盘' in str(message.get('content', ''))
+                          for message in payload.get('messages', []))
+        if coach_prompt:
+            STATE.requested('coach:' + model)
+            if model == 'mock-error':
+                self._json(401, {'error': {'message': 'Synthetic coach provider rejection'}})
+                return
+            if model == 'mock-slow':
+                time.sleep(3)
+            inputs = json.loads(payload['messages'][-1]['content'])
+            candidates = []
+            seen = set()
+            for item in sorted(inputs.get('targets', []),key=lambda t:t['kind']=='evidence_review' and t.get('object_id') is None):
+                if item['kind'] in seen:
+                    continue
+                seen.add(item['kind'])
+                candidates.append(dict(title='合成教练建议：'+item['label'], explanation='根据已有结构记录，先核对这一项；正式变化仍需本人确认。',
+                    unknowns=['真实投入仍需本人反馈。', '当前记录不证明稳定掌握。'], source_refs=inputs.get('refs', [])[:1],
+                    target={key:item.get(key) for key in ('kind','plan_id','action_id','delegation_id','object_id')},
+                    access_request={'purpose':'核对本任务产出原文，判断这条合成建议缺少哪些实际依据。','alternative':'可以由本人补充摘要，或在本任务核对。'} if item['kind']=='permission_review' else None))
+            content = json.dumps({'candidates': candidates[:8]}, ensure_ascii=False)
+            self._json(200, {'choices': [{'message': {'content': content}, 'finish_reason': 'stop'}]})
+            return
         commitment_prompt = any(message.get('role') == 'system' and '为Nautilus用户提出近期安排草案' in str(message.get('content', ''))
                                 for message in payload.get('messages', []))
         if commitment_prompt:
@@ -591,6 +617,10 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     attempt = None
                     step = None if practice_context['before'].get('step') else point
                 practice_reply = (body, {'step': step, 'attempt': attempt, 'mode': None, 'help': None, 'practice': None})
+            if '合成教练即时工作' in c1_request and practice_context and practice_context.get('output_format') == 'json':
+                practice_reply = ('可以把这项工作单独安排，原任务和学习位置保留。',
+                    {'step': None, 'attempt': None, 'mode': None, 'help': None, 'practice': None,
+                     'assignment_signal': {'kind': 'separate_work_requested', 'quote': '合成教练即时工作'}})
             if practice_reply:
                 body, proposal = practice_reply
                 chunks = ([body] if '[C2慢流]' not in c1_request else ['正在分析新的情境。', *SLOW_CHUNKS, body])

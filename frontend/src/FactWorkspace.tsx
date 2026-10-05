@@ -57,6 +57,7 @@ import {
 import ReturnReviewCard from "./ReturnReviewCard";
 import LearningPageHeader from "./LearningPageHeader";
 import PurgeStatus from "./PurgeStatus";
+import BackgroundCoach from './BackgroundCoach';
 
 type FactOperation =
   | "action"
@@ -177,7 +178,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(() => { const params = new URLSearchParams(window.location.search); return params.get('permission_action') ?? params.get('evidence_action'); });
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
   const [selectedDelegationId, setSelectedDelegationId] = useState<string | null>(null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
@@ -320,6 +321,9 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
 
   useEffect(() => {
     void loadAgentRequests();
+    const refresh = () => { void loadAgentRequests(); };
+    window.addEventListener('nautilus:coach-permission-changed', refresh);
+    return () => window.removeEventListener('nautilus:coach-permission-changed', refresh);
   }, [loadAgentRequests]);
 
   const loadAgentContext = useCallback(async (targetId?: string) => {
@@ -393,6 +397,25 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
     if (!state) return null;
     return selectedActionId ? state.actions.find((action) => action.id === selectedActionId) ?? null : state.actions[0] ?? null;
   }, [state, selectedActionId]);
+  const permissionTarget = new URLSearchParams(window.location.search).get('permission_action');
+  const coachPermissionEntry = Boolean(permissionTarget && new URLSearchParams(window.location.search).get('coach_candidate'));
+  const claimTarget = new URLSearchParams(window.location.search).get('review_claim');
+  const revisitTarget = new URLSearchParams(window.location.search).get('review_revisit');
+  const evidenceEntry = Boolean(claimTarget || revisitTarget);
+  useEffect(() => {
+    if (!state || !evidenceEntry) return;
+    const claim = state.evidence_claims.find(item => item.id === claimTarget), revisit = state.revisit_queue.find(item => item.id === revisitTarget);
+    const boundClaim = claim ?? state.evidence_claims.find(item => item.id === revisit?.claim_id);
+    if (boundClaim) setSelectedArtifactId(boundClaim.artifact_id);
+    const target = boundClaim ? document.getElementById(`coach-claim-${boundClaim.id}`) : revisit ? document.getElementById(`coach-revisit-${revisit.id}`) : document.getElementById('coach-evidence');
+    target?.scrollIntoView({ block: 'center' }); target?.focus({ preventScroll: true });
+  }, [state, claimTarget, revisitTarget, selectedArtifactId]);
+  useEffect(() => {
+    if (!state || !permissionTarget) return;
+    const section = document.getElementById(coachPermissionEntry ? 'coach-source' : 'coach-permissions');
+    section?.scrollIntoView({ block: 'start' });
+    section?.focus({ preventScroll: true });
+  }, [state, permissionTarget]);
 
   const selectedOutcome = useMemo<LearningOutcome | null>(() => {
     if (!state) return null;
@@ -1046,6 +1069,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
         {returnCard && !newSetup && <button className="button button--accent" type="button" onClick={() => beginSetup()}>创建</button>}
         {newSetup && <button className="button button--quiet" type="button" disabled={busy} onClick={() => { setNewSetup(false); setSetupPlanId(undefined); setSetupDraft(null); setSetupReviewId(undefined); setNotice(''); }}>返回首页</button>}
       </LearningPageHeader>
+      {!newSetup && <BackgroundCoach />}
 
       {error && <div className="workspace-alert" role="alert">{error}</div>}
       {notice && <div className="fact-notice" role="status">{notice}</div>}
@@ -1194,7 +1218,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
           )}
 
           {!setupDraft && (
-          <details className="advanced-facts">
+          <details className="advanced-facts" open={permissionTarget || evidenceEntry ? true : undefined}>
             <summary>高级：记录与复核工具</summary>
             <p className="advanced-facts__intro">这些工具用于查看事实、产出和证据状态，不是开始学习的必填步骤。</p>
             <button className="button button--quiet" type="button" disabled={busy || loading} onClick={() => void loadState()}>刷新状态</button>
@@ -1537,11 +1561,12 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
               </form>
             </section>
 
-            <section className="fact-card" aria-label="已保存产出和更正">
+            <section className="fact-card" id="coach-evidence" tabIndex={-1} aria-label="已保存产出和更正">
               <div className="fact-card__header">
                 <p className="eyebrow">STEP 05</p>
                 <h2>已保存产出</h2>
               </div>
+              {evidenceEntry && !state.evidence_claims.some(item => item.id === claimTarget) && !state.revisit_queue.some(item => item.id === revisitTarget) && <p role="alert">建议指向的依据或回访当前不可查看。请核对原复盘的来源。</p>}
               <div className="fact-batch-actions">
                 <button
                   className="button button--accent button--compact"
@@ -1688,7 +1713,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                   {state.evidence_claims
                     .filter((claim) => claim.artifact_id === selectedArtifact.id)
                     .map((claim) => (
-                      <article className="fact-claim" key={claim.id}>
+                      <article className={`fact-claim${claim.id === claimTarget ? ' is-coach-evidence' : ''}`} key={claim.id} id={`coach-claim-${claim.id}`} tabIndex={claim.id === claimTarget ? -1 : undefined}>
                         <header>
                           <strong>{claim.dimension_id} · {claim.stance}</strong>
                           <span>{claim.status} · {claim.source_trusted ? claim.source : "来源待核实"}</span>
@@ -1931,7 +1956,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
               ) : (
                 <ul className="fact-revisit-list">
                   {state.revisit_queue.map((item) => (
-                    <li key={item.id}>
+                    <li key={item.id} id={`coach-revisit-${item.id}`} tabIndex={item.id === revisitTarget ? -1 : undefined} className={item.id === revisitTarget ? 'is-coach-evidence' : undefined}>
                       <div>
                         <strong>{item.source_kind}</strong>
                         <span>{item.dimension_id ?? "维度未指定"}</span>
@@ -1966,13 +1991,14 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
               </button>
             </section>
 
-            <section className="fact-card fact-card--agent" aria-label="Agent 权限">
+            <section className="fact-card fact-card--agent" id="coach-permissions" tabIndex={-1} aria-label="Agent 权限">
               <div className="fact-card__header">
                 <p className="eyebrow">PERMISSION</p>
                 <h2>Agent 权限</h2>
               </div>
               <p>全局 Agent 默认只读取最小摘要、状态和证据引用；批准只扩大本次读取范围，不扩大写入权限。拒绝后仍可继续学习和保存产出，Agent 只能基于已授权摘要继续。</p>
-              <div>
+              {permissionTarget && !selectedAction && <p role="alert">建议指向的任务当前不可查看，请核对原复盘依据。</p>}
+              {coachPermissionEntry ? <p><a href="#coach-source">在上方教练建议来源中核对并处理本次读取申请</a></p> : <div>
                 <label className="fact-field">
                   <span>读取粒度</span>
                   <select
@@ -1992,7 +2018,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                 >
                   发起 Agent 权限申请
                 </button>
-              </div>
+              </div>}
               {agentContext && (
                 <div className="fact-agent__context">
                   <strong>

@@ -9,8 +9,9 @@ import ObsidianSettings from './ObsidianSettings';
 import ImageModelSettings from './ImageModelSettings';
 import TeachingRecordSettings from './TeachingRecordSettings';
 import AdaptiveLearningSettings from './AdaptiveLearningSettings';
+import BackgroundCoachSettings from './BackgroundCoachSettings';
 
-export type SettingsSection = 'general' | 'search' | 'provider';
+export type SettingsSection = 'general' | 'search' | 'provider' | 'coach';
 const initial: UserPreferences = { teaching_mode: 'stepwise', conflict_policy: 'ask', search: { mode: 'off' } };
 
 export default function Settings({ open, section, provider, onClose, onOpenSearchSettings, onOpenProviderSettings }: {
@@ -32,6 +33,7 @@ export default function Settings({ open, section, provider, onClose, onOpenSearc
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [open]);
+  useEffect(() => { if (open && loaded && section === 'coach') document.getElementById('background-coach-settings')?.scrollIntoView({ block: 'start' }); }, [open, loaded, section]);
   if (!open) return null;
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   const close = () => { if (!dirty || window.confirm('有未保存的设置，确定放弃修改吗？')) onClose(); };
@@ -58,6 +60,7 @@ export default function Settings({ open, section, provider, onClose, onOpenSearc
             <AdaptiveLearningSettings />
             <TeachingRecordSettings provider={provider} />
           </section>
+          <BackgroundCoachSettings />
           <section className={section === 'general' ? 'is-target' : ''}><h3>资料与回答</h3><p>新上传且读取成功的资料会成为当前对话可参考来源。遇到影响答案的实质冲突时，默认怎样处理？</p>
             <label className="field"><span>资料冲突默认方式</span><select value={draft.conflict_policy} onChange={event => setDraft(current => ({ ...current, conflict_policy: event.target.value as ConflictPolicy }))}>
               <option value="ask">询问我（推荐）</option><option value="balanced">由 AI 综合判断</option><option value="materials">以所选资料为准</option>

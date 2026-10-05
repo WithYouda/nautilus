@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { chooseReturnReview, getLearningRoom, getLearningState, getReturnReview, type LearningRoomBrief, type LearningState } from './api';
 import LearningPageHeader from './LearningPageHeader';
 import ScopedModelControl from './ModelControl';
@@ -6,6 +6,7 @@ import GoalClosure, { goalIsClosed, goalStatusLabel } from './GoalClosure';
 import LearningPlanOrganization, { PlanCreateDialog, PlanTaskDialog } from './LearningPlanOrganization';
 import LearningPaths from './LearningPaths';
 import LearningCommitments from './LearningCommitments';
+import BackgroundCoach from './BackgroundCoach';
 
 export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   onCreate: (planId?: string) => void; onOpenRecord: (delegationId: string) => void; onLearning: (brief: LearningRoomBrief) => void;
@@ -17,6 +18,7 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   const [reviewGoalId, setReviewGoalId] = useState<string | null>(null);
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [taskPlanId, setTaskPlanId] = useState<string | null>(null);
+  const coachEntryOpened = useRef(false);
   const [planView, setPlanView] = useState<'tasks'|'path'|'commitments'>(() => {const value=new URLSearchParams(window.location.search).get('plan_view');return value==='path'||value==='commitments'?value:'tasks';});
   useEffect(() => { getLearningState().then(setState).catch(reason => setError(reason.message)); }, []);
   const plans = state?.plans ?? [];
@@ -25,6 +27,17 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   const closedGoal = goal ? goalIsClosed(goal.status) : false;
   const taskIds = new Set(state?.action_links.filter(link => link.plan_id === selected?.id).map(link => link.action_id));
   const tasks = state?.actions.filter(action => taskIds.has(action.id) && !action.deleted && action.status !== 'cancelled').sort((a, b) => a.created_at.localeCompare(b.created_at)) ?? [];
+  const targetAction = new URLSearchParams(window.location.search).get('action');
+  useEffect(() => {
+    if (!state || !selected) return;
+    const params = new URLSearchParams(window.location.search);
+    if (!coachEntryOpened.current && params.get('new_task') === '1' && selected.id === params.get('plan') && selected.status === 'active' && !closedGoal) { coachEntryOpened.current = true; setTaskPlanId(selected.id); }
+    if (!targetAction || planView !== 'tasks') return;
+    let completed = false;
+    const locate = () => { if (completed) return; const target = Array.from(document.querySelectorAll<HTMLElement>('[data-task-id]')).find(item => item.dataset.taskId === targetAction); if (target) { completed = true; target.scrollIntoView({ block: 'center' }); const card = target.querySelector<HTMLElement>('article'); if (card) { card.tabIndex = -1; card.focus({ preventScroll: true }); } } };
+    const observer = new MutationObserver(locate); observer.observe(document.body, { childList: true, subtree: true }); locate();
+    return () => observer.disconnect();
+  }, [state, selected?.id, planView, targetAction]);
   async function refresh() { setState(await getLearningState()); }
   async function continueTask(delegationId: string) {
     if (busy || closedGoal) return;
@@ -41,7 +54,7 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
   }
   function select(id: string) {
     setPlanId(id);
-    const url = new URL(window.location.href); url.searchParams.set('plan', id); url.searchParams.delete('path_version'); url.searchParams.delete('path_node'); window.history.replaceState(null, '', url);
+    const url = new URL(window.location.href); if (url.searchParams.get('plan') !== id) for (const name of ['coach_candidate', 'action', 'new_task']) url.searchParams.delete(name); url.searchParams.set('plan', id); url.searchParams.delete('path_version'); url.searchParams.delete('path_node'); window.history.replaceState(null, '', url); window.dispatchEvent(new Event('nautilus:coach-location-changed'));
   }
   function changePlanView(next:'tasks'|'path'|'commitments') {
     setPlanView(next);
@@ -53,7 +66,7 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
     const delegations = state.delegations.filter(item => item.action_id === task.id);
     const running=state.sessions.some(item=>item.action_id===task.id&&item.status==='running');
     const hasSession=state.sessions.some(item=>item.action_id===task.id);
-    return <article className="learning-plan-task" key={task.id}><div className="learning-plan-task__title"><h4>{task.title}</h4><span className="learning-state-label">{task.status === 'completed' ? '已完成' : closedGoal ? '未完成' : running ? '正在学习' : hasSession ? '待继续' : '已保存'}</span></div>
+    return <article className={`learning-plan-task${targetAction === task.id ? ' is-coach-target' : ''}`} key={task.id}><div className="learning-plan-task__title"><h4>{task.title}</h4><span className="learning-state-label">{task.status === 'completed' ? '已完成' : closedGoal ? '未完成' : running ? '正在学习' : hasSession ? '待继续' : '已保存'}</span></div>
       {delegations.map(delegation => <div className="learning-plan-task__body" key={delegation.id}><p>{delegation.behavior}</p><div className="learning-action-row">{!closedGoal && task.status === 'open' && ['ready', 'active'].includes(delegation.status) && <button className="button button--quiet" disabled={busy} onClick={() => void continueTask(delegation.id)}>{delegation.status === 'ready' ? '开始学习' : '继续学习'}</button>}<button className="text-button" onClick={() => onOpenRecord(delegation.id)}>查看记录</button></div></div>)}
       <ScopedModelControl kind="task" id={task.id} />
     </article>;
@@ -75,9 +88,11 @@ export default function LearningPlans({ onCreate, onOpenRecord, onLearning }: {
       {selected ? <section className="learning-plan-detail" aria-label="计划详情">
         <header>{goal && <p className="eyebrow">学习目标</p>}<h2>{goal?.title || selected.title}</h2>{goal && <span className="learning-state-label">{goalStatusLabel(goal.status)}</span>}{goal?.description && <p>{goal.description}</p>}{goal && <p className="learning-plan-detail__route">{selected.title}</p>}{!goal && selected.description && <p>{selected.description}</p>}{goal && <button className="text-button" onClick={() => setReviewGoalId(goal.id)}>调整目标状态</button>}</header>
         <ScopedModelControl key={selected.id} kind="plan" id={selected.id} />
+        <BackgroundCoach key={`coach-${selected.id}`} scope="plan" planId={selected.id} />
         <nav className="learning-plan-views" aria-label="计划视图"><button className="text-button" aria-pressed={planView==='tasks'} onClick={()=>changePlanView('tasks')}>任务</button><button className="text-button" aria-pressed={planView==='path'} onClick={()=>changePlanView('path')}>路径图</button><button className="text-button" aria-pressed={planView==='commitments'} onClick={()=>changePlanView('commitments')}>近期安排</button></nav>
         {planView==='commitments'?<LearningCommitments key={selected.id} planId={selected.id} state={state!} onLearning={onLearning} onOpenRecord={onOpenRecord} onRefresh={refresh} closed={closedGoal||selected.status!=='active'} />:planView === 'path' ? <LearningPaths key={selected.id} planId={selected.id} state={state!} onLearning={onLearning} onOpenRecord={onOpenRecord} onRefresh={refresh} closed={closedGoal || selected.status !== 'active'} onPlanCreated={id=>{select(id);void refresh().catch(reason=>setError(reason.message));}} /> : <>
         <div className="learning-plan-detail__heading"><h3>学习任务</h3>{selected.status === 'active' && !closedGoal && <button className="button button--accent" onClick={() => setTaskPlanId(selected.id)}>添加任务</button>}</div>
+        {targetAction && !tasks.some(item => item.id === targetAction) && <p role="alert">建议指向的任务当前不可查看。请核对原复盘的依据。</p>}
         {closedGoal && <p>目标{goalStatusLabel(goal!.status)}。已有任务和学习记录仍可查看；重新开启目标后可继续安排学习。</p>}
         <LearningPlanOrganization key={`${selected.id}:${tasks.map(task => task.id).join(',')}`} planId={selected.id} renderTask={renderTask} onRefresh={refresh} closed={closedGoal || selected.status !== 'active'} />
         {!tasks.length && <p>{closedGoal ? '这个目标尚无任务。' : '还没有任务，添加任务后选择从哪里开始。'}</p>}

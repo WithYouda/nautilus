@@ -128,7 +128,7 @@ def _recount(path, before):
     guide['stuck_count'] = count
 
 
-def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, help_kind=None, action=None, default_mode='stepwise', output=None, adaptive_profile=None):
+def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, help_kind=None, action=None, default_mode='stepwise', output=None, adaptive_profile=None, coach_context=None):
     """Path has already passed the caller's material/ownership boundary."""
     before = checkpoint()
     if path and path[-1].get('teaching'):
@@ -232,6 +232,7 @@ def freeze(path, *, answer_id, message_id, kind, scope_id, requested_mode=None, 
             'choice_context': choices[-20:],
             'output': copy.deepcopy(output if output is not None else {'format': 'legacy', 'version': 1}),
             'answer_id': answer_id, 'message_id': message_id,
+            'coach_context': copy.deepcopy(coach_context) if (output or {}).get('format')=='json' else None,
             'parent_answer_id': path[-1]['id'] if path else None,
             'origin': {'kind': kind, 'scope_id': scope_id, 'answer_id': answer_id, 'message_id': message_id},
             'attempt_context': observations, 'requested_mode': requested_mode, 'help_kind': help_kind, 'default_mode': default_mode,
@@ -252,6 +253,9 @@ def add_prompt(messages, frozen, attempt_texts=None, answer_texts=None):
     instructions = SYSTEM_PROMPT
     if output == 'json':
         instructions = instructions.replace(LEGACY_OUTPUT_RULE, JSON_OUTPUT_RULE).replace('JSON 格式固定为', 'teaching 字段格式固定为')
+        if frozen.get('coach_context'):
+            from .coach_signals import PROMPT
+            instructions += '\n'+PROMPT
     messages[0]['content'] += '\n' + instructions + '\n' + SOCRATIC_PROMPT + '\n' + FEYNMAN_PROMPT + '\n' + PRACTICE_FIRST_PROMPT + '\n' + PROJECT_PROMPT + '\n' + ADAPTIVE_PROMPT + '\n' + LEARNING_OBSERVATIONS_PROMPT
     if frozen.get('action') == 'practice':
         messages[0]['content'] += '\n' + PRACTICE_PROMPT
@@ -874,6 +878,8 @@ def _adaptation(frozen, proposal, after, effective_mode, mode_request, help_kind
 
 def evaluate(frozen, proposal, *, body, user_text, at):
     """Validate before adopting any model change; return a private reason enum."""
+    if isinstance(proposal,dict) and 'assignment_signal' in proposal:
+        proposal={key:value for key,value in proposal.items() if key!='assignment_signal'}
     if ((frozen or {}).get('output') or {}).get('format') == 'plain':
         return None, 'output_unavailable'
     if not body.strip():
@@ -1035,12 +1041,15 @@ def adopt(frozen, proposal, *, body, user_text, at, not_applied_reason=None, rep
                 observation['feedback']['end'] += reply_start
             result['reply_start'] = reply_start
         frozen['result'] = result
+        from .coach_signals import adopt as adopt_signal
+        adopt_signal(frozen,proposal,user_text,result)
         frozen.pop('not_applied_reason', None)
     else:
         frozen['not_applied_reason'] = not_applied_reason or reason
 
 
 def public(snapshot, status):
+    from .coach_signals import public as public_signal
     frozen = snapshot.get('teaching')
     if not frozen or frozen.get('protocol') not in READABLE_PROTOCOLS or (snapshot.get('source_scope') or {}).get('purged'):
         return None
@@ -1096,7 +1105,8 @@ def public(snapshot, status):
             'project_observation': visible_observation('project_observation'),
             'learning_observations': learning_observations.public(snapshot, attempt) if result else [],
             'learning_used': copy.deepcopy(result.get('learning_used', [])) if result else [],
-            'adaptation': copy.deepcopy(result.get('adaptation')) if result else None}
+            'adaptation': copy.deepcopy(result.get('adaptation')) if result else None,
+            'assignment_signal': public_signal(frozen) if result else None}
 
 
 _UNSET = object()

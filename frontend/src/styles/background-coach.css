@@ -1,0 +1,42 @@
+.background-coach { min-width: 0; margin: 18px 0; padding: 16px 0; border-block: 1px solid var(--line); }
+.background-coach__heading, .background-coach__actions, .background-coach__run { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; }
+.background-coach__heading { justify-content: space-between; }
+.background-coach__heading h3 { font-size: 14px; margin: 0; font-weight: 600; }
+.background-coach p, .background-coach__source-bar p, .background-coach__immediate p { font-size: 13px; line-height: 1.65; margin: 8px 0; overflow-wrap: anywhere; }
+.background-coach__card { margin-top: 12px; padding: 14px 16px; min-width: 0; border-inline-start: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 4%, var(--paper)); }
+.background-coach__card h4 { font-size: 15px; line-height: 1.55; margin: 0 0 6px; overflow-wrap: anywhere; }
+.background-coach__card small, .background-coach__empty, .background-coach__notice { color: var(--muted); }
+.background-coach__card .background-coach__actions { margin-top: 12px; }
+.background-coach__count { color: var(--muted); font-size: 12px !important; }
+.background-coach__expand { margin-top: 12px; }
+.background-coach details { margin-top: 12px; }
+.background-coach summary, .background-coach-dialog summary, .background-coach-settings summary { font-size: 12px; cursor: pointer; color: var(--muted); }
+.background-coach ul { padding-inline-start: 20px; margin: 10px 0; font-size: 12px; line-height: 1.8; }
+.background-coach__more > p { font-size: 12px; color: var(--muted); }
+.background-coach__signals article { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.background-coach__signals article > a { font-size: 12px; margin-inline-end: 16px; }
+.background-coach a, .background-coach__source-bar a, .background-coach__immediate a { font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
+.background-coach__source-bar { min-width: 0; margin: 16px 28px; padding: 10px 14px; border-inline-start: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 4%, var(--paper)); }
+.background-coach__source-bar p + p { color: var(--muted); font-size: 12px; }
+.background-coach__permission { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.background-coach__immediate { margin: 12px 0; padding: 8px 12px; border-inline-start: 2px solid var(--accent); }
+.background-coach-settings__switch { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.background-coach-settings__switch input { width: auto !important; }
+.background-coach-settings__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; margin: 16px 0; }
+.background-coach-settings__grid .field { min-width: 0; margin: 0; }
+.background-coach-settings__grid input { min-width: 0; max-width: 100%; width: 100%; box-sizing: border-box; }
+.attachment-dialog.background-coach-dialog { width: min(720px, calc(100vw - 32px)); padding: 0; max-height: calc(100dvh - 32px); overflow: auto; }
+.background-coach-dialog > header { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.background-coach-dialog > header h2 { font-size: 18px; }
+.background-coach-dialog__body { padding: 16px 20px; min-width: 0; }
+.background-coach-dialog__body > p, .background-coach-dialog__body details { font-size: 13px; line-height: 1.7; }
+.background-coach-dialog pre { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.learning-plan-task.is-coach-target { outline: 2px solid var(--accent); outline-offset: 4px; }
+.is-coach-evidence { outline: 2px solid var(--accent); outline-offset: 4px; }
+@media (max-width: 600px) {
+  .background-coach__source-bar { margin-inline: 16px; }
+  .background-coach__card { padding: 12px; }
+  .background-coach-settings__grid { grid-template-columns: minmax(0, 1fr); }
+  .attachment-dialog.background-coach-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
+  .background-coach-dialog > header, .background-coach-dialog__body { padding: 14px; }
+}

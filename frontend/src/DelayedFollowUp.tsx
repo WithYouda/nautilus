@@ -77,13 +77,13 @@ export function DelayedOutcomePanel({ outcomeId, refreshKey }: { outcomeId: stri
 
 export function DelayedHomePanel() {
   const [items, setItems] = useState<DelayedDetail[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(() => new URLSearchParams(window.location.search).get('follow_up'));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const generation = useRef(0);
   async function load() {
     const current = ++generation.current;
-    setLoading(true); setError(''); setItems([]); setSelected(null);
+    setLoading(true); setError(''); setItems([]); setSelected(new URLSearchParams(window.location.search).get('follow_up'));
     try { const value = await listHomeDelayed(); if (generation.current === current) setItems(value.items); }
     catch (reason) { if (generation.current === current) setError(errorText(reason)); }
     finally { if (generation.current === current) setLoading(false); }

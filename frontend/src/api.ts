@@ -1,6 +1,7 @@
 import type { SearchSelection } from "./SearchControls";
 import type { SearchTrace } from "./SearchResults";
 import type { GenerationTrace } from "./AssistantResponse";
+import type { CoachAssignmentSignal } from './background-coach-api';
 export type Health = {
   status: string;
   service: string;
@@ -510,6 +511,7 @@ export type LearningObservationCorrection = {
   note: string; excluded: boolean; request_key: string;
 };
 export type TeachingRecord = {
+  assignment_signal?: CoachAssignmentSignal | null;
   status: 'running' | 'applied' | 'not_updated' | 'unavailable';
   recording?: { available: boolean; reason: 'not_checked' | 'not_supported' | 'native_search_unverified' | null };
   before: TeachingCheckpoint;

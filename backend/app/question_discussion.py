@@ -20,6 +20,7 @@ from .source_runtime import material_guard, scope_key, public_scope, compatible_
 from .material_images import attach_material_images, check_image_sources, require_image_capability
 from .provider_network import ProviderDiagnostics
 from . import teaching_runtime as teaching
+from .coach_signals import context as coach_context
 
 
 class QuestionDiscussionService:
@@ -439,7 +440,8 @@ class QuestionDiscussionService:
                                        'teaching_mode': teaching_mode, 'teaching_action': teaching_action,
                                        'teaching': teaching.freeze([by_id[item] for item in history_path],
                                            answer_id=turn_id, message_id=turn_id, kind='discussion', scope_id=discussion_id,
-                                           requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output, adaptive_profile=adaptive_profile),
+                                           requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output, adaptive_profile=adaptive_profile,
+                                           coach_context=coach_context(c,owner,'discussion',discussion_id)),
                                        'attachment_version_ids': attached,
                                        **({'help_request': {'kind': help_request, 'at': utc_timestamp()}} if help_request else {})}), turn_id))
                 if self.current_state is not None:

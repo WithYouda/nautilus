@@ -11,6 +11,7 @@ from .learning_production import file_sha256, utc_timestamp, validate_learning_p
 from .purge_content import columns, erase
 from .purge_storage import backups, receipt_path, register_backup, storage_lock, write_json
 from .commitment_integrations import PURGE_TABLES
+from .coach_integrations import PURGE_TABLES as COACH_PURGE_TABLES
 
 
 EXTERNAL_LIMITS = [
@@ -28,6 +29,7 @@ TABLES = {'plan_content': ('learning_plan_private', 'object_id'),
           'practice': ('learning_practice', 'id'),
           'delayed': ('learning_delayed_follow_up', 'id')}
 TABLES.update(PURGE_TABLES)
+TABLES.update(COACH_PURGE_TABLES)
 
 
 def compact(connection):

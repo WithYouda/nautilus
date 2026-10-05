@@ -63,6 +63,7 @@ import useDismissibleLayer from "./useDismissibleLayer";
 import LearningVerification from "./LearningVerification";
 import LearningPosition from "./LearningPosition";
 import TeachingState, { conversationTeachingEntries } from './TeachingState';
+import { CoachImmediateSignal } from './BackgroundCoach';
 import LearningCompletion from "./LearningCompletion";
 
 const SESSION_KEY = "nautilus.ai.learning-room";
@@ -1109,7 +1110,7 @@ export default function AiLearningRoom({
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
   const teaching = <TeachingState
     key={conversationId ?? 'new'} kind="conversation" scopeId={conversationId ?? ''} pathKey={teachingPath}
-    entries={conversationTeachingEntries(visibleMessages)} standalone={!learningBrief}
+    entries={conversationTeachingEntries(visibleMessages)} standalone={!learningBrief} showImmediate={!learningBrief}
     defaultMode={sharedState.teachingDefault} selectedMode={pendingSubmissionRef.current ? pendingSubmissionRef.current.teachingMode ?? null : selectedTeachingMode} onModeChange={setSelectedTeachingMode}
     onAction={(action, label) => void submitMessage(label, true, undefined, undefined, undefined, action)}
     disabled={!entryReady || attachmentBusy || sharedState.blocked || branchBusy || Boolean(currentRun) || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
@@ -1258,7 +1259,7 @@ export default function AiLearningRoom({
       </header>
 
     <ModelControlNotice control={modelControl} onOpen={openModelConfig} />
-    {learningBrief && <><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} teaching={teaching} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
+    {learningBrief && <><CoachImmediateSignal signal={conversationTeachingEntries(visibleMessages).at(-1)?.teaching?.assignment_signal} /><LearningRoomBriefCard brief={learningBrief} conversationId={conversationId} visibleMessages={visibleMessages} teaching={teaching} chatBusy={Boolean(currentRun) || status === "submitting" || status === "streaming" || status === "reconnecting"} /><div className="return-room-actions">
         <button className="button button--quiet" disabled={branchBusy} onClick={async () => { try { const card = await getReturnReview(); if (card) await chooseReturnReview(card.id, "stop_for_now", `room-stop:${card.id}`); onBack(); } catch (reason) { setError(reason instanceof Error ? reason.message : "暂停未保存"); } }}>今天先停</button>
         {learningBrief.delegation_id && !learningBrief.history_only && <button className="button button--quiet" type="button" aria-expanded={completionOpen} onClick={() => setCompletionOpen(value => !value)}>记录本次完成</button>}
         {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}

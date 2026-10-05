@@ -1935,6 +1935,7 @@ class ConversationService:
                 # for source clearing, without copying older user content.
                 config_snapshot['source_history_message_ids'] = [item['id'] for item in teaching_path]
                 from .teaching_runtime import freeze as freeze_teaching
+                from .coach_signals import context as coach_context
                 teaching_output = self.teaching_output(identity_id, profile, config,
                     search=search_run.selection if search_run else None, scope=frozen)
                 if teaching_action and teaching_output['format'] == 'plain':
@@ -1942,7 +1943,8 @@ class ConversationService:
                 config_snapshot['teaching'] = freeze_teaching(
                     [item for item in teaching_path if item['role'] == 'assistant'],
                     answer_id=assistant_message_id, message_id=user_message_id,
-                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output, adaptive_profile=adaptive_profile)
+                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output, adaptive_profile=adaptive_profile,
+                    coach_context=coach_context(self.materials.db.connection,identity_id,'conversation',conversation_id) if self.materials else None)
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,

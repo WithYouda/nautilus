@@ -10,6 +10,8 @@ from ..learning_domain import DomainError, Principal
 PROJECTION_VERSION = 1
 SUPPORTED_EVENT_VERSIONS = frozenset({1})
 SUPPORTED_EVENT_TYPES = frozenset({
+    'coach.settings_saved','coach.signal_recorded','coach.signal_corrected','coach.run_claimed',
+    'coach.run_sent','coach.run_finished','coach.run_canceled','coach.run_purged','coach.candidate_decided',
     'commitment.draft_saved', 'commitment.confirmed', 'commitment.item_started', 'commitment.item_changed',
     'commitment.route_changed', 'commitment.availability_saved', 'commitment.content_purged',
     'commitment.run_started', 'commitment.run_finished', 'commitment.run_canceled', 'commitment.run_purged',
@@ -152,7 +154,10 @@ def apply_event(connection: sqlite3.Connection, event: dict) -> None:
     occurred_at = event["occurred_at"]
     event_type = event["event_type"]
 
-    if event_type.startswith(('commitment.','feedback.')):
+    if event_type.startswith('coach.'):
+        from .background_coach import apply
+        apply(connection,event,payload)
+    elif event_type.startswith(('commitment.','feedback.')):
         from .commitments import apply_commitment_event
         apply_commitment_event(connection,event,payload)
     elif event_type.startswith('path.'):

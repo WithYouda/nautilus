@@ -5,6 +5,7 @@ import {
   type TeachingAction, type TeachingMethod, type TeachingMode, type TeachingRecord, type TeachingSelection, type TeachingPracticeObservation, type LearningObservation,
 } from './api';
 import LearningObservations from './LearningObservations';
+import { CoachImmediateSignal } from './BackgroundCoach';
 import './TeachingState.css';
 
 type TeachingEntry = { id: string; teaching: TeachingRecord | null; userContent: string | null; answerContent: string | null; helpRecord: HelpRecord | null };
@@ -39,9 +40,9 @@ export function discussionTeachingEntries(turns: QuestionDiscussion['turns']): T
   }));
 }
 
-export default function TeachingState({ kind, scopeId, pathKey, entries, disabled, onUpdated, defaultMode, selectedMode, onModeChange, onAction, standalone = false }: {
+export default function TeachingState({ kind, scopeId, pathKey, entries, disabled, onUpdated, defaultMode, selectedMode, onModeChange, onAction, standalone = false, showImmediate = true }: {
   kind: 'conversation' | 'discussion'; scopeId: string; pathKey: string; entries: TeachingEntry[];
-  disabled: boolean; onUpdated: (answerId: string, teaching: TeachingRecord | null) => void; standalone?: boolean;
+  disabled: boolean; onUpdated: (answerId: string, teaching: TeachingRecord | null) => void; standalone?: boolean; showImmediate?: boolean;
   defaultMode: TeachingMethod; selectedMode: TeachingSelection | null; onModeChange: (mode: TeachingSelection) => void;
   onAction: (action: TeachingAction, content: string) => void;
 }) {
@@ -357,5 +358,5 @@ export default function TeachingState({ kind, scopeId, pathKey, entries, disable
     </details>}
     <LearningObservations entries={entries} identity={identity} disabled={disabled || needsRefresh} busyId={busyId} notice={notice} onCorrect={correctLearning} />
   </div>;
-  return standalone ? <section className="ai-room-brief teaching-arrangement" aria-label="本次学习安排"><details><summary>学习安排</summary>{body}</details></section> : body;
+  return <>{showImmediate && <CoachImmediateSignal signal={last?.status === 'applied' ? last.assignment_signal : null} />}{standalone ? <section className="ai-room-brief teaching-arrangement" aria-label="本次学习安排"><details><summary>学习安排</summary>{body}</details></section> : body}</>;
 }

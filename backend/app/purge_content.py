@@ -139,6 +139,9 @@ def _erase_delayed(connection, owner, follow_up_ids, now):
 
 
 def erase(connection, owner, kind, object_id, now, *, submission_ids=(), artifact_ids=()):
+    from .coach_integrations import erase_managed as erase_coach
+    if erase_coach(connection,owner,kind,object_id,now,submission_ids=submission_ids,artifact_ids=artifact_ids):
+        return
     from .commitment_integrations import erase_managed
     if erase_managed(connection,owner,kind,object_id,now,submission_ids=submission_ids,artifact_ids=artifact_ids):
         return
