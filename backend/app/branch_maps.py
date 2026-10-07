@@ -105,7 +105,7 @@ def conversation_map(service, owner, cid):
             nodes.append(dict(id=row['id'], title=conversation_title(c, row) if available else '对话已删除',
                 parent_id=parent['id'] if parent else None, source_id=origin.get('message_id') if excerpt else None,
                 source_excerpt=excerpt, available=available, created_at=row['created_at'],
-                merge_sources=[{**p, 'available': bool(by_id.get(p['id']) and not by_id[p['id']]['deleted_at'])} for p in merged]))
+                merge_sources=public_merge_sources(service.database, owner, merged, 'conversation')))
         return _family(cid, nodes)
 
 
@@ -126,7 +126,7 @@ def discussion_map(service, identity, did):
             nodes.append(dict(id=row['id'], title=discussion_title(c, row), parent_id=parent['id'] if parent else None,
                 source_id=row['branch_turn_id'] if excerpt else None, source_excerpt=excerpt,
                 available=not bool(row['purged_at']), created_at=row['created_at'],
-                merge_sources=[{**p, 'available': bool(by_id.get(p['id']) and not by_id[p['id']]['purged_at'])} for p in merged]))
+                merge_sources=public_merge_sources(service.db, owner, merged, 'discussion')))
         return _family(did, nodes)
 
 
@@ -140,3 +140,25 @@ def rename_discussion(service, identity, did, title):
             raise DomainError('artifact_not_eligible', 409)
         c.execute("UPDATE learning_question_discussion SET title=?,title_source='manual' WHERE id=?", (compact_title(title), did))
     return service.get(identity, did)
+
+
+def public_merge_sources(database, owner, parents, kind):
+    """Resolve live labels only; unavailable sources must not expose old titles."""
+    result = []
+    for parent in parents:
+        if kind == 'conversation':
+            row = database.fetchone("""SELECT c.*, m.status AS source_status,
+                json_extract(r.config_snapshot_json,'$.source_scope.purged') AS source_purged
+                FROM conversation c LEFT JOIN message m ON m.conversation_id=c.id AND m.id=?
+                LEFT JOIN ai_run r ON r.response_message_id=m.id
+                WHERE c.identity_id=? AND c.id=?""", (parent['source_id'], owner, parent['id']))
+            available = bool(row and not row['deleted_at'] and row['source_status'] == 'complete' and not row['source_purged'])
+            title = conversation_title(database.connection, row) if available else '来源已不可用'
+        else:
+            row = database.fetchone("""SELECT q.*, t.status AS source_status FROM learning_question_discussion q
+                LEFT JOIN learning_discussion_turn t ON t.discussion_id=q.id AND t.id=?
+                WHERE q.owner_id=? AND q.id=?""", (parent['source_id'], owner, parent['id']))
+            available = bool(row and not row['purged_at'] and row['source_status'] == 'succeeded')
+            title = discussion_title(database.connection, row) if available else '来源已不可用'
+        result.append(dict(id=parent['id'], source_id=parent['source_id'], title=title, available=available))
+    return result

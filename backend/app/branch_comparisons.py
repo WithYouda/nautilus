@@ -77,7 +77,7 @@ class BranchComparisons:
         return result
 
     def _validate_cards(self, raw, sources):
-        require(isinstance(raw, dict) and set(raw) == {'cards'} and isinstance(raw['cards'], list) and 1 <= len(raw['cards']) <= 24,
+        require(isinstance(raw, dict) and set(raw) == {'cards'} and isinstance(raw['cards'], list) and len(raw['cards']) <= 24,
                 '模型没有返回可用的观点卡片，请重新生成。', 422)
         texts = {('left' if index == 0 else 'right', item['id']): item['text'] for index, source in enumerate(sources) for item in source['messages']}
         cards = []
@@ -95,12 +95,20 @@ class BranchComparisons:
             cards.append(dict(id=str(uuid4()), **item))
         return cards
 
+    @staticmethod
+    def _empty(sources, reason):
+        return dict(preview_id=None, cards=[], empty_reason=reason, model_config=None,
+                    sources=[{k: source[k] for k in ('id', 'leaf_id', 'last_question')} for source in sources])
+
     async def preview(self, identity, kind, identifier, other_id):
         owner = identity['id']
         lock = self.locks.setdefault(owner, asyncio.Lock())
         require(not lock.locked(), '正在比较分支，请等待或取消当前比较。')
         async with lock:
             sources = self.sources(identity, kind, identifier, other_id)
+            comparable = [[(item['role'], item['text']) for item in source['messages']] for source in sources]
+            if comparable[0] == comparable[1]:
+                return self._empty(sources, '这两条对话当前选中的内容相同，没有新增内容可合并。可以换一条对话，或先继续讨论。')
             body = json.dumps(dict(left=sources[0]['messages'], right=sources[1]['messages']), ensure_ascii=False)
             require(len(body.encode()) <= 192 * 1024, '这两条路径的内容过长，请在分支中选择更早的回答后再比较。', 422)
             _, config, snapshot = self.chats.model_control.runtime(owner, kind, identifier)
@@ -109,7 +117,9 @@ class BranchComparisons:
                 '只返回JSON {"cards":[{"topic":"主题","relation":"same|different|complement|open",'
                 '"conclusion":"可由用户编辑采用的结论，明确哪些信息待核实",'
                 '"references":[{"side":"left或right","id":"所引用原消息的准确id","quote":"该消息text中逐字连续的短原文"}]}]}。'
-                '每张卡至少有一处来源，跨两边作出比较时引用两边；只返回有用的卡片，最多24张，不包含权限、模型配置或系统说明。')
+                '每张卡至少有一处来源，跨两边作出比较时引用两边；只返回有用的卡片，最多24张，不包含权限、模型配置或系统说明。'
+                '如果只有重复的共同历史、没有新增的实质讨论，或没有任何值得保留的内容，返回{"cards":[]}。'
+                '不得把无法比较、没有内容、请用户补充方向或对输入质量的评价写成结论卡片。')
             limit = snapshot['model']['capabilities'].get('max_output_tokens')
             maximum = min(8192, limit) if type(limit) is int and limit > 0 else 8192
             leaves = {source['id']: source['leaf_id'] for source in sources}
@@ -125,6 +135,8 @@ class BranchComparisons:
                 raise ComparisonError('模型没有返回可用的观点卡片，请重新生成。', 422) from None
             leaves = {source['id']: source['leaf_id'] for source in sources}
             require(digest(self.sources(identity, kind, identifier, other_id, leaves)) == digest(sources), '比较期间来源发生变化，请重新生成。')
+            if not cards:
+                return self._empty(sources, '这两条对话暂时没有可整理的新内容。可以换一条对话，或先继续讨论。')
             preview_id = str(uuid4())
             drafts = self.drafts.setdefault(owner, {})
             # No source text, quotations or generated prose is cached server-side.

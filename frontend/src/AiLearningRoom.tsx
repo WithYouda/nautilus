@@ -6,6 +6,7 @@ import ConversationStateNotice from './ConversationStateNotice';
 import { ModelControlEditor, ModelControlNotice, ModelConfigHistory, useModelControl } from './ModelControl';
 import ReasoningControl from './ReasoningControl';
 import BranchMap from './BranchMap';
+import MergedConversationContext from './MergedConversationContext';
 import useReplyHistory from "./useReplyHistory";
 import { LearningChatPanel, LearningComposer, LearningMessage, LearningUserMessage, LearningReplyActions } from "./LearningRoomLayout";
 import QuestionDiscussion from "./QuestionDiscussion";
@@ -1319,16 +1320,17 @@ export default function AiLearningRoom({
           disabled={!entryReady || branchBusy || sharedState.blocked || Boolean(pendingSubmissionRef.current) || ['loading', 'submitting'].includes(status) || Boolean(editingMessageId)} />}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         label={coachMode ? "和教练说说今天" : "输入学习问题"} sendLabel={coachMode ? "发送" : "发送问题"}
-        placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? coachMode ? "说说今天的时间、精力，或遇到的困难" : `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
+        placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? coachMode ? "说说今天的时间、精力，或遇到的困难" : detail?.messages.some(item => item.branch_conclusion && !item.source_scope?.purged) ? "基于合并内容，继续提问…" : `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
         attachments={!coachMode && <ComposerAttachments kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} onEnsure={async () => (await ensureConversation()).conversation.id} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} />}
         disabled={!canSend || Boolean(editingMessageId)} sendDisabled={attachmentBusy} suggestions={!coachMode && <HelpControls disabled={!canSend || attachmentBusy || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={!coachMode && <><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={modelEffective?.provider_kind ?? undefined} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={(detail?.messages ?? []).flatMap(message => message.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await readConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
+              if (message.role === 'user' && message.branch_conclusion) return null;
               const versions = message.role === 'user'
                 ? detail!.messages.filter(item => item.role === 'user' && (item.question_version_id ?? item.id) === (message.question_version_id ?? message.id))
                 : detail!.messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
               const versionIndex = versions.findIndex(item => item.id === message.id);
-              return <div key={message.id}><MessageBubble coachMode={coachMode} message={message} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)} branchDisabled={message.status === 'streaming' || Boolean(message.source_scope?.purged) || branchBusy || sendingRef.current || Boolean(pendingSubmissionRef.current) || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId)} onBranch={!coachMode && message.role === 'assistant' ? () => void handleBranch(message.id) : undefined}
+              return <div key={message.id}><MessageBubble coachMode={coachMode} message={message} mergeContinued={visibleMessages.length > index + 1} onMergeNavigate={async (target, source) => { try { await handleConversationSwitch(target); setMapLocation({ id: target, source }); } catch (reason) { setError(reason instanceof Error ? reason.message : "来源暂时无法打开"); } }} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)} branchDisabled={message.status === 'streaming' || Boolean(message.source_scope?.purged) || branchBusy || sendingRef.current || Boolean(pendingSubmissionRef.current) || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId)} onBranch={!coachMode && message.role === 'assistant' ? () => void handleBranch(message.id) : undefined}
                 onHelpDisplay={async characters => {
                   try {
                     const record = await recordAiHelpDisplay(message.conversation_id, message.id, characters);
@@ -1552,20 +1554,20 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message, coachMode = false, automatic = false, onRetry, retryDisabled, onBranch, branchDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
-  message: AiMessage; coachMode?: boolean; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; materialVersions: MaterialVersion[];
+function MessageBubble({ message, mergeContinued = false, onMergeNavigate, coachMode = false, automatic = false, onRetry, retryDisabled, onBranch, branchDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
+  message: AiMessage; mergeContinued?: boolean; onMergeNavigate: (id: string, sourceId: string) => void; coachMode?: boolean; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; materialVersions: MaterialVersion[];
   onHelpDisplay: (characters: number) => Promise<NonNullable<AiMessage['help_record']>>;
   version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
   editing: boolean; editDisabled: boolean; sendDisabled: boolean; onStartEdit: () => void; onCancelEdit: () => void; onSendEdit: (text: string) => Promise<boolean>;
 }) {
   const isUser = message.role === "user";
+  if (message.branch_conclusion) return isUser ? null : <div id={`answer-${message.id}`}><MergedConversationContext content={message.content} sources={message.merge_sources ?? []} continued={mergeContinued} onNavigate={onMergeNavigate} disabled={branchDisabled} config={message.model_config} purged={Boolean(message.source_scope?.purged)} /></div>;
   if (isUser) return <LearningUserMessage content={message.content} automatic={automatic} version={version}
     editing={editing} editDisabled={editDisabled || Boolean(message.branch_conclusion)} sendDisabled={sendDisabled}
     onStartEdit={onStartEdit} onCancelEdit={onCancelEdit} onSendEdit={onSendEdit}
     attachments={!coachMode && <MessageAttachments kind="conversation" id={message.conversation_id} versionIds={message.attachment_version_ids ?? []} versions={materialVersions} />} />;
   return (
     <LearningMessage assistantLabel={coachMode ? '学习教练' : 'AI 学习伙伴'} id={`answer-${message.id}`} role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
-      {message.branch_conclusion && <small className="ai-inherited-answer">已整理确认的分支结论 · 来源见分支图</small>}
       {message.inherited_from && <small className="ai-inherited-answer">继承的历史回答</small>}
       <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
       {!coachMode && !message.inherited_from && <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />}

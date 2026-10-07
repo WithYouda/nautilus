@@ -20,7 +20,7 @@ class ComparisonProvider(RecordingProvider):
         if isinstance(sources, dict) and set(sources) == {'left', 'right'}:
             self.comparison_input = sources
             refs = [dict(side=side, id=items[-1]['id'], quote=items[-1]['text'][:80]) for side, items in sources.items()]
-            result = dict(cards=[dict(topic='合成观点', relation='complement', conclusion='合成对比结论', references=refs)])
+            result = dict(cards=[] if getattr(self, 'empty_comparison', False) else [dict(topic='合成观点', relation='complement', conclusion='合成对比结论', references=refs)])
             return httpx.Response(200, json={'choices':[{'message':{'content':json.dumps(result,ensure_ascii=False)}}]})
         return super().__call__(request)
 
@@ -66,6 +66,8 @@ def test_compare_confirm_continue_and_purge_both_kinds(tmp_path, kind):
         result = detail(client,kind,merged)
         seed = result['messages'][-1] if kind == 'conversation' else result['turns'][-1]
         assert seed['branch_conclusion'] and seed['teaching'] is None
+        assert {s['id'] for s in seed['merge_sources']} == {left, right}
+        assert all(s['available'] and s['title'] for s in seed['merge_sources'])
         assert (seed.get('content') or seed.get('assistant_content')) == '经本人编辑的合成结论'
         path = '/api/ai/conversations' if kind == 'conversation' else '/api/learning/discussions'
         node = next(n for n in checked(client.get(f'{path}/{merged}/branch-map'))['nodes'] if n['id'] == merged)
@@ -89,6 +91,11 @@ def test_compare_confirm_continue_and_purge_both_kinds(tmp_path, kind):
         assert client.post('/api/branch-comparisons/confirm',json={**body,'preview_id':pending['preview_id'],'selected':[dict(id=pending['cards'][0]['id'],text='不能保存')] }).status_code == 409
         for identifier in [merged,descendant]:
             erased_detail = detail(client,kind,identifier)
+            records = erased_detail['messages'] if kind == 'conversation' else erased_detail['turns']
+            for record in records:
+                for source in record.get('merge_sources', []):
+                    if source['id'] == right:
+                        assert not source['available'] and source['title'] == '来源已不可用'
             assert '经本人编辑的合成结论' not in json.dumps(erased_detail,ensure_ascii=False)
 
 
@@ -115,6 +122,7 @@ def test_comparison_reads_selected_path_not_later_messages(tmp_path):
         left, _, _ = make_scope(client,provider,'conversation')
         first = send(client,'conversation',left,'first')
         right = fork(client,'conversation',left,first)
+        send(client,'conversation',right,'different',content='合成独立的新讨论')
         later = send(client,'conversation',left,'later',content='LATER_PATH_MUST_NOT_APPEAR')
         current = checked(client.get(f'/api/conversation-state/conversation/{left}'))
         checked(client.put(f'/api/conversation-state/conversation/{left}',json=dict(
@@ -134,6 +142,7 @@ def test_cancel_releases_slot_wait_and_source_is_rechecked_before_dispatch(tmp_p
         left, _, _ = make_scope(client,provider,'conversation')
         first = send(client,'conversation',left,'first')
         right = fork(client,'conversation',left,first)
+        send(client,'conversation',right,'different',content='合成独立的新讨论')
         service = client.app.state.branch_comparisons
         async def check():
             service.slots = asyncio.Semaphore(0)
@@ -152,3 +161,25 @@ def test_cancel_releases_slot_wait_and_source_is_rechecked_before_dispatch(tmp_p
                 await pending
             assert not hasattr(provider,'comparison_input')
         asyncio.run(check())
+
+
+@pytest.mark.parametrize('kind', ['conversation','discussion'])
+def test_identical_and_model_empty_results_do_not_create_merge_drafts(tmp_path, kind):
+    provider = ComparisonProvider()
+    with make_client(tmp_path,provider) as client:
+        authorize(client); configure_provider(client)
+        owner = client.app.state.auth.ensure_local_identity()['id']
+        left, _, _ = make_scope(client,provider,kind)
+        first = send(client,kind,left,'first')
+        right = fork(client,kind,left,first)
+        before = detail(client,kind,right)
+        identical = draft(client,kind,left,right)
+        assert identical['preview_id'] is None and identical['cards'] == []
+        assert '内容相同' in identical['empty_reason']
+        assert not hasattr(provider, 'comparison_input')
+        assert detail(client,kind,right) == before
+        send(client,kind,right,'different',content='继续新的讨论')
+        provider.empty_comparison = True
+        empty = draft(client,kind,left,right)
+        assert empty['preview_id'] is None and empty['cards'] == [] and empty['empty_reason']
+        assert client.app.state.branch_comparisons.drafts.get(owner, {}) == {}

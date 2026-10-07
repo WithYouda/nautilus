@@ -74,3 +74,5 @@
 .branch-map-lines .branch-map-merge-line { stroke: var(--accent-dark); }
 .branch-map-detail .branch-map-merge-sources { display: grid; gap: 8px; margin: 16px 0; }
 @media (max-width: 600px) { .branch-comparison { padding: 14px; } .branch-comparison-paths { grid-template-columns: 1fr; gap: 12px; } .branch-map-dialog-header span { display: none; } }
+.branch-map-merge-arrow { fill: var(--accent-dark); }
+.branch-map-node.is-merged { border-left: 3px solid var(--accent-dark); }

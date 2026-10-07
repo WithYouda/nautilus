@@ -211,6 +211,9 @@ class QuestionDiscussionService:
             origin = snapshot['branch_origin']
             turn['inherited_from'] = dict(discussion_id=origin['discussion_id'], turn_id=origin['source_turn_id'])
         turn['branch_conclusion'] = bool(snapshot.get('branch_merge'))
+        if snapshot.get('branch_merge'):
+            from .branch_maps import public_merge_sources
+            turn['merge_sources'] = public_merge_sources(self.db, owner, snapshot['branch_merge'].get('parents', []), 'discussion')
         turn['history_searched'] = bool(snapshot.get('history_searched'))
         turn['source_scope'] = public_scope(snapshot.get('source_scope'), turn.get('assistant_content'))
         turn['attachment_version_ids'] = snapshot.get('attachment_version_ids', [])

@@ -603,6 +603,7 @@ export type AiMessage = {
   source_scope?: AppliedSourceScope | null;
   attachment_version_ids?: string[];
   branch_conclusion?: boolean;
+  merge_sources?: MergeSource[];
   inherited_from?: { conversation_id: string; message_id: string } | null;
 };
 export type KnowledgeBaseSelection = { kind: 'obsidian_local'; connection_id: string; connection_revision: number };
@@ -2344,7 +2345,7 @@ export type QuestionDiscussion = {
   source: { question: string; answer: string; material: string; feedback: QuestionFeedback | { feedback: string; next_step: string; legacy: boolean } } | null;
   provider_protocol?: AiApiProtocol | null;
   image_model?: { provider_profile_id: string; provider_model_id: string; model: string; supports_image_input: boolean | null } | null;
-  turns: Array<{ branch_conclusion?: boolean; model_config?: ModelRunConfig | null; teaching?: TeachingRecord | null; search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; source_scope?: AppliedSourceScope | null; attachment_version_ids?: string[]; inherited_from?: { discussion_id: string; turn_id: string } | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
+  turns: Array<{ branch_conclusion?: boolean; merge_sources?: MergeSource[]; model_config?: ModelRunConfig | null; teaching?: TeachingRecord | null; search_trace?: SearchTrace | null; generation_trace?: GenerationTrace | null; help_record?: HelpRecord | null; source_scope?: AppliedSourceScope | null; attachment_version_ids?: string[]; inherited_from?: { discussion_id: string; turn_id: string } | null; question_version_id?: string; question_id: string; parent_turn_id: string | null; id: string; request_key: string; user_content: string | null; assistant_content: string | null; reasoning_content: string | null; status: string; reason: string | null; created_at: string; history_searched: boolean; sources: Array<{ kind: string; excerpt: string }> }>;
 };
 export type LearningRecord = { id: string; outcome_id: string; status: string; action_id: string; title: string; goal_title: string; plan_title: string; created_at: string; session_id: string | null; verification_count: number };
 export type LearningRecordDetail = { sessions?: Array<{id:string;status:string;started_at:string;ended_at:string|null}>; record: LearningRecord; brief: LearningRoomBrief | null; verifications: Array<{ id: string; mode: string; status: string; session_id: string | null; created_at: string; submitted_at: string | null; purged_at: string | null }> };
@@ -2533,7 +2534,8 @@ export const putConversationState = (kind: MaterialKind, id: string, value: Conv
 
 export type BranchComparisonCard = { id: string; topic: string; relation: 'same' | 'different' | 'complement' | 'open'; conclusion: string; references: { side: 'left' | 'right'; id: string; quote: string }[] };
 export type BranchComparisonSource = { id: string; leaf_id: string; last_question: string };
-export type BranchComparison = { preview_id: string; cards: BranchComparisonCard[]; sources: BranchComparisonSource[]; model_config: ModelRunConfig };
+export type MergeSource = { id: string; source_id: string; title: string; available: boolean };
+export type BranchComparison = { preview_id: string | null; empty_reason?: string; cards: BranchComparisonCard[]; sources: BranchComparisonSource[]; model_config: ModelRunConfig | null };
 export const getComparisonSources = (kind: string, id: string, other: string) => request<BranchComparisonSource[]>(`/api/branch-comparisons/${kind}/${id}/sources?other_id=${encodeURIComponent(other)}`);
 export const compareBranches = (kind: string, id: string, other: string, signal: AbortSignal) => request<BranchComparison>(`/api/branch-comparisons/${kind}/${id}/previews`, { method: 'POST', body: JSON.stringify({ other_id: other }), signal });
 export const confirmBranchComparison = (preview_id: string, title: string, selected: { id: string; text: string }[]) => request<{ id: string; kind: 'conversation' | 'discussion' }>('/api/branch-comparisons/confirm', { method: 'POST', body: JSON.stringify({ preview_id, title, selected }) });

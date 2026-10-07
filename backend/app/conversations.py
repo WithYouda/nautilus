@@ -1575,6 +1575,9 @@ class ConversationService:
             item["attachment_version_ids"] = snapshot.get("attachment_version_ids", [])
             item["branch_conclusion"] = bool(snapshot.get("branch_merge"))
             if item["role"] == "assistant":
+                if snapshot.get('branch_merge'):
+                    from .branch_maps import public_merge_sources
+                    item['merge_sources'] = public_merge_sources(self.database, identity_id, snapshot['branch_merge'].get('parents', []), 'conversation')
                 from .model_control import public_snapshot
                 item['model_config'] = public_snapshot(snapshot)
                 if item['model_config'] is not None and self.personas:

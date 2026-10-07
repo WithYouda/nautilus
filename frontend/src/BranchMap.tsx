@@ -26,6 +26,7 @@ const PAD = 32;
 function visibleNodes(nodes: BranchMapNode[]): VisibleNode[] {
   const byId = new Map(nodes.map(node => [node.id, node]));
   return nodes.filter(node => node.available).map(node => {
+    if (node.merge_sources?.length) return { ...node, displayParentId: null, missingSource: node.merge_sources.some(source => !source.available) };
     let parent = node.parent_id ? byId.get(node.parent_id) : undefined;
     let missingSource = Boolean(node.parent_id && !parent);
     const seen = new Set([node.id]);
@@ -38,35 +39,65 @@ function visibleNodes(nodes: BranchMapNode[]): VisibleNode[] {
   });
 }
 
+function inputNodes(node: VisibleNode, byId: Map<string, VisibleNode>) {
+  return node.merge_sources?.length
+    ? node.merge_sources.filter(source => source.available && byId.has(source.id)).map(source => byId.get(source.id)!)
+    : node.displayParentId && byId.has(node.displayParentId) ? [byId.get(node.displayParentId)!] : [];
+}
+
 function arrange(nodes: VisibleNode[]): { placed: PlacedNode[]; width: number; height: number } {
   const byId = new Map(nodes.map(node => [node.id, node]));
-  const children = new Map<string, VisibleNode[]>();
-  const roots: VisibleNode[] = [];
-  for (const node of nodes) {
-    if (node.displayParentId && node.displayParentId !== node.id && byId.has(node.displayParentId)) {
-      const siblings = children.get(node.displayParentId) ?? [];
-      siblings.push(node);
-      children.set(node.displayParentId, siblings);
-    } else roots.push(node);
-  }
-  const byDate = (a: BranchMapNode, b: BranchMapNode) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id);
-  roots.sort(byDate);
-  for (const siblings of children.values()) siblings.sort(byDate);
-  const placed: PlacedNode[] = [];
-  const visited = new Set<string>();
-  let row = 0;
-  let maxDepth = 0;
-  const visit = (node: VisibleNode, depth: number) => {
-    if (visited.has(node.id)) return;
-    visited.add(node.id);
-    placed.push({ node, depth, row, x: PAD + depth * (NODE_WIDTH + COLUMN_GAP), y: PAD + row * (NODE_HEIGHT + ROW_GAP) });
-    row += 1;
-    maxDepth = Math.max(maxDepth, depth);
-    for (const child of children.get(node.id) ?? []) visit(child, depth + 1);
+  const depths = new Map<string, number>();
+  const depthOf = (node: VisibleNode, visiting = new Set<string>()): number => {
+    if (depths.has(node.id)) return depths.get(node.id)!;
+    if (visiting.has(node.id)) return 0;
+    const next = new Set(visiting).add(node.id);
+    const parents = inputNodes(node, byId);
+    const depth = parents.length ? Math.max(...parents.map(parent => depthOf(parent, next))) + 1 : 0;
+    depths.set(node.id, depth); return depth;
   };
-  for (const root of roots) visit(root, 0);
-  for (const node of nodes) visit(node, 0);
-  return { placed, width: PAD * 2 + (maxDepth + 1) * NODE_WIDTH + maxDepth * COLUMN_GAP, height: PAD * 2 + Math.max(row, 1) * NODE_HEIGHT + Math.max(row - 1, 0) * ROW_GAP };
+  const layers = new Map<number, VisibleNode[]>();
+  for (const node of nodes) {
+    const depth = depthOf(node); layers.set(depth, [...(layers.get(depth) ?? []), node]);
+  }
+  const maxDepth = Math.max(0, ...layers.keys());
+  const y = new Map<string, number>();
+  const step = NODE_HEIGHT + ROW_GAP;
+  const average = (items: VisibleNode[]) => items.reduce((sum, item) => sum + (y.get(item.id) ?? 0), 0) / items.length;
+  function pack(items: VisibleNode[], desired: (node: VisibleNode, index: number) => number) {
+    const ordered = items.map((node, index) => ({ node, target: desired(node, index) }))
+      .sort((a, b) => a.target - b.target || a.node.created_at.localeCompare(b.node.created_at) || a.node.id.localeCompare(b.node.id));
+    let previous = -Infinity;
+    for (let start = 0; start < ordered.length;) {
+      let end = start + 1;
+      while (end < ordered.length && Math.abs(ordered[end].target - ordered[start].target) < 1) end++;
+      for (let index = start; index < end; index++) {
+        const preferred = ordered[start].target + (index - start - (end - start - 1) / 2) * step;
+        previous = Math.max(preferred, previous + step); y.set(ordered[index].node.id, previous);
+      }
+      start = end;
+    }
+  }
+  for (let depth = 0; depth <= maxDepth; depth++) pack(layers.get(depth) ?? [], (node, index) => {
+    const parents = inputNodes(node, byId); return parents.length ? average(parents) : index * step;
+  });
+  // Center upstream nodes on their children while keeping each column collision-free.
+  for (let depth = maxDepth - 1; depth >= 0; depth--) pack(layers.get(depth) ?? [], node => {
+    const children = nodes.filter(child => inputNodes(child, byId).some(parent => parent.id === node.id));
+    return children.length ? average(children) : y.get(node.id) ?? 0;
+  });
+  const minimum = Math.min(0, ...y.values());
+  const placed = nodes.map(node => ({ node, depth: depths.get(node.id)!, row: 0,
+    x: PAD + depths.get(node.id)! * (NODE_WIDTH + COLUMN_GAP), y: PAD + y.get(node.id)! - minimum }));
+  return { placed, width: PAD * 2 + (maxDepth + 1) * NODE_WIDTH + maxDepth * COLUMN_GAP,
+    height: Math.max(PAD * 2 + NODE_HEIGHT, ...placed.map(item => item.y + NODE_HEIGHT + PAD)) };
+}
+
+function connectionPath(parent: PlacedNode, child: PlacedNode) {
+  const x1 = parent.x + NODE_WIDTH, y1 = parent.y + NODE_HEIGHT / 2;
+  const x2 = child.x, y2 = child.y + NODE_HEIGHT / 2;
+  if (child.depth - parent.depth > 1) return `M ${x1} ${y1} H ${x1 + 14} V ${PAD / 3} H ${x2 - 14} V ${y2} H ${x2}`;
+  return `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`;
 }
 
 function message(error: unknown, fallback: string) {
@@ -244,9 +275,9 @@ export default function BranchMap({ kind, id, disabled = false, revision, onNavi
 
   return <aside className="branch-map-sidebar" aria-label="分支图">
     <button className="branch-map-trigger" type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setData(null); setSelectedId(null); setLoading(true); setComparing(false); setOpen(true); }}><GitBranch size={15} />分支图</button>
-    {open && <DialogPortal><div className="branch-map-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setOpen(false); }}><section ref={dialogRef} className="branch-map-dialog" role="dialog" aria-modal="true" aria-label="分支图"><header className="branch-map-dialog-header"><div><strong>分支图</strong><span>滚轮缩放 · 拖动画布</span></div>{!comparing && <button className="branch-map-compare" type="button" disabled={disabled || busy || (data?.nodes.filter(node => node.available).length ?? 0) < 2} onClick={() => setComparing(true)}>比较分支</button>}<button ref={closeRef} className="branch-map-icon" type="button" aria-label="关闭分支图" disabled={busy} onClick={() => setOpen(false)}><X size={18} /></button></header>
-      {comparing && data ? <BranchComparison kind={kind} currentId={currentId} otherId={selectedId && selectedId !== currentId ? selectedId : data.nodes.find(node => node.available && node.id !== currentId)?.id ?? ''} nodes={data.nodes} onBack={() => setComparing(false)} onSaved={async target => { await navigate(target); }} onBusy={value => { busyRef.current = value; setBusy(value); }} /> : <div className="branch-map-dialog-body"><div className="branch-map-visual">{loading ? <p className="branch-map-visual-state">正在加载分支图…</p> : error ? <div className="branch-map-visual-state" role="alert"><p>{error}</p><button type="button" onClick={() => setRefresh(value => value + 1)}>重试</button></div> : !layout.placed.length ? <p className="branch-map-visual-state">暂无可打开的对话。</p> : <><div className="branch-map-toolbar"><button type="button" aria-label="缩小" onClick={() => zoom(1 / 1.25)}><Minus size={15} /></button><span>{Math.round(view.scale * 100)}%</span><button type="button" aria-label="放大" onClick={() => zoom(1.25)}><Plus size={15} /></button><button type="button" onClick={fit}>适应画布</button></div><div ref={viewportRef} className="branch-map-viewport" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }}><div className="branch-map-canvas" style={{ width: layout.width, height: layout.height, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}><svg className="branch-map-lines" width={layout.width} height={layout.height} aria-hidden="true">{layout.placed.map(child => { const parent = layout.placed.find(item => item.node.id === child.node.displayParentId); return parent ? <path key={child.node.id} strokeDasharray={child.node.missingSource ? "6 4" : undefined} d={`M ${parent.x + NODE_WIDTH} ${parent.y + NODE_HEIGHT / 2} C ${parent.x + NODE_WIDTH + 22} ${parent.y + NODE_HEIGHT / 2}, ${child.x - 22} ${child.y + NODE_HEIGHT / 2}, ${child.x} ${child.y + NODE_HEIGHT / 2}`} /> : null; })}{layout.placed.flatMap(child => (child.node.merge_sources ?? []).slice(1).map(source => { const parent = layout.placed.find(item => item.node.id === source.id); if (!parent) return null; const lane = Math.max(parent.x + NODE_WIDTH, child.x + NODE_WIDTH) + 16; return <path key={`${source.id}:${child.node.id}`} className="branch-map-merge-line" d={`M ${parent.x + NODE_WIDTH} ${parent.y + NODE_HEIGHT / 2} H ${lane} V ${child.y + NODE_HEIGHT / 2} H ${child.x + NODE_WIDTH}`} />; }))}</svg>{layout.placed.map(({ node, x, y }) => <button key={node.id} className={`branch-map-node${node.id === currentId ? ' is-current' : ''}${node.id === selectedId ? ' is-selected' : ''}${!node.available ? ' is-unavailable' : ''}`} type="button" style={{ left: x, top: y, width: NODE_WIDTH, height: NODE_HEIGHT }} onClick={() => { setSelectedId(node.id); setEditingId(null); setActionError(''); }} aria-pressed={node.id === selectedId}><strong>{node.title}</strong><small>{node.merge_sources?.length ? '合并结论 · ' : ''}{node.id === currentId ? '当前' : '可打开'}{node.missingSource && ` · ${node.displayParentId ? '中间对话已删除' : '来源对话已删除'}`}</small></button>)}</div></div></>}</div>
-      <div className="branch-map-detail"><strong>节点详情</strong>{selected ? <><p className="branch-map-detail-title">{selected.title}</p>{selected.missingSource && <p className="branch-map-muted">{selected.displayParentId ? '中间对话已删除，虚线表示经由已删除对话的来源关系。' : '来源对话已删除。'}</p>}{!selected.merge_sources?.length && !selected.missingSource && selected.source_excerpt && <p className="branch-map-excerpt">从这里分出：{selected.source_excerpt}</p>}{!selected.available && <p className="branch-map-muted">此节点不可打开</p>}{Boolean(selected.merge_sources?.length) && <div className="branch-map-merge-sources"><strong>结论来源</strong>{selected.merge_sources?.map((source, index) => <button key={source.id} type="button" disabled={!source.available || busy || disabled} onClick={() => void navigate(source.id, source.source_id)}>{source.available ? `来源${index + 1}：${data?.nodes.find(node => node.id === source.id)?.title ?? '原分支'}` : `来源${index + 1}已不可用`}</button>)}</div>}<div className="branch-map-detail-actions"><button type="button" disabled={!selected.available || disabled || busy} onClick={() => void navigate(selected.id)}>打开{kind === 'conversation' ? '对话' : '讨论'}</button>{selected.parent_id && selected.source_id && <button type="button" disabled={disabled || busy || !data?.nodes.some(node => node.id === selected.parent_id && node.available)} onClick={() => void navigate(selected.parent_id!, selected.source_id!)}>查看分出位置</button>}</div>{selected.available && (editingId === selected.id ? <form className="branch-map-rename" onSubmit={event => void rename(event)}><label htmlFor="branch-map-title">修改标题</label><input id="branch-map-title" autoFocus maxLength={60} value={draft} disabled={disabled || busy} onChange={event => setDraft(event.target.value)} /><div><button type="submit" disabled={disabled || busy || !draft.trim()}>保存</button><button type="button" disabled={busy} onClick={() => setEditingId(null)}>取消</button></div></form> : <button className="branch-map-edit-trigger" type="button" disabled={disabled || busy} onClick={() => { setDraft(selected.title); setEditingId(selected.id); setActionError(''); }}>编辑标题</button>)}</> : <p className="branch-map-muted">选择一个节点查看详情。</p>}{actionError && <p className="branch-map-error" role="alert">{actionError}</p>}</div></div>}
+    {open && <DialogPortal><div className="branch-map-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setOpen(false); }}><section ref={dialogRef} className="branch-map-dialog" role="dialog" aria-modal="true" aria-label="分支图"><header className="branch-map-dialog-header"><div><strong>分支图</strong><span>滚轮缩放 · 拖动画布</span></div>{!comparing && <button className="branch-map-compare" type="button" disabled={disabled || busy || (data?.nodes.filter(node => node.available).length ?? 0) < 2} onClick={() => setComparing(true)}>合并对话</button>}<button ref={closeRef} className="branch-map-icon" type="button" aria-label="关闭分支图" disabled={busy} onClick={() => setOpen(false)}><X size={18} /></button></header>
+      {comparing && data ? <BranchComparison kind={kind} nodes={data.nodes} onBack={() => setComparing(false)} onSaved={async target => { await navigate(target); }} onBusy={value => { busyRef.current = value; setBusy(value); }} /> : <div className="branch-map-dialog-body"><div className="branch-map-visual">{loading ? <p className="branch-map-visual-state">正在加载分支图…</p> : error ? <div className="branch-map-visual-state" role="alert"><p>{error}</p><button type="button" onClick={() => setRefresh(value => value + 1)}>重试</button></div> : !layout.placed.length ? <p className="branch-map-visual-state">暂无可打开的对话。</p> : <><div className="branch-map-toolbar"><button type="button" aria-label="缩小" onClick={() => zoom(1 / 1.25)}><Minus size={15} /></button><span>{Math.round(view.scale * 100)}%</span><button type="button" aria-label="放大" onClick={() => zoom(1.25)}><Plus size={15} /></button><button type="button" onClick={fit}>适应画布</button></div><div ref={viewportRef} className="branch-map-viewport" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }}><div className="branch-map-canvas" style={{ width: layout.width, height: layout.height, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}><svg className="branch-map-lines" width={layout.width} height={layout.height} aria-hidden="true"><defs><marker id={`merge-arrow-${kind}-${id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><polygon points="0,0 10,5 0,10" className="branch-map-merge-arrow" /></marker></defs>{layout.placed.flatMap(child => inputNodes(child.node, new Map(layout.placed.map(item => [item.node.id, item.node]))).map(source => { const parent = layout.placed.find(item => item.node.id === source.id)!; const merged = Boolean(child.node.merge_sources?.length); return <path key={`${source.id}:${child.node.id}`} data-source-id={source.id} data-target-id={child.node.id} className={merged ? 'branch-map-merge-line' : undefined} markerEnd={merged ? `url(#merge-arrow-${kind}-${id})` : undefined} strokeDasharray={!merged && child.node.missingSource ? '6 4' : undefined} d={connectionPath(parent, child)} />; }))}</svg>{layout.placed.map(({ node, x, y }) => <button key={node.id} className={`branch-map-node${node.id === currentId ? ' is-current' : ''}${node.id === selectedId ? ' is-selected' : ''}${!node.available ? ' is-unavailable' : ''}${node.merge_sources?.length ? ' is-merged' : ''}`} type="button" style={{ left: x, top: y, width: NODE_WIDTH, height: NODE_HEIGHT }} onClick={() => { setSelectedId(node.id); setEditingId(null); setActionError(''); }} aria-pressed={node.id === selectedId}><strong>{node.title}</strong><small>{node.merge_sources?.length ? '合并对话 · ' : ''}{node.id === currentId ? '当前' : '可打开'}{node.missingSource && ` · ${node.merge_sources?.length ? '部分来源不可用' : node.displayParentId ? '中间对话已删除' : '来源对话已删除'}`}</small></button>)}</div></div></>}</div>
+      <div className="branch-map-detail"><strong>节点详情</strong>{selected ? <><p className="branch-map-detail-title">{selected.title}</p>{selected.missingSource && !selected.merge_sources?.length && <p className="branch-map-muted">{selected.displayParentId ? '中间对话已删除，虚线表示经由已删除对话的来源关系。' : '来源对话已删除。'}</p>}{!selected.merge_sources?.length && !selected.missingSource && selected.source_excerpt && <p className="branch-map-excerpt">从这里分出：{selected.source_excerpt}</p>}{!selected.available && <p className="branch-map-muted">此节点不可打开</p>}{Boolean(selected.merge_sources?.length) && <div className="branch-map-merge-sources"><strong>合并来源</strong>{selected.merge_sources?.map((source, index) => <button key={source.id} type="button" disabled={!source.available || busy || disabled} onClick={() => void navigate(source.id, source.source_id)}>{source.available ? `来源${index + 1}：${data?.nodes.find(node => node.id === source.id)?.title ?? '原分支'}` : `来源${index + 1}已不可用`}</button>)}</div>}<div className="branch-map-detail-actions"><button type="button" disabled={!selected.available || disabled || busy} onClick={() => void navigate(selected.id)}>打开{kind === 'conversation' ? '对话' : '讨论'}</button>{!selected.merge_sources?.length && selected.parent_id && selected.source_id && <button type="button" disabled={disabled || busy || !data?.nodes.some(node => node.id === selected.parent_id && node.available)} onClick={() => void navigate(selected.parent_id!, selected.source_id!)}>查看分出位置</button>}</div>{selected.available && (editingId === selected.id ? <form className="branch-map-rename" onSubmit={event => void rename(event)}><label htmlFor="branch-map-title">修改标题</label><input id="branch-map-title" autoFocus maxLength={60} value={draft} disabled={disabled || busy} onChange={event => setDraft(event.target.value)} /><div><button type="submit" disabled={disabled || busy || !draft.trim()}>保存</button><button type="button" disabled={busy} onClick={() => setEditingId(null)}>取消</button></div></form> : <button className="branch-map-edit-trigger" type="button" disabled={disabled || busy} onClick={() => { setDraft(selected.title); setEditingId(selected.id); setActionError(''); }}>编辑标题</button>)}</> : <p className="branch-map-muted">选择一个节点查看详情。</p>}{actionError && <p className="branch-map-error" role="alert">{actionError}</p>}</div></div>}
     {comparing && actionError && <p className="branch-map-error" role="alert">{actionError}</p>}
     </section></div></DialogPortal>}
   </aside>;

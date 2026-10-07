@@ -3,6 +3,7 @@ import ConversationStateNotice from './ConversationStateNotice';
 import { ModelControlEditor, ModelControlNotice, ModelConfigHistory, useModelControl } from './ModelControl';
 import ReasoningControl from './ReasoningControl';
 import BranchMap from './BranchMap';
+import MergedConversationContext from './MergedConversationContext';
 import useReplyHistory from './useReplyHistory';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Bot, Square } from 'lucide-react';
@@ -250,7 +251,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
         onChange={value => { setContent(value); drafts.current.set(id, value); key.current = requestId(); }}
         onSubmit={event => { event.preventDefault(); void send(); }}
-        placeholder="输入关于这道题的问题，或回答拓展问题" maxLength={12000}
+        placeholder={discussion.turns.some(turn => turn.branch_conclusion && turn.status !== 'purged') ? "基于合并内容，继续提问…" : "输入关于这道题的问题，或回答拓展问题"} maxLength={12000}
         disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
         attachments={<ComposerAttachments kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} />}
         sendDisabled={attachmentBusy || modelControl.busy || !modelEffective?.available}
@@ -278,12 +279,12 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
           </div>
         </details>
         {!discussion.turns.length && !pending && <div className="ai-empty-chat"><Bot size={24} /><h2>还有哪里没弄明白？</h2><p>可以追问反馈、比较解法，或回答拓展问题。原验证结果保持不变。</p></div>}
-        {visibleTurns.map(turn => {
+        {visibleTurns.map((turn, turnIndex) => {
           const questionVersions = [...new Map(discussion.turns.filter(item => (item.question_version_id ?? item.question_id) === (turn.question_version_id ?? turn.question_id)).map(item => [item.question_id, item])).values()];
           const questionIndex = questionVersions.findIndex(item => item.question_id === turn.question_id);
           const questionAttachments = discussion.turns.find(item => item.question_id === turn.question_id && item.attachment_version_ids?.length) ?? turn;
           return <div key={turn.id} className="discussion-turn" id={`turn-${turn.id}`}>
-          {turn.status === 'purged' ? <p>这轮讨论内容已删除。</p> : <>
+          {turn.status === 'purged' ? <p>这轮讨论内容已删除。</p> : turn.branch_conclusion ? <MergedConversationContext content={turn.assistant_content ?? ''} sources={turn.merge_sources ?? []} continued={visibleTurns.length > turnIndex + 1 || Boolean(pending)} onNavigate={(target, source) => { drafts.current.set(id, content); setMapLocation({ id: target, source }); onNavigate(target); }} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} config={turn.model_config} /> : <>
             <LearningUserMessage content={turn.user_content ?? ''} maxLength={12000}
               attachments={<MessageAttachments kind="discussion" id={id} versionIds={questionAttachments.attachment_version_ids ?? []} scope={questionAttachments.source_scope} versions={materialVersions} />}
               editing={editingTurnId === turn.id} editDisabled={Boolean(turn.branch_conclusion) || busy || branchBusy || running || Boolean(pending) || (Boolean(editingTurnId) && editingTurnId !== turn.id)} sendDisabled={busy || branchBusy || running || Boolean(pending)}
@@ -297,7 +298,6 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
                 onPrevious: () => { const target = questionVersions[questionIndex - 1]; replyHistory.switchVersion(replyHistory.preferredVersion(target.question_id, target.id)); },
                 onNext: () => { const target = questionVersions[questionIndex + 1]; replyHistory.switchVersion(replyHistory.preferredVersion(target.question_id, target.id)); } }} />
             <LearningMessage role="assistant" state={turn.status === 'running' ? 'streaming' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? 'canceled' : 'failed') : undefined} status={turn.status === 'running' ? '生成中' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? '已取消' : '失败') : undefined}>
-              {turn.branch_conclusion && <small className="ai-inherited-answer">已整理确认的分支结论 · 来源见分支图</small>}
               <AssistantResponse key={turn.id} trace={turn.generation_trace} content={turn.assistant_content ?? ''} reasoningContent={turn.reasoning_content} searchTrace={turn.search_trace} streaming={turn.status === 'running'} />
               {turn.inherited_from ? turn.help_record && <div className="help-record"><details><summary>帮助记录（继承自原讨论）</summary><HelpRecordFacts record={turn.help_record} /></details></div> : <HelpRecord key={`help:${turn.id}`} record={turn.help_record} body={turn.assistant_content ?? ''} terminal={turn.status !== 'running'} onDisplay={characters => recordDiscussionHelpDisplay(id, turn.id, characters)} />}
               {turn.status === 'failed' && <div role="status"><p>{turn.reason === 'cancelled' ? '已取消生成，已收到的内容保留。' : '这次回复未完成，问题和已收到的内容已保存。'}</p></div>}
