@@ -51,3 +51,26 @@
   .branch-map-dialog-header span { display: none; }
   .branch-map-detail { padding: 11px; }
 }
+.branch-comparison { flex: 1; min-height: 0; overflow: auto; padding: 20px; font-size: 13px; }
+.branch-comparison-heading, .branch-comparison-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.branch-comparison h3 { margin: 0; font-size: 18px; }
+.branch-comparison button, .branch-map-compare { padding: 7px 12px; border: 1px solid var(--line-strong); color: var(--ink); background: var(--paper); cursor: pointer; }
+.branch-comparison-paths { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
+.branch-comparison-paths label, .branch-comparison-title { display: grid; gap: 8px; min-width: 0; }
+.branch-comparison select, .branch-comparison textarea, .branch-comparison-title input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--line); background: var(--paper-soft); color: var(--ink); font: inherit; }
+.branch-comparison textarea { resize: vertical; line-height: 1.6; }
+.branch-comparison small { color: var(--muted); overflow-wrap: anywhere; }
+.branch-comparison-cards { display: grid; gap: 12px; margin: 14px 0 20px; }
+.branch-comparison-card { padding: 14px; border: 1px solid var(--line-strong); }
+.branch-comparison-choice { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.branch-comparison-choice input { width: 16px; height: 16px; flex: 0 0 auto; }
+.branch-comparison-choice strong { flex: 1; overflow-wrap: anywhere; }
+.branch-comparison-choice span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.branch-comparison-card details { margin-top: 10px; color: var(--muted); }
+.branch-comparison-card blockquote { margin: 12px 0 0; padding-left: 12px; border-left: 2px solid var(--line); overflow-wrap: anywhere; }
+.branch-comparison-card blockquote p { margin: 4px 0; white-space: pre-wrap; }
+.branch-comparison-title { max-width: 480px; margin-bottom: 16px; }
+.branch-comparison-actions { justify-content: flex-start; }
+.branch-map-lines .branch-map-merge-line { stroke: var(--accent-dark); }
+.branch-map-detail .branch-map-merge-sources { display: grid; gap: 8px; margin: 16px 0; }
+@media (max-width: 600px) { .branch-comparison { padding: 14px; } .branch-comparison-paths { grid-template-columns: 1fr; gap: 12px; } .branch-map-dialog-header span { display: none; } }

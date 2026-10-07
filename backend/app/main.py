@@ -38,6 +38,8 @@ from .outbound import OutboundApprovals
 from .routers import outbound
 from .preferences import PreferencesService
 from .adaptive_preferences import AdaptivePreferencesService
+from .branch_comparisons import BranchComparisons
+from .routers import branch_comparisons
 from .personas import PersonaService
 from .routers import personas
 from .routers import adaptive_preferences
@@ -162,6 +164,7 @@ def create_app(
         conversation_service.personas = persona_service
         learning_service.personas = persona_service
         app.state.personas = persona_service
+        app.state.branch_comparisons = BranchComparisons(conversation_service, discussion_service, transport=provider_transport, slots=ai_run_manager._provider_slots)
         coach_conversations=CoachConversationService(learning_service,conversation_service)
         conversation_service.coach_conversations=coach_conversations
         learning_service.coach_conversations=coach_conversations
@@ -320,6 +323,7 @@ def create_app(
     app.include_router(preferences.router)
     app.include_router(adaptive_preferences.router)
     app.include_router(personas.router)
+    app.include_router(branch_comparisons.router)
     return app
 
 

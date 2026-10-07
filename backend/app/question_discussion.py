@@ -210,6 +210,7 @@ class QuestionDiscussionService:
         if snapshot.get('branch_origin'):
             origin = snapshot['branch_origin']
             turn['inherited_from'] = dict(discussion_id=origin['discussion_id'], turn_id=origin['source_turn_id'])
+        turn['branch_conclusion'] = bool(snapshot.get('branch_merge'))
         turn['history_searched'] = bool(snapshot.get('history_searched'))
         turn['source_scope'] = public_scope(snapshot.get('source_scope'), turn.get('assistant_content'))
         turn['attachment_version_ids'] = snapshot.get('attachment_version_ids', [])
@@ -316,6 +317,10 @@ class QuestionDiscussionService:
         if not existing_turn and any(item.get('input_mode') == 'image' for item in (frozen or {}).get('materials', [])):
             image_runtime = model_runtime or self.verification._runtime(owner, discussion['session_id'])
             require_image_capability(self.chats, owner, image_runtime[0]['id'], image_runtime[1].model, frozen)
+        if regenerate_turn_id or edit_turn_id:
+            seed = self.db.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE discussion_id=? AND id=?', (discussion_id, regenerate_turn_id or edit_turn_id))
+            if seed and json.loads(seed[0] or '{}').get('branch_merge'):
+                raise DomainError('branch_conclusion_is_confirmed', 409)
         material_bound = bool(frozen and frozen['mode'] != 'unspecified')
         original_snapshot = None
         if regenerate_turn_id:

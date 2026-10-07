@@ -15,6 +15,18 @@ def _origin(c, cid):
     return json.loads(row[0])['branch_origin'] if row else {}
 
 
+
+def _merge_parents(c, identifier, discussion=False):
+    query = ("SELECT provider_snapshot_json FROM learning_discussion_turn WHERE discussion_id=? ORDER BY rowid" if discussion else
+             "SELECT config_snapshot_json FROM ai_run WHERE conversation_id=? ORDER BY rowid")
+    for row in c.execute(query, (identifier,)):
+        snapshot = json.loads(row[0] or '{}')
+        if snapshot.get('branch_origin'):
+            return []
+        if snapshot.get('branch_merge'):
+            return snapshot['branch_merge'].get('parents', [])
+    return []
+
 def conversation_title(c, row):
     # Old factory names were stored as manual with revision zero. A real rename increments it.
     if row['title'] == '分支对话' and row['title_source'] == 'manual' and row['title_revision'] == 0 and _origin(c, row['id']):
@@ -63,7 +75,8 @@ def _family(current_id, nodes):
     by_id = {node['id']: node for node in nodes}
     related = {current_id}
     while True:
-        added = {node['id'] for node in nodes if node['parent_id'] in related}
+        added = {node['id'] for node in nodes if node['parent_id'] in related or any(p['id'] in related for p in node.get('merge_sources', []))}
+        added.update(p['id'] for n in related if n in by_id for p in by_id[n].get('merge_sources', []) if p['id'] in by_id)
         added.update(by_id[n]['parent_id'] for n in related if n in by_id and by_id[n]['parent_id'] in by_id)
         if added <= related:
             break
@@ -79,6 +92,9 @@ def conversation_map(service, owner, cid):
         nodes = []
         for row in rows:
             origin = _origin(c, row['id'])
+            merged = _merge_parents(c, row['id'])
+            if merged:
+                origin = dict(conversation_id=merged[0]['id'], message_id=merged[0]['source_id'])
             parent = by_id.get(origin.get('conversation_id'))
             available = not row['deleted_at']
             excerpt = None
@@ -88,7 +104,8 @@ def conversation_map(service, owner, cid):
                 excerpt = compact_title(question[0]) if question and question[0] else None
             nodes.append(dict(id=row['id'], title=conversation_title(c, row) if available else '对话已删除',
                 parent_id=parent['id'] if parent else None, source_id=origin.get('message_id') if excerpt else None,
-                source_excerpt=excerpt, available=available, created_at=row['created_at']))
+                source_excerpt=excerpt, available=available, created_at=row['created_at'],
+                merge_sources=[{**p, 'available': bool(by_id.get(p['id']) and not by_id[p['id']]['deleted_at'])} for p in merged]))
         return _family(cid, nodes)
 
 
@@ -100,6 +117,7 @@ def discussion_map(service, identity, did):
         by_id = {row['id']: row for row in rows}
         nodes = []
         for row in rows:
+            merged = _merge_parents(c, row['id'], discussion=True)
             parent = by_id.get(row['branch_parent_id'])
             excerpt = None
             if not row['purged_at'] and parent and not parent['purged_at']:
@@ -107,7 +125,8 @@ def discussion_map(service, identity, did):
                 excerpt = compact_title(turn[0]) if turn and turn[0] else None
             nodes.append(dict(id=row['id'], title=discussion_title(c, row), parent_id=parent['id'] if parent else None,
                 source_id=row['branch_turn_id'] if excerpt else None, source_excerpt=excerpt,
-                available=not bool(row['purged_at']), created_at=row['created_at']))
+                available=not bool(row['purged_at']), created_at=row['created_at'],
+                merge_sources=[{**p, 'available': bool(by_id.get(p['id']) and not by_id[p['id']]['purged_at'])} for p in merged]))
         return _family(did, nodes)
 
 

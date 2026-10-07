@@ -1560,16 +1560,17 @@ function MessageBubble({ message, coachMode = false, automatic = false, onRetry,
 }) {
   const isUser = message.role === "user";
   if (isUser) return <LearningUserMessage content={message.content} automatic={automatic} version={version}
-    editing={editing} editDisabled={editDisabled} sendDisabled={sendDisabled}
+    editing={editing} editDisabled={editDisabled || Boolean(message.branch_conclusion)} sendDisabled={sendDisabled}
     onStartEdit={onStartEdit} onCancelEdit={onCancelEdit} onSendEdit={onSendEdit}
     attachments={!coachMode && <MessageAttachments kind="conversation" id={message.conversation_id} versionIds={message.attachment_version_ids ?? []} versions={materialVersions} />} />;
   return (
     <LearningMessage assistantLabel={coachMode ? '学习教练' : 'AI 学习伙伴'} id={`answer-${message.id}`} role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
+      {message.branch_conclusion && <small className="ai-inherited-answer">已整理确认的分支结论 · 来源见分支图</small>}
       {message.inherited_from && <small className="ai-inherited-answer">继承的历史回答</small>}
       <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
       {!coachMode && !message.inherited_from && <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />}
       <ModelConfigHistory config={message.model_config} />
-      <LearningReplyActions hideBranch={coachMode} version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} onBranch={onBranch} branchDisabled={branchDisabled} more={!coachMode && <MaterialUse scope={message.source_scope} versions={materialVersions} kind="conversation" scopeId={message.conversation_id} />} />
+      <LearningReplyActions hideBranch={coachMode} version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || Boolean(message.branch_conclusion) || message.status === 'streaming'} onBranch={onBranch} branchDisabled={branchDisabled} more={!coachMode && <MaterialUse scope={message.source_scope} versions={materialVersions} kind="conversation" scopeId={message.conversation_id} />} />
     </LearningMessage>
   );
 }

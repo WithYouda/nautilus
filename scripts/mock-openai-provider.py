@@ -197,6 +197,12 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
+        if any('比较用户选定的两条学习讨论路径' in str(m.get('content','')) for m in payload.get('messages', [])):
+            sources = json.loads(payload['messages'][-1]['content'])
+            refs = [dict(side=side,id=items[-1]['id'],quote=items[-1]['text'][:80]) for side,items in sources.items()]
+            result = dict(cards=[dict(topic='方法的互补',relation='complement',conclusion='综合两条思路，先定位问题，再检查边界。',references=refs)])
+            self._json(200, {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(result,ensure_ascii=False)}}]})
+            return
         if any('把用户的人格描述整理为人格档案' in str(m.get('content','')) for m in payload.get('messages', [])):
             STATE.requested('persona:' + model)
             result = dict(style=dict(character_name='合成角色',identity='合成数字伙伴',scenario_rules=['专业场景减少语气词，保持准确'],address='同学',tone='warm',phrasing='plain',detail='concise',reminders='gentle',traits=['鼓励先做一个小步骤']),

@@ -286,7 +286,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
           {turn.status === 'purged' ? <p>这轮讨论内容已删除。</p> : <>
             <LearningUserMessage content={turn.user_content ?? ''} maxLength={12000}
               attachments={<MessageAttachments kind="discussion" id={id} versionIds={questionAttachments.attachment_version_ids ?? []} scope={questionAttachments.source_scope} versions={materialVersions} />}
-              editing={editingTurnId === turn.id} editDisabled={busy || branchBusy || running || Boolean(pending) || (Boolean(editingTurnId) && editingTurnId !== turn.id)} sendDisabled={busy || branchBusy || running || Boolean(pending)}
+              editing={editingTurnId === turn.id} editDisabled={Boolean(turn.branch_conclusion) || busy || branchBusy || running || Boolean(pending) || (Boolean(editingTurnId) && editingTurnId !== turn.id)} sendDisabled={busy || branchBusy || running || Boolean(pending)}
               onStartEdit={() => setEditingTurnId(turn.id)}
               onCancelEdit={() => { setEditingTurnId(null); editRequest.current = null; setError(''); }}
               onSendEdit={text => {
@@ -297,13 +297,14 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
                 onPrevious: () => { const target = questionVersions[questionIndex - 1]; replyHistory.switchVersion(replyHistory.preferredVersion(target.question_id, target.id)); },
                 onNext: () => { const target = questionVersions[questionIndex + 1]; replyHistory.switchVersion(replyHistory.preferredVersion(target.question_id, target.id)); } }} />
             <LearningMessage role="assistant" state={turn.status === 'running' ? 'streaming' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? 'canceled' : 'failed') : undefined} status={turn.status === 'running' ? '生成中' : turn.status === 'failed' ? (turn.reason === 'cancelled' ? '已取消' : '失败') : undefined}>
+              {turn.branch_conclusion && <small className="ai-inherited-answer">已整理确认的分支结论 · 来源见分支图</small>}
               <AssistantResponse key={turn.id} trace={turn.generation_trace} content={turn.assistant_content ?? ''} reasoningContent={turn.reasoning_content} searchTrace={turn.search_trace} streaming={turn.status === 'running'} />
               {turn.inherited_from ? turn.help_record && <div className="help-record"><details><summary>帮助记录（继承自原讨论）</summary><HelpRecordFacts record={turn.help_record} /></details></div> : <HelpRecord key={`help:${turn.id}`} record={turn.help_record} body={turn.assistant_content ?? ''} terminal={turn.status !== 'running'} onDisplay={characters => recordDiscussionHelpDisplay(id, turn.id, characters)} />}
               {turn.status === 'failed' && <div role="status"><p>{turn.reason === 'cancelled' ? '已取消生成，已收到的内容保留。' : '这次回复未完成，问题和已收到的内容已保存。'}</p></div>}
-              {turn.status === 'succeeded' && turn.sources.length === 0 && <p className="form-hint">{turn.history_searched ? '本轮检索没有找到匹配的历史记录。' : '本轮依据这道题和当前讨论回答，未检索其他历史。'}</p>}
+              {!turn.branch_conclusion && turn.status === 'succeeded' && turn.sources.length === 0 && <p className="form-hint">{turn.history_searched ? '本轮检索没有找到匹配的历史记录。' : '本轮依据这道题和当前讨论回答，未检索其他历史。'}</p>}
               {turn.sources.length > 0 && <DiscussionSources sources={turn.sources} />}
               <ModelConfigHistory config={turn.model_config} />
-              <LearningReplyActions more={<MaterialUse scope={turn.source_scope} versions={materialVersions} kind="discussion" scopeId={id} />} content={turn.assistant_content ?? ''} retryDisabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !turn.user_content}
+              <LearningReplyActions more={<MaterialUse scope={turn.source_scope} versions={materialVersions} kind="discussion" scopeId={id} />} content={turn.assistant_content ?? ''} retryDisabled={Boolean(turn.branch_conclusion) || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || !turn.user_content}
                 onRetry={() => void send(turn.user_content ?? '', requestId(), false, true, turn.id)}
                 onBranch={() => void branch(turn.id)} branchDisabled={!searchChoice.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId) || turn.status === 'running' || Boolean(turn.source_scope?.purged)}
                 version={{ disabled: busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId), index: discussion.turns.filter(item => item.question_id === turn.question_id).findIndex(item => item.id === turn.id), count: discussion.turns.filter(item => item.question_id === turn.question_id).length,

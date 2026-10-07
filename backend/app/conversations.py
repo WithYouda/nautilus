@@ -1573,6 +1573,7 @@ class ConversationService:
             reply = snapshot.get("reply", {})
             item["source_scope"] = public_scope(snapshot.get("source_scope"), item["content"])
             item["attachment_version_ids"] = snapshot.get("attachment_version_ids", [])
+            item["branch_conclusion"] = bool(snapshot.get("branch_merge"))
             if item["role"] == "assistant":
                 from .model_control import public_snapshot
                 item['model_config'] = public_snapshot(snapshot)
@@ -1798,6 +1799,11 @@ class ConversationService:
         if edit_message_id and (regenerate_message_id or parent_message_id):
             raise ConversationError("编辑消息不能同时指定重新生成或回答上下文")
 
+        if regenerate_message_id or edit_message_id:
+            seed = self.database.fetchone("SELECT config_snapshot_json FROM ai_run WHERE conversation_id=? AND (response_message_id=? OR request_message_id=?)",
+                (conversation_id, regenerate_message_id, edit_message_id))
+            if seed and json.loads(seed[0] or '{}').get('branch_merge'):
+                raise ConversationConflict('这是已整理确认的结论，请从下方继续提问或另建分支。')
         original_snapshot = None
         if regenerate_message_id:
             original = self.database.fetchone("""SELECT r.config_snapshot_json FROM ai_run r

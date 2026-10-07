@@ -32,6 +32,7 @@ def _marker(snapshot, material_ids):
     # Keep reply lineage so existing UI history remains navigable.
     all_ids = list(dict.fromkeys([*(old.get('source_scope') or {}).get('material_ids', []), *material_ids]))
     return json.dumps({**{key:old[key] for key in ('branch_origin', 'branch_material_version_ids') if key in old},
+                       **({'branch_merge': {'parents': old['branch_merge']['parents']}} if old.get('branch_merge', {}).get('parents') else {}),
                        'reply':old.get('reply', {}),
                        'source_scope':{'purged':True,'material_ids':all_ids}}, ensure_ascii=False)
 
@@ -229,7 +230,8 @@ def erase_ordinary(c, owner, material_id, now, source_run_ids=()):
         for conversation_id in {run['conversation_id'] for run in runs}:
             c.execute("""UPDATE conversation SET title='新的学习对话',title_source='placeholder',
                 title_generation_status='idle',title_revision=title_revision+1,title_generated_at=NULL,updated_at=?
-                WHERE id=? AND identity_id=? AND title_source IN ('ai','fallback')""", (now,conversation_id,owner))
+                WHERE id=? AND identity_id=? AND (title_source IN ('ai','fallback') OR EXISTS (
+                    SELECT 1 FROM ai_run r WHERE r.conversation_id=conversation.id AND json_type(r.config_snapshot_json,'$.branch_merge')='object'))""", (now,conversation_id,owner))
     return affected
 
 

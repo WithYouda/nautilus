@@ -364,7 +364,8 @@ class ModelControlService:
             # that the source may have changed since the first request.
             row = self.chats.database.fetchone('''SELECT config_snapshot_json FROM ai_run
                 WHERE identity_id=? AND conversation_id=? ORDER BY rowid LIMIT 1''', (owner, branch_id))
-            template = ((json.loads(row[0]).get('branch_origin') or {}).get('model_config_copy') if row else None)
+            saved = json.loads(row[0]) if row else {}
+            template = (saved.get('branch_origin') or saved.get('branch_merge') or {}).get('model_config_copy')
             if template is not None:
                 value, room = template['override'], template.get('room')
             else:
