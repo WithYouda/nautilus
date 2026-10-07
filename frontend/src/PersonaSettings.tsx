@@ -44,7 +44,7 @@ export default function PersonaSettings() {
       if (!live.current) return;
       setState(result); setSelected(result.active_id ?? selected); pending.current = null;
       setEditing(false); setPreview(null);
-      setNotice(action === 'disable' ? '人格已停用。' : '人格已启用，将用于之后的新回答。');
+      setNotice(action === 'disable' ? '人格已停用。' : '人格已启用，作为全局默认。');
       window.dispatchEvent(new Event('nautilus:learning-state-changed'));
     } catch (reason) { if (live.current) { setError(reason instanceof Error ? reason.message : '保存未成功，请重试。'); pending.current = null; } }
     finally { if (live.current) setBusy(false); }
@@ -63,10 +63,10 @@ export default function PersonaSettings() {
     finally { if (live.current) setBusy(false); }
   }
   return <section className="persona-settings" id="persona-settings" aria-label="人格设置">
-    <h3>人格</h3><p>教练与任务教学共用你选择的人格。</p>
+    <h3>人格</h3><p>在这里设置全局默认人格，计划、任务和对话可单独选择。</p>
     {!state && !error && <p role="status">正在读取人格…</p>}
     {state && <>
-      <p className="persona-current">当前：<strong>{active?.name ?? '未启用人格'}</strong>{active && <button className="text-button" type="button" disabled={busy} onClick={() => void change('disable')}>停用</button>}</p>
+      <p className="persona-current">全局默认：<strong>{active?.name ?? '未启用人格'}</strong>{active && <button className="text-button" type="button" disabled={busy} onClick={() => void change('disable')}>停用</button>}</p>
       {state.profiles.length > 0 && <div className="persona-choice"><label className="field"><span>已保存的人格</span><select aria-label="已保存的人格" value={selected} disabled={busy} onChange={event => { setSelected(event.target.value); setEditing(false); setPreview(null); setNotice(''); }}><option value="" disabled>选择人格</option>{state.profiles.map(item => <option key={item.id} value={item.id}>{item.versions.at(-1)?.name}</option>)}</select></label>{profile && state.active_id !== profile.id && <button className="button button--quiet button--compact" type="button" disabled={busy} onClick={() => void change('activate', { profile_id: profile.id })}>启用此人格</button>}</div>}
       <div className="persona-actions"><button className="button button--quiet button--compact" type="button" disabled={busy} onClick={() => edit()}>新建人格</button><button className="text-button" type="button" disabled={busy} onClick={() => fileInput.current?.click()}>导入人格</button>{current && <button className="text-button" type="button" disabled={busy} onClick={() => edit(current)}>编辑</button>}</div>
       <input className="persona-file" ref={fileInput} type="file" accept=".json,application/json" aria-label="导入人格文件" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void importFile(file); }} />

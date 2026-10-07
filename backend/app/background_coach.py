@@ -216,7 +216,7 @@ class BackgroundCoach:
         maximum=MAX_OUTPUT_TOKENS;limit=snapshot['model']['capabilities'].get('max_output_tokens')
         if type(limit) is int and limit>0: maximum=min(maximum,limit)
         frozen={**snapshot['model_control'],'max_tokens':maximum,'prompt_schema_version':1,
-                'persona':self.chats.persona_snapshot(owner)}
+                'persona':self.chats.persona_snapshot(owner, kind=scope, scope_id='default' if scope=='global' else plan_id)}
         try:
             result=self.learning.core.execute(self.learning.principal(identity),ClaimCoachRun(run_id=str(uuid4()),scope=scope,plan_id=plan_id,
                 trigger=trigger,inputs=inputs,provider_snapshot=frozen,retry_run_id=retry,

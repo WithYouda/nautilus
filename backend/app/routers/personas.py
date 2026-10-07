@@ -6,6 +6,7 @@ from ..credentials import CredentialError
 from ..conversations import ConversationError
 from ..providers import ProviderError
 from ..personas import PersonaError
+from ..learning_domain import DomainError
 
 
 def private(response: Response):
@@ -16,6 +17,8 @@ router = APIRouter(prefix='/api/personas', dependencies=[Depends(private)])
 
 
 def error(exc):
+    if isinstance(exc, DomainError):
+        raise HTTPException(exc.status, exc.code) from None
     if isinstance(exc, PersonaError):
         raise HTTPException(exc.status, str(exc)) from None
     if isinstance(exc, ValidationError):
@@ -68,4 +71,21 @@ def export(identifier: str, request: Request, identity=Depends(current_identity)
     try:
         return request.app.state.personas.export(identity['id'], identifier)
     except (PersonaError, CredentialError, ValidationError) as exc:
+        error(exc)
+
+
+@router.get('/scopes/{kind}/{scope_id}')
+def get_scope(kind: str, scope_id: str, request: Request, identity=Depends(current_identity)):
+    try:
+        return request.app.state.personas.get_scope(identity['id'], kind, scope_id)
+    except (PersonaError, CredentialError, DomainError, ConversationError) as exc:
+        error(exc)
+
+
+@router.put('/scopes/{kind}/{scope_id}')
+async def set_scope(kind: str, scope_id: str, request: Request, identity=Depends(current_identity)):
+    payload = await body(request)
+    try:
+        return request.app.state.personas.set_scope(identity['id'], kind, scope_id, payload)
+    except (PersonaError, CredentialError, DomainError, ConversationError) as exc:
         error(exc)

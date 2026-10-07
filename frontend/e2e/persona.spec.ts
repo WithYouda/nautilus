@@ -4,6 +4,7 @@ import { authorize } from './fact-helpers';
 test('persona preview, confirmed versions, restore, export/import and actual coach use', async ({ page }) => {
   test.setTimeout(90_000);
   await authorize(page);
+  const initialState = await (await page.request.get('/api/personas')).json();
   const configured = await page.request.put('/api/ai/provider', { data: { display_name: 'Synthetic persona', base_url: process.env.NAUTILUS_E2E_MOCK_PROVIDER_URL, model: 'mock-success', api_key: 'synthetic-persona', enabled: true, request_timeout_seconds: 15 } });
   expect(configured.ok()).toBeTruthy();
   await page.getByRole('button', { name: '设置', exact: true }).click();
@@ -16,7 +17,7 @@ test('persona preview, confirmed versions, restore, export/import and actual coa
   await expect(section.getByLabel('人格预览')).toContainText('角色自称：合成角色');
   await expect(section.getByLabel('人格预览')).toContainText('专业场景减少语气词');
   await expect(section.getByText('请先修改这些要求：')).toHaveCount(0);
-  expect((await (await page.request.get('/api/personas')).json()).active_id).toBeNull();
+  expect((await (await page.request.get('/api/personas')).json()).active_id).toBe(initialState.active_id);
   await page.setViewportSize({ width: 390, height: 900 });
   await section.getByLabel('人格预览').scrollIntoViewIfNeeded();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
@@ -35,7 +36,7 @@ test('persona preview, confirmed versions, restore, export/import and actual coa
   await section.getByRole('button', { name: '恢复并启用此版', exact: true }).click();
   await expect(section.locator('.persona-current')).toContainText('合成温和导师');
   state = await (await page.request.get('/api/personas')).json();
-  expect(state.profiles[0].versions.at(-1).version).toBe(3);
+  expect(state.profiles.find((profile: { id: string }) => profile.id === originalId).versions.at(-1).version).toBe(3);
   const download = page.waitForEvent('download');
   await section.getByRole('button', { name: '导出当前人格', exact: true }).click();
   await (await download).saveAs('/tmp/nautilus-persona-test-export.json');
@@ -45,7 +46,7 @@ test('persona preview, confirmed versions, restore, export/import and actual coa
   await section.getByRole('button', { name: '确认并启用', exact: true }).click();
   await expect(section.getByRole('status')).toContainText('人格已启用');
   state = await (await page.request.get('/api/personas')).json();
-  expect(state.profiles).toHaveLength(2);
+  expect(state.profiles).toHaveLength(initialState.profiles.length + 2);
   await section.getByLabel('已保存的人格', { exact: true }).selectOption(originalId);
   await section.getByRole('button', { name: '启用此人格', exact: true }).click();
   await expect(section.getByRole('status')).toContainText('人格已启用');

@@ -361,7 +361,7 @@ class QuestionDiscussionService:
         try:
             teaching_default = self.chats.default_teaching_mode(owner, original_snapshot) if not existing_turn else 'stepwise'
             adaptive_profile = self.chats.adaptive_profile(owner, original_snapshot) if not existing_turn else None
-            persona = self.chats.persona_snapshot(owner, original_snapshot) if not existing_turn else None
+            persona = self.chats.persona_snapshot(owner, original_snapshot, kind="discussion", scope_id=discussion_id) if not existing_turn else None
         except ConversationError as error:
             raise DomainError('teaching_defaults_unavailable', 400) from error
         teaching_output = {'format': 'plain', 'version': 1, 'reason': 'not_checked'}

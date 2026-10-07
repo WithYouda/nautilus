@@ -125,10 +125,10 @@ class ConversationService:
         except (PreferencesError, CredentialError) as error:
             raise ConversationError('默认学习方式无法读取，请先检查设置') from error
 
-    def persona_snapshot(self, owner, original_snapshot=None):
+    def persona_snapshot(self, owner, original_snapshot=None, *, kind="global", scope_id="default"):
         from .personas import PersonaError
         try:
-            return self.personas.freeze(owner, original_snapshot) if self.personas else None
+            return self.personas.freeze(owner, original_snapshot, kind=kind, scope_id=scope_id) if self.personas else None
         except (PersonaError, CredentialError) as error:
             raise ConversationError("人格配置无法读取，请检查设置") from error
 
@@ -1856,7 +1856,7 @@ class ConversationService:
             config_snapshot["attachment_version_ids"] = self.materials.attachment_ids(frozen, attachment_version_ids) if self.materials else []
         except DomainError as error:
             raise ConversationError("附件不可用，请重新选择文件") from error
-        config_snapshot["persona"] = self.persona_snapshot(identity_id, original_snapshot)
+        config_snapshot["persona"] = self.persona_snapshot(identity_id, original_snapshot, kind="conversation", scope_id=conversation_id)
         config_snapshot["source_request"] = source_scope or {"mode": "unspecified", "version_ids": []}
         config_snapshot["source_scope"] = public_scope(frozen)
         from .search_adapters import SearchError

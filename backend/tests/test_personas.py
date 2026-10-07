@@ -3,14 +3,8 @@ import json
 from uuid import uuid4
 import httpx
 import pytest
-from app.credentials import CredentialStore
-from app.personas import PersonaService
-from app.question_discussion import QuestionDiscussionService
 from test_evidence_claims import authorize
-from test_teaching_runtime import chat_turn, saved, TeachingProvider
-from test_learning_domain_schema import learning_database  # noqa: F401
-from test_learning_verifications import IDENTITY
-from test_verification_review import attempt
+from test_teaching_runtime import chat_turn, saved
 
 STYLE = dict(address='同学', tone='warm', phrasing='plain', detail='concise', reminders='gentle', traits=['鼓励先做一个小步骤'])
 PACKAGE = dict(format='nautilus.persona', schema_version=1, name='合成温和导师', description='合成人格原文_ONLY_LOCAL_不要重复进每次请求', style=STYLE)
@@ -110,27 +104,6 @@ def test_actual_reply_applies_shared_persona_and_retry_keeps_frozen_version(pers
     assert client.get('/api/ai/conversations/' + identifier).json()['messages'][1]['model_config']['persona']['version'] == 1
 
 
-@pytest.mark.asyncio
-async def test_question_discussion_uses_same_persona_without_changing_evaluation(learning_database, tmp_path):
-    verification, original = await attempt(learning_database)
-    chats = verification.conversations
-    chats.credentials = CredentialStore(tmp_path / 'persona-credentials')
-    chats.personas = PersonaService(chats)
-    preview = await chats.personas.preview(IDENTITY['id'], dict(package=PACKAGE, request_key='p'))
-    chats.personas.change(IDENTITY['id'], dict(action='confirm', preview_id=preview['preview_id'], expected_revision=0, request_key='c'))
-    service = QuestionDiscussionService(verification)
-    identifier = service.create(IDENTITY, original['id'], original['latest_submission_id'], 'q1', 'persona-discussion')['id']
-    provider = TeachingProvider(); verification.transport = httpx.MockTransport(provider)
-    before = learning_database.fetchone('SELECT COUNT(*) FROM learning_event')[0]
-    previous_result = service.records.detail(IDENTITY, original['id'])['result']
-    answer = (await service.send(IDENTITY, identifier, '帮我理解', 'persona-answer'))['turns'][-1]
-    assert answer['status'] == 'succeeded'
-    assert '鼓励先做一个小步骤' in json.dumps(provider.calls[-1][0]['messages'], ensure_ascii=False)
-    snapshot = json.loads(learning_database.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (answer['id'],))[0])
-    assert snapshot['persona']['version'] == 1
-    assert learning_database.fetchone('SELECT COUNT(*) FROM learning_event')[0] == before
-    assert service.records.detail(IDENTITY, original['id'])['result'] == previous_result
-
 
 def test_archive_label_is_not_character_name_and_nonissues_do_not_block(persona_client):
     client, identity, _ = persona_client
@@ -160,3 +133,61 @@ def test_archive_label_is_not_character_name_and_nonissues_do_not_block(persona_
     assert '99123' not in prompt and '微光' in prompt and '减少70%' in prompt
     exported = client.get('/api/personas/' + state['active_id'] + '/export').json()
     assert exported['name'] == '99123' and exported['style']['character_name'] == '微光'
+
+
+@pytest.mark.parametrize('kind', ['conversation', 'discussion'])
+def test_persona_layers_follow_ownership_disable_and_freeze(tmp_path, kind):
+    from test_model_control import RecordingProvider, make_client, configure_provider, make_scope, send, new_chat
+    provider = RecordingProvider()
+    with make_client(tmp_path, provider) as client:
+        identity = authorize(client)
+        configure_provider(client)
+        first = confirm(client)['active_id']
+        second = confirm(client, {**PACKAGE, 'name': '合成计划导师', 'style': {**STYLE, 'address': '朋友'}})['active_id']
+        scope_id, context, original = make_scope(client, provider, kind)
+        service = client.app.state.personas
+        original_result = client.get(f"/api/learning/verifications/{original['id']}").json()['result'] if original else None
+        def read(k=kind, identifier=scope_id):
+            response = client.get(f'/api/personas/scopes/{k}/{identifier}')
+            assert response.status_code == 200, response.text
+            return response.json()
+        def select(k, identifier, selection):
+            response = client.put(f'/api/personas/scopes/{k}/{identifier}', json={
+                'selection': selection, 'expected_revision': read(k, identifier)['revision']})
+            assert response.status_code == 200, response.text
+            return response.json()
+        select('global', 'default', first)
+        assert read()['source'] == 'global'
+        select('plan', context['plan_id'], second)
+        assert read()['source'] == 'plan'
+        assert read()['effective']['name'] == '合成计划导师'
+        # An unrelated open conversation must not inherit the latest plan.
+        unrelated = new_chat(client)
+        assert read('conversation', unrelated)['effective']['name'] == PACKAGE['name']
+        select('task', context['action_id'], None)
+        assert read()['source'] == 'task' and read()['effective'] is None
+        disabled = send(client, kind, scope_id, 'disabled')
+        assert disabled['model_config']['persona'] is None
+        select(kind, scope_id, first)
+        answer = send(client, kind, scope_id, 'assigned')
+        assert answer['model_config']['persona'] == {'name': PACKAGE['name'], 'version': 1}
+        assert '鼓励先做一个小步骤' in json.dumps(provider.payloads[-1]['messages'], ensure_ascii=False)
+        # Persisted assignments survive recreating the service, without copying profiles.
+        from app.personas import PersonaService
+        assert PersonaService(service.chats).get_scope(identity['id'], kind, scope_id)['selection'] == first
+        select(kind, scope_id, 'inherit')
+        assert read()['effective'] is None
+        select('task', context['action_id'], 'inherit')
+        assert read()['source'] == 'plan'
+        retry = {'regenerate_message_id' if kind == 'conversation' else 'regenerate_turn_id': answer['id']}
+        repeated = send(client, kind, scope_id, 'retry', **retry)
+        assert repeated['model_config']['persona'] == answer['model_config']['persona']
+        inherited = send(client, kind, scope_id, 'inherited')
+        assert inherited['model_config']['persona']['name'] == '合成计划导师'
+        assert service.reminder_body(identity['id'], '合成提醒', kind='task', scope_id=context['action_id']).startswith('朋友，')
+        from app.learning_domain import DomainError
+        with pytest.raises(DomainError):
+            service.get_scope('other-owner', 'plan', context['plan_id'])
+        assert client.get('/api/personas/scopes/task/missing-task').status_code == 404
+        if original:
+            assert client.get(f"/api/learning/verifications/{original['id']}").json()['result'] == original_result

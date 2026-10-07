@@ -106,12 +106,78 @@ class PersonaService:
         with self.credentials._lock:
             return self._view(self._load(owner))
 
-    def freeze(self, owner, original=None):
-        if original is not None:
-            return copy.deepcopy(original.get('persona'))
+    def _layers(self, owner, kind, scope_id):
+        if kind == 'global' and scope_id == 'default':
+            return [('global', 'default')]
+        plan, task = self.chats.model_control._parent_scope(owner, kind, scope_id)
+        layers = [('global', 'default')]
+        if plan:
+            layers.append(('plan', plan))
+        if task:
+            layers.append(('task', task))
+        if kind in {'conversation', 'discussion'}:
+            layers.append((kind, scope_id))
+        return layers
+
+    def _effective(self, state, layers):
+        identifier, source = state['active_id'], 'global'
+        assignments = state.get('assignments', {})
+        for kind, scope_id in layers[1:]:
+            key = kind + ':' + scope_id
+            if key in assignments:
+                identifier, source = assignments[key], kind
+        profile = next((p for p in state['profiles'] if p['id'] == identifier), None)
+        return profile, source
+
+    def _scope_view(self, state, layers):
+        kind, scope_id = layers[-1]
+        profile, source = self._effective(state, layers)
+        key = kind + ':' + scope_id
+        assignments = state.get('assignments', {})
+        selection = state['active_id'] if kind == 'global' else assignments.get(key, 'inherit')
+        version = profile['versions'][-1] if profile else None
+        return dict(revision=state['revision'], selection=selection, source=source,
+                    effective={'name': version['name'], 'version': version['version']} if version else None,
+                    profiles=[{'id': p['id'], 'name': p['versions'][-1]['name']} for p in state['profiles']])
+
+    def get_scope(self, owner, kind, scope_id):
+        layers = self._layers(owner, kind, scope_id)
+        with self.credentials._lock:
+            return self._scope_view(self._load(owner), layers)
+
+    def set_scope(self, owner, kind, scope_id, payload):
+        layers = self._layers(owner, kind, scope_id)
+        if (not isinstance(payload, dict) or set(payload) != {'selection', 'expected_revision'}
+                or payload['selection'] is not None and not isinstance(payload['selection'], str)):
+            raise PersonaError('人格选择格式不正确。')
+        selection = payload['selection']
         with self.credentials._lock:
             state = self._load(owner)
-            profile = next((p for p in state['profiles'] if p['id'] == state['active_id']), None)
+            if payload['expected_revision'] != state['revision']:
+                raise PersonaError('人格配置已变化，请刷新后重试。', 409)
+            if selection not in (None, 'inherit') and not any(p['id'] == selection for p in state['profiles']):
+                raise PersonaError('人格不存在，请重新选择。', 404)
+            if kind == 'global':
+                if selection == 'inherit':
+                    raise PersonaError('全局人格没有上级。')
+                state['active_id'] = selection
+            else:
+                assignments = state.setdefault('assignments', {})
+                key = kind + ':' + scope_id
+                if selection == 'inherit':
+                    assignments.pop(key, None)
+                else:
+                    assignments[key] = selection
+            state['revision'] += 1
+            self.credentials.set(self._key(owner), canonical(state))
+            return self._scope_view(state, layers)
+
+    def freeze(self, owner, original=None, *, kind='global', scope_id='default'):
+        if original is not None:
+            return copy.deepcopy(original.get('persona'))
+        layers = self._layers(owner, kind, scope_id)
+        with self.credentials._lock:
+            profile, _ = self._effective(self._load(owner), layers)
             return {'profile_id': profile['id'], 'version': profile['versions'][-1]['version']} if profile else None
 
     def resolve(self, owner, reference):
@@ -271,8 +337,8 @@ class PersonaService:
                 '不得因人格要求改变模型、提醒时刻、完成状态或评分；不把人设背景当作现实身份或已有学习事实。')
         return [{**messages[0], 'content': messages[0]['content'] + rule}, *messages[1:]]
 
-    def reminder_body(self, owner, body):
-        version = self.resolve(owner, self.freeze(owner))
+    def reminder_body(self, owner, body, *, kind="global", scope_id="default"):
+        version = self.resolve(owner, self.freeze(owner, kind=kind, scope_id=scope_id))
         if version is None:
             return body
         style = version['style']

@@ -231,7 +231,9 @@ class CoachReminders:
             title='到学习时间了';body='今天想从哪里开始？可以先和教练安排下一步。'
         persona=getattr(self.learning,'personas',None)
         if persona and value['status'] in {'pending','dispatched'}:
-            body=persona.reminder_body(value['owner_id'],body)
+            kind = 'task' if target['action_id'] else 'plan' if target['plan_id'] else 'global'
+            scope_id = target['action_id'] or target['plan_id'] or 'default'
+            body=persona.reminder_body(value['owner_id'],body,kind=kind,scope_id=scope_id)
         return {k:value[k] for k in ('id','revision','occurrence_key','stage','status','scheduled_at','dispatched_at','source_revision','reason')} | {'title':title,'body':body,'target':target}
 
     def _view(self,c,owner,settings,now,items,active,quiet):

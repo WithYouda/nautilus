@@ -3,6 +3,7 @@ import { SlidersHorizontal } from 'lucide-react';
 import { getModelConfig, listAiProviders, previewModelConfig, putModelConfig, type AiProvider, type ModelConfig, type ModelOverride, type ModelRunConfig, type ModelSource, type ModelScopeKind, type ReasoningChoice } from './api';
 import { reasoningLabel } from './ReasoningControl';
 import './ModelControl.css';
+import PersonaScopeControl from './PersonaScopeControl';
 
 const emptyOverride = (): ModelOverride => ({ model: null, timeout_seconds: null });
 const scopeNames: Record<ModelSource['kind'], string> = { global: '全局默认', plan: '计划', task: '任务', conversation: '当前对话', discussion: '当前对话', run: '仅本次', model: '模型配置' };
@@ -145,7 +146,7 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
     } catch { /* The hook keeps the server error visible and the draft intact. */ }
   }
   const blocked = disabled || control.busy || !config;
-  return <section className="model-control" aria-label="模型配置">
+  return <><section className="model-control" aria-label="模型配置">
     {allowOnce && <div className="model-control__scope" role="group" aria-label="模型覆盖范围">
       <button type="button" aria-pressed={!once} onClick={() => setOnce(false)} disabled={disabled}>当前对话</button>
       <button type="button" aria-pressed={once} onClick={() => setOnce(true)} disabled={disabled}>仅本次</button>
@@ -164,7 +165,7 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
     </div>
     {control.runOverride && <p className="model-control__once" role="status">仅本次覆盖已准备</p>}
     {(control.error || config?.issues.length) ? <p role="alert">{control.error || config?.issues.join('；')} <button type="button" className="text-button" disabled={control.busy} onClick={() => void control.reload().catch(() => {})}>刷新配置</button></p> : message && <p role="status">{message}</p>}
-  </section>;
+  </section>{config && !global && <PersonaScopeControl key={scope} kind={config.scope_kind} id={config.scope_id} disabled={disabled} />}</>;
 }
 function ScopedModelPanel({ kind, id }: { kind: 'plan' | 'task'; id: string }) {
   const control = useModelControl(kind, id);
