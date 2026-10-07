@@ -308,7 +308,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             if STATE.reject_teaching_check():
                 self._json(401, {"error": {"message": "Synthetic temporary teaching-check rejection"}})
                 return
-        scenario = model if model in {"mock-success", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools", "mock-process-tools", "mock-knowledge-tools"} else "mock-success"
+        scenario = model if model in {"mock-success", "mock-python", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools", "mock-process-tools", "mock-knowledge-tools"} else "mock-success"
         is_title_request = payload.get("stream") is not True and int(payload.get("max_tokens") or 0) >= 256
         STATE.requested(f"title:{scenario}" if is_title_request else scenario)
 
@@ -758,6 +758,8 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _scenario_stream(scenario: str) -> tuple[list[str], float]:
+        if scenario == "mock-python":
+            return ["试运行下面的代码。\n\n```python\nimport numpy as np\nimport matplotlib.pyplot as plt\nprint(np.arange(4).sum())\nplt.plot([1,4,2])\nplt.show()\n```"], 0.01
         if scenario == "mock-math":
             return [MATH_TEXT[:35], MATH_TEXT[35:80], MATH_TEXT[80:]], 0.1
         if scenario == "mock-refresh":

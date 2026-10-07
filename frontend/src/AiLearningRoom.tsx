@@ -1,3 +1,4 @@
+import { PythonContext } from "./PythonCode";
 import { COACH_SESSION_KEY, coachKey, getCoachConversation, listCoachConversations, openCoachConversation, type CoachConversationDetail, type CoachMessageContext } from './coach-conversation-api';
 import { CoachActions } from './CoachConversation';
 import CoachPurgeDialog from './CoachPurgeDialog';
@@ -1569,7 +1570,7 @@ function MessageBubble({ message, mergeContinued = false, onMergeNavigate, coach
   return (
     <LearningMessage assistantLabel={coachMode ? '学习教练' : 'AI 学习伙伴'} id={`answer-${message.id}`} role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
       {message.inherited_from && <small className="ai-inherited-answer">继承的历史回答</small>}
-      <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
+      <PythonContext.Provider value={!coachMode && message.status === "complete" && !message.inherited_from && !message.source_scope?.purged ? {kind:"conversation",id:message.conversation_id,answer_id:message.id}:null}><AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} /></PythonContext.Provider>
       {!coachMode && !message.inherited_from && <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />}
       <ModelConfigHistory config={message.model_config} />
       <LearningReplyActions hideBranch={coachMode} version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || Boolean(message.branch_conclusion) || message.status === 'streaming'} onBranch={onBranch} branchDisabled={branchDisabled} more={!coachMode && <MaterialUse scope={message.source_scope} versions={materialVersions} kind="conversation" scopeId={message.conversation_id} />} />

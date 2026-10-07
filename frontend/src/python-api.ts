@@ -1,0 +1,10 @@
+import { learningRequest } from './api';
+export type PythonOrigin = {kind:'conversation'|'discussion';id:string;answer_id:string};
+export type PythonConfig = {id:string;name:string;enabled:boolean;available:boolean;libraries:string[];timeout_seconds:number;memory_mb:128|256|512|1024;revision:number};
+export type PythonRun = {id:string;origin:PythonOrigin;request_key:string;code:string;stdin:string;status:string;created_at:string;finished_at:string|null;reason:string|null;environment:{libraries:string[];timeout_seconds:number;memory_mb:number};result:{exit_code:number;stdout:string;stderr:string;figures:string[]}|null};
+const base='/api/plugins/python';
+export const getPython = () => learningRequest<PythonConfig>(base);
+export const configurePython = (v:PythonConfig) => learningRequest<PythonConfig>(base,{method:'PUT',body:JSON.stringify({enabled:v.enabled,timeout_seconds:v.timeout_seconds,memory_mb:v.memory_mb,revision:v.revision})});
+export const getPythonRuns = (origin:PythonOrigin) => learningRequest<PythonRun[]>(base+'/runs?'+new URLSearchParams(origin));
+export const runPython = (origin:PythonOrigin,code:string,stdin:string,request_key:string) => learningRequest<PythonRun>(base+'/runs',{method:'POST',body:JSON.stringify({origin,code,stdin,request_key})});
+export const cancelPython = (origin:PythonOrigin,id:string) => learningRequest<PythonRun>(base+'/runs/'+encodeURIComponent(id)+'/cancel',{method:'POST',body:JSON.stringify({origin})});

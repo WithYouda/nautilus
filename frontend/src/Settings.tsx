@@ -1,3 +1,4 @@
+import { PythonSettings } from "./PythonCode";
 import PersonaSettings from './PersonaSettings';
 import { useEffect, useState, type FormEvent } from 'react';
 import type { AiProvider, TeachingMethod } from './api';
@@ -63,6 +64,7 @@ export default function Settings({ open, section, provider, onClose, onOpenSearc
             <TeachingRecordSettings provider={provider} />
           </section>
           <PersonaSettings />
+          <PythonSettings />
           <CoachReminderSettings />
           <BackgroundCoachSettings />
           <section className={section === 'general' ? 'is-target' : ''}><h3>资料与回答</h3><p>新上传且读取成功的资料会成为当前对话可参考来源。遇到影响答案的实质冲突时，默认怎样处理？</p>

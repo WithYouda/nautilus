@@ -14,6 +14,8 @@ from .diagnostics import DiagnosticService, RuntimeDiagnosticHandler
 from .routers import diagnostics
 from . import __version__
 from .agent_runtime import AgentRuntime
+from .python_execution import PythonExecution
+from .routers import python_execution
 from .ai_runtime import AiRunManager
 from .plan_organization import PlanOrganization
 from .learning_paths import LearningPaths
@@ -213,6 +215,8 @@ def create_app(
         app.state.conversation_state = current_state
         app.state.model_control = model_control_service
         app.state.agent_runtime = agent_runtime
+        app.state.python_execution = PythonExecution(agent_runtime, material_service, credential_store)
+        await app.state.python_execution.recover()
         app.state.state_derivation = state_derivation_service
         app.state.review = review_service
         app.state.measurements = measurement_service
@@ -244,6 +248,7 @@ def create_app(
             yield
         finally:
             outbound_approvals.close()
+            await app.state.python_execution.shutdown()
             await coach_service.shutdown()
             await commitments_service.shutdown()
             await graph_service.shutdown()
@@ -323,6 +328,7 @@ def create_app(
     app.include_router(preferences.router)
     app.include_router(adaptive_preferences.router)
     app.include_router(personas.router)
+    app.include_router(python_execution.router)
     app.include_router(branch_comparisons.router)
     return app
 

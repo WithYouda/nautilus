@@ -1,4 +1,6 @@
 import ReactMarkdown from "react-markdown";
+import { isValidElement, type ReactElement } from "react";
+import { PythonCode } from "./PythonCode";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -65,6 +67,12 @@ export default function LearningMarkdown({ children }: { children: string }) {
   return <ReactMarkdown
     remarkPlugins={[remarkGfm, remarkMath]}
     rehypePlugins={[[rehypeKatex, { trust: false, strict: "ignore", throwOnError: false, maxExpand: 1000 }]]}
-    components={{ a: ({ children: label, ...props }) => <a {...props} target="_blank" rel="noreferrer">{label}</a> }}
+    components={{ pre: ({children: block}) => {
+      if (isValidElement(block)) {
+        const props=(block as ReactElement<{className?:string;children?:string}>).props;
+        if (/^language-(python|py|python3)$/.test(props.className??'') && typeof props.children==='string') return <PythonCode code={props.children}/>;
+      }
+      return <pre>{block}</pre>;
+    }, a: ({ children: label, ...props }) => <a {...props} target="_blank" rel="noreferrer">{label}</a> }}
   >{normalizeMathDelimiters(children)}</ReactMarkdown>;
 }
