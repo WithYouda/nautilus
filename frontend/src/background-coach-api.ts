@@ -42,3 +42,5 @@ export function navigateCoach(href: string): void {
   const target = coachHref(href);
   if (target) window.dispatchEvent(new CustomEvent('nautilus:coach-navigate', { detail: { href: target } }));
 }
+
+export const getCoachHistory = (scope: CoachScope, planId?: string | null, before?: number) => learningRequest<{ items: CoachCandidate[]; next_before: number | null }>(`${base}/history?${scoped(scope, planId)}${before === undefined ? "" : `&before=${before}`}`);

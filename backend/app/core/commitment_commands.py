@@ -43,7 +43,7 @@ class ItemFields(BaseModel):
     estimate_max_minutes: int | None = Field(default=None,ge=1,le=10080)
     due_at: str | None = None
     timezone: str | None = None
-    reason: str = Field(default='',max_length=2000)
+    reason: str = Field(default='')
     source_refs: list[SourceReference] = Field(default_factory=list,max_length=30)
 
     @model_validator(mode='after')
@@ -68,7 +68,7 @@ class PlanCommand(CommitmentCommand):
 class SaveCommitmentDraft(PlanCommand):
     route_version_id: str
     items: list[ItemFields] = Field(max_length=100)
-    reason: str = Field(default='',max_length=2000)
+    reason: str = Field(default='')
     draft_id: str | None = None
     expected_draft_revision: int | None = Field(default=None,ge=1)
 
@@ -150,7 +150,7 @@ class FinishCommitmentRun(CommitmentCommand):
     status: Literal['succeeded','failed']
     reason: str | None = None
     items: list[ItemFields] = Field(default_factory=list,max_length=30)
-    explanation: str = Field(default='',max_length=2000)
+    explanation: str = Field(default='')
 
 
 class CancelCommitmentRun(CommitmentCommand):
@@ -181,7 +181,7 @@ class FeedbackFields(BaseModel):
     artifact_version: int | None = Field(default=None,ge=1)
     submission_id: str | None = None
     delayed_attempt_id: str | None = None
-    notes: str = Field(default='',max_length=2000)
+    notes: str = Field(default='')
 
     @model_validator(mode='after')
     def valid_range(self):

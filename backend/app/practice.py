@@ -24,7 +24,7 @@ class PracticeCreate(BaseModel):
     request_key: str = Field(min_length=1, max_length=160)
     operation: Literal['exercise', 'recheck'] = 'exercise'
     requested_kind: Literal['redo', 'new_situation'] = 'new_situation'
-    objection: str = Field(default='', max_length=4000)
+    objection: str = Field(default='')
     recheck_id: str | None = None
     previous_id: str | None = None
 
@@ -35,7 +35,7 @@ class PracticeChoice(BaseModel):
 
 class PracticeAnswer(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
-    answer: str = Field(min_length=1, max_length=16000)
+    answer: str = Field(min_length=1)
     evidence_condition: Literal['independent', 'with_materials'] = 'with_materials'
     request_key: str = Field(min_length=1, max_length=160)
 
@@ -48,22 +48,22 @@ class PracticeRun(BaseModel):
 
 class Quotation(BaseModel):
     source: Literal['question', 'answer', 'feedback']
-    quote: str = Field(min_length=1, max_length=3000)
+    quote: str = Field(min_length=1)
 
 
 class SourceReview(BaseModel):
     status: Literal['supported', 'corrected', 'insufficient']
-    summary: str = Field(min_length=1, max_length=3000)
-    basis: list[Quotation] = Field(min_length=1, max_length=8)
+    summary: str = Field(min_length=1)
+    basis: list[Quotation] = Field(min_length=1)
 
 
 class Exercise(BaseModel):
     kind: Literal['redo', 'new_situation']
     focus: Literal['required_gap', 'optional']
-    reason: str = Field(min_length=1, max_length=3000)
-    basis: list[Quotation] = Field(min_length=1, max_length=8)
-    prompt: str = Field(min_length=1, max_length=8000)
-    answer_guidance: str = Field(min_length=1, max_length=8000)
+    reason: str = Field(min_length=1)
+    basis: list[Quotation] = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    answer_guidance: str = Field(min_length=1)
 
 
 class Proposal(BaseModel):
@@ -72,15 +72,15 @@ class Proposal(BaseModel):
 
 
 class Hint(BaseModel):
-    text: str = Field(min_length=1, max_length=4000)
+    text: str = Field(min_length=1)
 
 
 class PracticeOpinion(BaseModel):
     assessment: Literal['meets', 'needs_work', 'uncertain']
-    feedback: str = Field(min_length=1, max_length=4000)
-    answer_quote: str = Field(min_length=1, max_length=3000)
-    remaining: list[str] = Field(max_length=12)
-    next_step: str = Field(max_length=2000)
+    feedback: str = Field(min_length=1)
+    answer_quote: str = Field(min_length=1)
+    remaining: list[str] = Field()
+    next_step: str = Field()
 
 
 def reason_text(reason):
@@ -194,7 +194,7 @@ class PracticeService:
             text = await build_provider(config, transport=self.verification.transport).generate_text([
                 {'role':'system','content':instruction},
                 {'role':'user','content':canonical(dict(purpose=purpose, source=source, **payload, schema=schema.model_json_schema()))},
-            ], max_tokens=8192, json_mode=True)
+            ], max_tokens=None, json_mode=True)
         return schema.model_validate(json.loads(_clean_json(text))), profile.get('display_name'), config.model
 
     @staticmethod

@@ -12,7 +12,7 @@ from app.providers import OpenAICompatibleProvider, ProviderError
 def cfg(kind):
     return SimpleNamespace(base_url="https://api.example.test/v1beta" if kind == "google" else "https://api.example.test/v1",
                            model="test", api_key="sk-private-test-secret", timeout_seconds=5,
-                           provider_kind=kind, web_search=True)
+                           provider_kind=kind, web_search=True, max_output_tokens=64000)
 
 
 def sse(*events):

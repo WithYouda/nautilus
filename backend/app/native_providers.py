@@ -193,7 +193,7 @@ class _NativeProvider:
 
     async def test_connection(self) -> dict[str, Any]:
         started = time.monotonic()
-        await self.generate_text([{"role": "user", "content": "ping"}], max_tokens=32)
+        await self.generate_text([{"role": "user", "content": "只回复 OK。"}], max_tokens=None)
         return {"model": self.config.model, "latency_ms": int((time.monotonic() - started) * 1000)}
 
 
@@ -304,7 +304,7 @@ class OpenAIResponsesProvider(_NativeProvider):
             yield _status(self.kind, "succeeded" if searched else "not_used")
         yield ProviderChunk("completion", completion)
 
-    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int | None = 48, json_mode: bool = False) -> str:
+    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int | None = None, json_mode: bool = False) -> str:
         # Responses JSON mode requires an explicit JSON instruction in the input.
         inputs = ([{"role": "system", "content": "Return only a valid JSON object."}] + messages) if json_mode else messages
         body = await self._post_json(self.endpoint, self._payload(inputs, stream=False, max_tokens=max_tokens, json_mode=json_mode))
@@ -422,7 +422,7 @@ class GoogleProvider(_NativeProvider):
             yield _status(self.kind, "succeeded" if grounded else "not_used")
         yield ProviderChunk("completion", "complete")
 
-    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int | None = 48, json_mode: bool = False) -> str:
+    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int | None = None, json_mode: bool = False) -> str:
         body = await self._post_json(self._endpoint(False), self._payload(messages, stream=False, max_tokens=max_tokens, json_mode=json_mode))
         candidate = self._candidate(body)
         if candidate.get("finishReason") == "MAX_TOKENS":
@@ -449,7 +449,7 @@ class AnthropicProvider(_NativeProvider):
     def _headers(self) -> dict[str, str]:
         return {"x-api-key": self.config.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
 
-    def _payload(self, messages: list[dict[str, Any]], *, stream: bool, max_tokens: int = 4096, json_mode: bool = False) -> dict[str, Any]:
+    def _payload(self, messages: list[dict[str, Any]], *, stream: bool, max_tokens: int, json_mode: bool = False) -> dict[str, Any]:
         system = "\n".join(str(m.get("content", "")) for m in messages if m.get("role") == "system")
         converted = encode_messages(messages, self.kind)
         payload: dict[str, Any] = {"model": self.config.model, "messages": converted, "max_tokens": max_tokens, "stream": stream}
@@ -472,7 +472,10 @@ class AnthropicProvider(_NativeProvider):
         sources: dict[str, dict[str, str]] = {}
         if enabled:
             yield _status(self.kind, "running")
-        async for event, body in self._events(self.endpoint, self._payload(messages, stream=True)):
+        maximum = await self._model_output_limit()
+        payload = self._payload(messages, stream=True, max_tokens=maximum)
+        self._use_model_maximum(payload, maximum)
+        async for event, body in self._events(self.endpoint, payload):
             kind = str(body.get("type") or event)
             if kind == "error":
                 raise ProviderError("提供方流式请求失败", kind="upstream_error")
@@ -538,7 +541,7 @@ class AnthropicProvider(_NativeProvider):
         yield ProviderChunk("completion", "complete" if stop_reason == "end_turn" else "unknown")
 
     async def _model_output_limit(self) -> int:
-        known = getattr(self, 'model_output_limit', None)
+        known = getattr(self, 'model_output_limit', None) or getattr(self.config, 'max_output_tokens', None)
         if type(known) is int and known > 0:
             return known
         # Messages requires max_tokens. Use the model's declared maximum,
@@ -560,19 +563,23 @@ class AnthropicProvider(_NativeProvider):
             maximum = None
         if type(maximum) is not int or maximum <= 0:
             raise ProviderError('Claude接口要求max_tokens，但未返回模型输出上限；无法无损省略，未退回固定额度。', kind='config_error')
+        self.model_output_limit = maximum
         return maximum
 
-    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int | None = 48, json_mode: bool = False) -> str:
+    @staticmethod
+    def _use_model_maximum(payload, maximum):
+        # The declared maximum includes thinking as well as the final answer.
+        payload['max_tokens'] = maximum
+        budget = _object(payload.get('thinking')).get('budget_tokens')
+        if type(budget) is int and budget >= maximum:
+            raise ProviderError('思考预算已达到模型总输出上限，请调整当前思考设置。', kind='config_error')
+
+    async def generate_text(self, messages: list[dict[str, Any]], *, max_tokens: int | None = None, json_mode: bool = False) -> str:
         no_app_cap = max_tokens is None
         maximum = await self._model_output_limit() if no_app_cap else max_tokens
         payload = self._payload(messages, stream=False, max_tokens=maximum, json_mode=json_mode)
         if no_app_cap:
-            # Explicit thinking normally adds its budget to a caller's reply
-            # allowance; here the provider maximum already includes thinking.
-            payload['max_tokens'] = maximum
-            budget = _object(payload.get('thinking')).get('budget_tokens')
-            if type(budget) is int and budget >= maximum:
-                raise ProviderError('思考预算已达到模型总输出上限，请调整当前思考设置。', kind='config_error')
+            self._use_model_maximum(payload, maximum)
         body = await self._post_json(self.endpoint, payload)
         if body.get("stop_reason") == "max_tokens":
             raise ProviderError("提供方输出达到长度上限，结果不完整", kind="output_truncated")

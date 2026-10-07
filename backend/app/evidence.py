@@ -29,8 +29,8 @@ class ModelObservationDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     dimension_id: str = Field(min_length=1, max_length=100)
     stance: str = Field(pattern=r"^(supports|refutes|insufficient)$")
-    statement: str = Field(min_length=1, max_length=4000)
-    scope: str = Field(min_length=1, max_length=500)
+    statement: str = Field(min_length=1)
+    scope: str = Field(min_length=1)
 
 
 class EvidenceClaimDraft(ModelObservationDraft):
@@ -149,7 +149,7 @@ class ProviderSemanticAnalyzer:
         ]
         try:
             provider = build_provider(config, transport=self.transport)
-            text = await provider.generate_text(messages, max_tokens=800)
+            text = await provider.generate_text(messages, max_tokens=None)
         except TimeoutError as exc:
             raise AnalysisError("timeout", "语义分析请求超时") from exc
         except ProviderError as exc:

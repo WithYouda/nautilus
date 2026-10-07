@@ -18,22 +18,22 @@ from .verification import _clean_json, _failure_code, VERIFICATION_FAILURE_MESSA
 
 class CompletionReport(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-    method: str = Field(min_length=1, max_length=300)
-    result: str = Field(min_length=1, max_length=2000)
+    method: str = Field(min_length=1)
+    result: str = Field(min_length=1)
 
 
 class CompletionMaterial(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     kind: Literal['work', 'result']
     label: str = Field(min_length=1, max_length=200)
-    text: str = Field(min_length=1, max_length=30000)
+    text: str = Field(min_length=1)
 
 
 class CompletionRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     request_key: str = Field(min_length=1, max_length=160)
     verification_kind: Literal['unverified', 'external_material', 'external_report']
-    note: str = Field(default='', max_length=4000)
+    note: str = Field(default='')
     report: CompletionReport | None = None
     material: CompletionMaterial | None = None
 
@@ -56,22 +56,22 @@ class CompletionReviewRequest(BaseModel):
 
 
 class CompletionResponseRequest(BaseModel):
-    text: str = Field(max_length=4000)
+    text: str = Field()
 
 
 class MaterialFinding(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     kind: Literal['issue', 'question', 'insufficient', 'no_issue']
-    quote: str = Field(max_length=2000)
-    comment: str = Field(min_length=1, max_length=3000)
+    quote: str = Field()
+    comment: str = Field(min_length=1)
 
 
 class MaterialOpinion(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-    summary: str = Field(min_length=1, max_length=3000)
-    findings: list[MaterialFinding] = Field(min_length=1, max_length=20)
-    limitations: str = Field(min_length=1, max_length=3000)
-    next_step: str = Field(max_length=2000)
+    summary: str = Field(min_length=1)
+    findings: list[MaterialFinding] = Field(min_length=1)
+    limitations: str = Field(min_length=1)
+    next_step: str = Field()
 
 
 def completion_summary(connection, owner, delegation_id):
@@ -200,7 +200,7 @@ class CompletionService:
                         '成绩单只能报告原考试结果，不能证明解题能力、本人独立性或真伪；没有工具可核查机构或网站。'
                         '不得覆盖外部原结果、宣称平台已独立核验或撤销任务完成；后续建议完全可选。')},
                     {'role': 'user', 'content': json.dumps(prompt, ensure_ascii=False)},
-                ], max_tokens=8192, json_mode=True)
+                ], max_tokens=None, json_mode=True)
             opinion = MaterialOpinion.model_validate(json.loads(_clean_json(text)))
             for finding in opinion.findings:
                 if (not finding.quote and finding.kind != 'insufficient') or (finding.quote and finding.quote not in content['material']['text']):

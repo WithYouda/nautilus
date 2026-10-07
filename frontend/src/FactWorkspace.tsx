@@ -1382,7 +1382,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                     value={outcomeForm.objectDescription}
                     onChange={(event) => setOutcomeForm({ ...outcomeForm, objectDescription: event.target.value })}
                     placeholder="例如：一套概念说明"
-                    maxLength={500}
+
                     required
                   />
                 </label>
@@ -1392,7 +1392,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                     value={outcomeForm.behavior}
                     onChange={(event) => setOutcomeForm({ ...outcomeForm, behavior: event.target.value })}
                     placeholder="例如：能独立讲清关键区别"
-                    maxLength={500}
+
                     required
                   />
                 </label>

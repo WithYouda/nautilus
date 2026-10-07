@@ -16,7 +16,6 @@ from .coach_sources import (input_state,source_available,source_summary,signal_a
 from .managed_purge import ManagedPurge
 from .core.learning import utc_timestamp
 
-MAX_OUTPUT_TOKENS=8192
 GATES={'coach_disabled','coach_active','coach_no_new_signals','coach_day_limit','coach_session_limit','coach_cooldown','coach_batch_consumed'}
 
 class CandidateProposal(BaseModel):
@@ -153,6 +152,21 @@ class BackgroundCoach:
                 latest_run=next((self._run(c,owner,r) for r in runs if scope=='global' or r['plan_id']==plan_id or any(x['run_id']==r['id'] for x in candidates)),None),
                 pending_signals=len(collect(c,owner,scope,plan_id,self.clock(),self.chats)),budget=limits)
 
+    def history(self, identity, scope='global', plan_id=None, before=None):
+        owner = self._owner(identity)
+        with self.db.transaction() as c:
+            self._scope(c, owner, scope, plan_id)
+            sql = 'SELECT x.rowid AS page_cursor,x.* FROM learning_coach_candidate x JOIN learning_coach_run r ON r.owner_id=x.owner_id AND r.id=x.run_id WHERE x.owner_id=?'
+            values = [owner]
+            if scope == 'plan':
+                sql += " AND COALESCE(json_extract(x.target_json,'$.plan_id'),r.plan_id)=?"; values.append(plan_id)
+            if before is not None:
+                sql += ' AND x.rowid<?'; values.append(before)
+            rows = c.execute(sql + ' ORDER BY x.rowid DESC LIMIT 51', values).fetchall()
+            items = [self._candidate(c, owner, dict(row)) for row in rows[:50]]
+            return {'items': [item for item in items if item['status'] != 'pending'],
+                    'next_before': rows[49]['page_cursor'] if len(rows) > 50 else None}
+
     def run(self,identity,identifier):
         owner=self._owner(identity)
         with self.db.transaction() as c:
@@ -213,8 +227,7 @@ class BackgroundCoach:
         if return_value: return dict(view=self.view(identity,scope,plan_id),run=None,reason=return_value)
         try: _,config,snapshot=self.chats.model_control.runtime(owner,scope,'default' if scope=='global' else plan_id)
         except ConversationError as error: raise DomainError('coach_provider_unavailable',503) from error
-        maximum=MAX_OUTPUT_TOKENS;limit=snapshot['model']['capabilities'].get('max_output_tokens')
-        if type(limit) is int and limit>0: maximum=min(maximum,limit)
+        maximum=None
         frozen={**snapshot['model_control'],'max_tokens':maximum,'prompt_schema_version':1,
                 'persona':self.chats.persona_snapshot(owner, kind=scope, scope_id='default' if scope=='global' else plan_id)}
         try:

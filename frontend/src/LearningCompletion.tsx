@@ -51,7 +51,6 @@ export default function LearningCompletion({ delegationId, allowCreate = true, o
     try {
       const text = await file.text();
       if (generation.current !== current) return;
-      if (text.length > 30_000) { setError('文字超过 30000 字，请摘取相关内容。'); return; }
       setMaterialLabel(file.name.slice(0, 200)); setMaterialText(text); setError('');
     } catch { if (generation.current === current) setError('文件无法读取，请粘贴文字。'); }
   }
@@ -134,7 +133,7 @@ export default function LearningCompletion({ delegationId, allowCreate = true, o
           {item.reason && <p>{item.reason}</p>}
           {item.result && <><p>{item.result.summary}</p>{item.result.findings.map((finding, index) => <div key={index}><strong>{findingLabel[finding.kind]}</strong>{finding.quote && <blockquote>{finding.quote}</blockquote>}<p>{finding.comment}</p></div>)}<p>判断限制：{item.result.limitations}</p><p>建议下一步：{item.result.next_step}</p></>}
           {item.user_response && <p>我的回应：{item.user_response}</p>}
-          {item.status === 'succeeded' && <div><label className="field"><span>回应这次审查</span><textarea maxLength={4000} value={responses[item.id] ?? ''} onChange={event => setResponses(previous => ({ ...previous, [item.id]: event.target.value }))} /></label><button className="button button--quiet" type="button" disabled={busy || !(responses[item.id] ?? '').trim()} onClick={() => void respond(item.id)}>保存回应</button></div>}
+          {item.status === 'succeeded' && <div><label className="field"><span>回应这次审查</span><textarea value={responses[item.id] ?? ''} onChange={event => setResponses(previous => ({ ...previous, [item.id]: event.target.value }))} /></label><button className="button button--quiet" type="button" disabled={busy || !(responses[item.id] ?? '').trim()} onClick={() => void respond(item.id)}>保存回应</button></div>}
         </article>)}</div>}
         <button className="button button--quiet" type="button" disabled={busy} onClick={() => void purge()}>删除完成记录内容</button>
       </>}
@@ -143,10 +142,10 @@ export default function LearningCompletion({ delegationId, allowCreate = true, o
     {!loading && !loadFailed && !completion && allowCreate && <form onSubmit={save}>
       <p>明确记录这次委托的执行已完成。完成不代表目标已达成或能力已掌握，也无需先进行 AI 验证。</p>
       <label className="field"><span>实际验证情况</span><select value={kind} onChange={event => setKind(event.target.value as CompletionKind)}><option value="unverified">未经过验证</option><option value="external_material">已有非 AI 验证，提供材料</option><option value="external_report">已有外部验证，暂不提供材料</option></select></label>
-      {kind !== 'unverified' && <><p className="form-hint">请记录原验证的方式与实际结果。这里保存的是你的报告，平台尚未核验，也不会自动记为通过。</p><label className="field"><span>原验证方式</span><input maxLength={300} value={method} onChange={event => setMethod(event.target.value)} placeholder="例如：线下考试、导师批改" /></label><label className="field"><span>用户报告的验证结果</span><textarea maxLength={2000} value={result} onChange={event => setResult(event.target.value)} placeholder="如实记录结果，包括未通过或部分通过" /></label></>}
+      {kind !== 'unverified' && <><p className="form-hint">请记录原验证的方式与实际结果。这里保存的是你的报告，平台尚未核验，也不会自动记为通过。</p><label className="field"><span>原验证方式</span><input value={method} onChange={event => setMethod(event.target.value)} placeholder="例如：线下考试、导师批改" /></label><label className="field"><span>用户报告的验证结果</span><textarea value={result} onChange={event => setResult(event.target.value)} placeholder="如实记录结果，包括未通过或部分通过" /></label></>}
       {kind === 'unverified' && <label className="verification-stop-check"><input type="checkbox" checked={includeWork} onChange={event => setIncludeWork(event.target.checked)} /> <span>同时保存原始作答或作品，供以后查看或审查</span></label>}
-      {(kind === 'external_material' || (kind === 'unverified' && includeWork)) && <><label className="field"><span>材料类型</span><select value={kind === 'unverified' ? 'work' : materialKind} disabled={kind === 'unverified'} onChange={event => setMaterialKind(event.target.value as 'work' | 'result')}><option value="work">原始作答或作品</option><option value="result">已有验证结果材料</option></select></label><label className="field"><span>材料名称</span><input maxLength={200} value={materialLabel} onChange={event => setMaterialLabel(event.target.value)} /></label><label className="field"><span>材料文字</span><textarea maxLength={30000} value={materialText} onChange={event => setMaterialText(event.target.value)} placeholder="粘贴相关文字；请保留题目、评分依据等必要上下文" /></label><label className="field"><span>读取本地文本文件</span><input type="file" accept=".txt,.md,.json,.py,.js,.ts" onChange={event => void readTextFile(event)} /></label><p className="form-hint">仅读取这些文本格式到当前表单；保存的是文字内容，不会上传原文件。</p></>}
-      <label className="field"><span>补充说明（可选）</span><textarea maxLength={4000} value={note} onChange={event => setNote(event.target.value)} /></label>
+      {(kind === 'external_material' || (kind === 'unverified' && includeWork)) && <><label className="field"><span>材料类型</span><select value={kind === 'unverified' ? 'work' : materialKind} disabled={kind === 'unverified'} onChange={event => setMaterialKind(event.target.value as 'work' | 'result')}><option value="work">原始作答或作品</option><option value="result">已有验证结果材料</option></select></label><label className="field"><span>材料名称</span><input maxLength={200} value={materialLabel} onChange={event => setMaterialLabel(event.target.value)} /></label><label className="field"><span>材料文字</span><textarea value={materialText} onChange={event => setMaterialText(event.target.value)} placeholder="粘贴相关文字；请保留题目、评分依据等必要上下文" /></label><label className="field"><span>读取本地文本文件</span><input type="file" accept=".txt,.md,.json,.py,.js,.ts" onChange={event => void readTextFile(event)} /></label><p className="form-hint">仅读取这些文本格式到当前表单；保存的是文字内容，不会上传原文件。</p></>}
+      <label className="field"><span>补充说明（可选）</span><textarea value={note} onChange={event => setNote(event.target.value)} /></label>
       <button className="button button--accent" type="submit" disabled={busy}>{busy ? '正在保存…' : '记录本次完成'}</button>
     </form>}
   </section>;

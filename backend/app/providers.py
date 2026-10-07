@@ -46,6 +46,7 @@ class ProviderConfig:
     provider_kind: str = "openai_compatible"
     web_search: bool = False
     reasoning_parameters_json: str | None = None
+    max_output_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -308,7 +309,7 @@ class OpenAICompatibleProvider:
         self,
         messages: list[dict[str, Any]],
         *,
-        max_tokens: int | None = 48,
+        max_tokens: int | None = None,
         json_mode: bool = False,
     ) -> str:
         """非流式文本请求；显式 None 表示不附加应用输出 token 上限。"""
@@ -504,7 +505,6 @@ class OpenAICompatibleProvider:
             "model": self.config.model,
             "messages": [{"role": "user", "content": "ping"}],
             "stream": False,
-            "max_tokens": 1,
         }
         apply_reasoning_parameters(payload, self.config)
         started = time.monotonic()

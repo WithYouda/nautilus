@@ -338,7 +338,15 @@ class ModelControlService:
             if not key:
                 raise ConversationError('所选提供方尚未保存API密钥')
             effective = view['effective']
+            from .reasoning_control import binding
+            caps = self.chats._decode_json(model['capabilities_json'], {})
+            discovered = caps.get('reasoning_discovery') or {}
+            metadata = discovered.get('metadata') if discovered.get('binding') == binding(profile, model, effective['provider_kind']) else None
+            maximum = caps.get('max_output_tokens')
+            if not (type(maximum) is int and maximum > 0):
+                maximum = metadata.get('max_output_tokens') if isinstance(metadata, dict) else None
             config = ProviderConfig(base_url=profile['base_url'], model=model['model_id'], api_key=key,
+                                    max_output_tokens=maximum,
                                     timeout_seconds=effective['timeout_seconds'], provider_kind=effective['provider_kind'],
                                     reasoning_parameters_json=json.dumps(effective['reasoning_parameters'], sort_keys=True) if effective['reasoning_parameters'] else None)
             public = {key: value for key, value in effective.items()

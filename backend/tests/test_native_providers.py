@@ -17,6 +17,7 @@ def config(kind, *, search=True):
         timeout_seconds=5,
         provider_kind=kind,
         web_search=search,
+        max_output_tokens=64000,
     )
 
 

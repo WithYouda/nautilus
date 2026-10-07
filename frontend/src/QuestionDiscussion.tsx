@@ -251,7 +251,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
         id="question-discussion-input" label="继续提问或回答拓展问题" value={content}
         onChange={value => { setContent(value); drafts.current.set(id, value); key.current = requestId(); }}
         onSubmit={event => { event.preventDefault(); void send(); }}
-        placeholder={discussion.turns.some(turn => turn.branch_conclusion && turn.status !== 'purged') ? "基于合并内容，继续提问…" : "输入关于这道题的问题，或回答拓展问题"} maxLength={12000}
+        placeholder={discussion.turns.some(turn => turn.branch_conclusion && turn.status !== 'purged') ? "基于合并内容，继续提问…" : "输入关于这道题的问题，或回答拓展问题"}
         disabled={sharedState.blocked || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)}
         attachments={<ComposerAttachments kind="discussion" id={id} identity={discussion.identity_id ?? discussion.verification_id} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} />}
         sendDisabled={attachmentBusy || modelControl.busy || !modelEffective?.available}
@@ -285,7 +285,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
           const questionAttachments = discussion.turns.find(item => item.question_id === turn.question_id && item.attachment_version_ids?.length) ?? turn;
           return <div key={turn.id} className="discussion-turn" id={`turn-${turn.id}`}>
           {turn.status === 'purged' ? <p>这轮讨论内容已删除。</p> : turn.branch_conclusion ? <MergedConversationContext content={turn.assistant_content ?? ''} sources={turn.merge_sources ?? []} continued={visibleTurns.length > turnIndex + 1 || Boolean(pending)} onNavigate={(target, source) => { drafts.current.set(id, content); setMapLocation({ id: target, source }); onNavigate(target); }} disabled={busy || branchBusy || running || Boolean(pending) || Boolean(editingTurnId)} config={turn.model_config} /> : <>
-            <LearningUserMessage content={turn.user_content ?? ''} maxLength={12000}
+            <LearningUserMessage content={turn.user_content ?? ''}
               attachments={<MessageAttachments kind="discussion" id={id} versionIds={questionAttachments.attachment_version_ids ?? []} scope={questionAttachments.source_scope} versions={materialVersions} />}
               editing={editingTurnId === turn.id} editDisabled={Boolean(turn.branch_conclusion) || busy || branchBusy || running || Boolean(pending) || (Boolean(editingTurnId) && editingTurnId !== turn.id)} sendDisabled={busy || branchBusy || running || Boolean(pending)}
               onStartEdit={() => setEditingTurnId(turn.id)}

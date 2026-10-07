@@ -15,7 +15,7 @@ from .managed_purge import ManagedPurge
 from .providers import build_provider,ProviderError
 from .provider_network import ProviderDiagnostics
 from .learning_setup import _clean_json
-from .outcome_graph import proposal_failure_reason,GRAPH_MAX_TOKENS
+from .outcome_graph import proposal_failure_reason
 
 
 class Proposal(BaseModel):
@@ -232,9 +232,7 @@ class Commitments:
         try:
             _,config,snapshot=self.chats.model_control.runtime(owner,'plan',plan_id)
         except ConversationError as error:raise DomainError('commitment_provider_unavailable',503) from error
-        limit=snapshot['model']['capabilities'].get('max_output_tokens')
-        maximum=min(GRAPH_MAX_TOKENS,4096+2048*inputs['calibration']['max_sessions'])
-        if type(limit) is int and limit>0:maximum=min(maximum,limit)
+        maximum=None
         frozen={**snapshot['model_control'],'max_tokens':maximum,'prompt_schema_version':1,'rule_version':inputs['calibration']['rule_version']}
         result=self.learning.core.execute(principal,StartCommitmentRun(plan_id=plan_id,expected_revision=payload['expected_revision'],
             input_hash=inputs['input_hash'],inputs=inputs,provider_snapshot=frozen),key)

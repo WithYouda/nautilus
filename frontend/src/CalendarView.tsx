@@ -45,14 +45,15 @@ export default function CalendarView({
 type CalendarCellData = { date: string; day: number; currentMonth: boolean };
 
 function CalendarCell({ cell, tasks, onSelectTask }: { cell: CalendarCellData; tasks: Task[]; onSelectTask: (taskId: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
   const dateTasks = tasks.filter((task) => task.start_date <= cell.date && task.due_date >= cell.date);
   const isToday = cell.date === localDateKey(new Date());
   return (
     <div className={`calendar-cell${cell.currentMonth ? "" : " is-muted"}${isToday ? " is-today" : ""}`}>
       <div className="calendar-date"><span>{cell.day}</span>{dateTasks.length > 0 && <small>{dateTasks.length}</small>}</div>
       <div className="calendar-tasks">
-        {dateTasks.slice(0, 3).map((task) => <button key={task.id} className={`calendar-task calendar-task--${task.status}`} onClick={() => onSelectTask(task.id)} title={task.title}>{task.title}</button>)}
-        {dateTasks.length > 3 && <span className="calendar-more">+{dateTasks.length - 3} 项</span>}
+        {(expanded ? dateTasks : dateTasks.slice(0, 3)).map((task) => <button key={task.id} className={`calendar-task calendar-task--${task.status}`} onClick={() => onSelectTask(task.id)} title={task.title}>{task.title}</button>)}
+        {dateTasks.length > 3 && <button type="button" className="calendar-more text-button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : `+${dateTasks.length - 3} 项`}</button>}
       </div>
     </div>
   );

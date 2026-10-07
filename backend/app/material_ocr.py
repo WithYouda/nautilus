@@ -170,7 +170,7 @@ class MaterialOCR:
                         text = await provider.generate_text([
                             {'role': 'system', 'content': OCR_PROMPT},
                             {'role': 'user', 'content': f'转写第 {page["number"]} 页的可见文字。',
-                             '_images': [{'media_type': media_type, 'data': base64.b64encode(raw).decode('ascii')}]}], max_tokens=8192)
+                             '_images': [{'media_type': media_type, 'data': base64.b64encode(raw).decode('ascii')}]}], max_tokens=None)
                     self._check(identity, job_id)
                     no_text = text.strip() == '[无可识别文字]'
                     page.update(text='' if no_text else text, status='empty' if no_text else 'recognized')

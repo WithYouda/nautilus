@@ -28,3 +28,5 @@ export const resolveCoachReminder = (item: CoachReminder) => learningRequest<{ t
 export function browserNotificationState(): 'unsupported' | NotificationPermission {
   return !window.isSecureContext || !('Notification' in window) ? 'unsupported' : Notification.permission;
 }
+
+export const getCoachReminderHistory = (before?: number) => learningRequest<{ items: CoachReminder[]; next_before: number | null }>(`${base}/reminders/history${before === undefined ? "" : `?before=${before}`}`);

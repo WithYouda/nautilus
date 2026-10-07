@@ -22,7 +22,6 @@ class ProposalOutput(BaseModel):
     candidates: list[RelationFields] = Field(max_length=60)
 
 
-GRAPH_MAX_TOKENS = 32768
 PROVIDER_FAILURE_REASONS = frozenset({
     'timeout', 'auth_error', 'rate_limited', 'network_error', 'endpoint_not_found',
     'request_error', 'upstream_error', 'output_truncated', 'reasoning_only',
@@ -223,16 +222,13 @@ class OutcomeGraph:
             raise DomainError('graph_duplicate_selection',422)
         with self.db.transaction() as connection:
             inputs=[outcome_input(connection,owner,item) for item in outcome_ids]
-        max_tokens=GRAPH_MAX_TOKENS
+        max_tokens=None
         try:
             chats=self.provider_service.conversations
             selection=self.provider_service.selection(identity)
             if getattr(chats,'model_control',None):
                 _,config,snapshot=chats.model_control.runtime(owner,'global','default',{'model':selection} if selection else None)
                 frozen={**snapshot['model_control'],'selection_source':'explicit' if selection else 'default','prompt_schema_version':2}
-                model_limit=snapshot['model']['capabilities'].get('max_output_tokens')
-                if type(model_limit) is int and model_limit>0:
-                    max_tokens=min(max_tokens,model_limit)
             else:
                 _,config,frozen=self.provider_service.runtime_details(owner)
                 frozen={**frozen,'prompt_schema_version':2,'reasoning_parameters':json.loads(config.reasoning_parameters_json or '{}')}

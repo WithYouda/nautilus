@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from './api';
 import { coachHref, navigateCoach } from './background-coach-api';
-import { browserNotificationState, coachKey, getCoachReminders, getCoachReminderSettings, resolveCoachReminder, saveCoachReminderSettings, type CoachReminder, type CoachReminderSettings } from './coach-conversation-api';
+import { browserNotificationState, coachKey, getCoachReminderHistory, getCoachReminderSettings, resolveCoachReminder, saveCoachReminderSettings, type CoachReminder, type CoachReminderSettings } from './coach-conversation-api';
 import './styles/coach-conversation.css';
 
 type Draft = Omit<CoachReminderSettings, 'revision'>;
@@ -14,6 +14,7 @@ export default function CoachReminderSettings() {
   const [permission, setPermission] = useState(browserNotificationState), [permissionBusy, setPermissionBusy] = useState(false);
   const [history, setHistory] = useState<CoachReminder[] | null>(null), [historyError, setHistoryError] = useState(''), [openingHistory, setOpeningHistory] = useState<string | null>(null);
   const historyGeneration = useRef(0);
+  const [historyBefore, setHistoryBefore] = useState<number | null>(null), [historyBusy, setHistoryBusy] = useState(false);
   const alive = useRef(true), attempt = useRef<Save | null>(null);
   function accept(value: CoachReminderSettings) { const { revision: _revision, ...fields } = value; setSettings(value); setDraft(fields); attempt.current = null; setConflict(false); }
   async function load() {
@@ -43,10 +44,14 @@ export default function CoachReminderSettings() {
     catch { if (alive.current) setError('浏览器通知授权未成功，应用内提醒仍可使用。'); }
     finally { if (alive.current) setPermissionBusy(false); }
   }
-  async function loadHistory() {
-    const generation = ++historyGeneration.current; setHistory(null); setHistoryError('');
-    try { const view = await getCoachReminders(); if (alive.current && historyGeneration.current === generation) setHistory(view.recent.slice(0, 5)); }
-    catch (reason) { if (alive.current && historyGeneration.current === generation) setHistoryError(reason instanceof Error ? reason.message : '无法读取提醒记录。'); }
+  async function loadHistory(more = false) {
+    if (more && (historyBusy || historyBefore === null)) return;
+    const generation = ++historyGeneration.current; if (!more) setHistory(null); setHistoryError(''); setHistoryBusy(true);
+    try {
+      const page = await getCoachReminderHistory(more ? historyBefore! : undefined);
+      if (alive.current && historyGeneration.current === generation) { setHistory(previous => [...(more ? previous ?? [] : []), ...page.items]); setHistoryBefore(page.next_before); }
+    } catch (reason) { if (alive.current && historyGeneration.current === generation) setHistoryError(reason instanceof Error ? reason.message : '无法读取提醒记录。'); }
+    finally { if (alive.current && historyGeneration.current === generation) setHistoryBusy(false); }
   }
   async function openHistory(item: CoachReminder) {
     const generation = historyGeneration.current; setOpeningHistory(item.id); setHistoryError('');
@@ -83,6 +88,7 @@ export default function CoachReminderSettings() {
         {!history && !historyError && <p role="status">正在读取提醒记录…</p>}
         {history?.length === 0 && <p className="form-hint">还没有提醒记录。</p>}
         {history?.map(item => <article className="coach-reminder-settings__history" key={item.id}><strong>{item.title}</strong><small>{new Date(item.dispatched_at ?? item.scheduled_at).toLocaleString('zh-CN', { timeZone: settings?.timezone, dateStyle: 'short', timeStyle: 'short' })} · {({ dispatched: '已提醒', pending: '等待提醒', suppressed: '已停止提醒', unavailable: '安排已变化' })[item.status]}</small><button className="text-button" type="button" disabled={Boolean(openingHistory) || item.status !== 'dispatched'} onClick={() => void openHistory(item)}>{openingHistory === item.id ? '正在核对…' : item.target.label}</button></article>)}
+        {historyBefore !== null && <button className="text-button" type="button" disabled={historyBusy} onClick={() => void loadHistory(true)}>{historyBusy ? "正在读取…" : "查看更早提醒"}</button>}
         {historyError && <p className="form-error" role="alert">{historyError}<button className="text-button" type="button" onClick={() => void loadHistory()}>重读提醒记录</button></p>}
       </details>
     </>}

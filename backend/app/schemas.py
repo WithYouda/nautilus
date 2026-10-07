@@ -19,7 +19,7 @@ class AuthorizationRequest(BaseModel):
 
 class ManualPlanRequest(BaseModel):
     goal_title: str = Field(min_length=1, max_length=120)
-    description: str = Field(default="", max_length=1000)
+    description: str = Field(default="")
     start_date: date
     end_date: date
     subject_title: str = Field(min_length=1, max_length=120)
@@ -45,7 +45,7 @@ class ManualPlanRequest(BaseModel):
 
 class GoalUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=120)
-    description: str | None = Field(default=None, max_length=1000)
+    description: str | None = Field(default=None)
     start_date: date | None = None
     end_date: date | None = None
     status: GoalStatus | None = None
@@ -326,7 +326,7 @@ class MessageSendRequest(BaseModel):
     regenerate_message_id: str | None = Field(default=None, max_length=64)
     parent_message_id: str | None = Field(default=None, max_length=64)
     edit_message_id: str | None = Field(default=None, max_length=64)
-    content: str = Field(min_length=1, max_length=8000)
+    content: str = Field(min_length=1)
     client_message_id: str = Field(min_length=1, max_length=64)
 
     @field_validator("content")
@@ -356,7 +356,7 @@ class LearningObservationCorrectionRequest(BaseModel):
     expected_revision: int = Field(ge=0)
     topic: str = Field(min_length=1, max_length=120)
     state: Literal['progress', 'difficulty', 'uncertain']
-    note: str = Field(max_length=600)
+    note: str = Field()
     excluded: bool = Field(strict=True)
     request_key: str = Field(min_length=1, max_length=100)
 
@@ -368,7 +368,7 @@ class LearningActionCreateRequest(BaseModel):
 
 
 class LearningSetupDraftRequest(BaseModel):
-    intent: str = Field(min_length=1, max_length=4000)
+    intent: str = Field(min_length=1)
 
     @field_validator("intent")
     @classmethod
@@ -383,20 +383,20 @@ class LearningSetupConfirmRequest(BaseModel):
     plan_id: str | None = Field(default=None, min_length=1, max_length=100)
     review_id: str | None = Field(default=None, max_length=100)
     draft_id: str | None = Field(default=None, pattern=r'^[0-9a-f-]{36}$')
-    original_intent: str = Field(min_length=1, max_length=4000)
+    original_intent: str = Field(min_length=1)
     goal_title: str = Field(min_length=1, max_length=200)
-    goal_description: str = Field(default="", max_length=1000)
+    goal_description: str = Field(default="")
     plan_title: str = Field(min_length=1, max_length=200)
-    plan_description: str = Field(default="", max_length=1000)
+    plan_description: str = Field(default="")
     action_title: str = Field(min_length=1, max_length=300)
     context_key: str = Field(min_length=1, max_length=200)
     outcome_id: str | None = Field(default=None, min_length=1, max_length=100)
-    object_description: str = Field(min_length=1, max_length=500)
-    behavior: str = Field(min_length=1, max_length=500)
+    object_description: str = Field(min_length=1)
+    behavior: str = Field(min_length=1)
     outcome_context_key: str = Field(min_length=1, max_length=200)
     criterion_id: str | None = Field(default=None, min_length=1, max_length=100)
-    boundaries: str = Field(default="", max_length=2000)
-    stop_conditions: str = Field(min_length=1, max_length=2000)
+    boundaries: str = Field(default="")
+    stop_conditions: str = Field(min_length=1)
     time_budget_minutes: int | None = Field(default=None, ge=1, le=1440)
     idempotency_key: str = Field(min_length=1, max_length=200)
 
@@ -420,8 +420,8 @@ class LearningSetupConfirmRequest(BaseModel):
 
 
 class LearningOutcomeCreateRequest(BaseModel):
-    object_description: str = Field(min_length=1, max_length=500)
-    behavior: str = Field(min_length=1, max_length=500)
+    object_description: str = Field(min_length=1)
+    behavior: str = Field(min_length=1)
     context_key: str = Field(min_length=1, max_length=200)
     idempotency_key: str = Field(min_length=1, max_length=200)
 
@@ -438,8 +438,8 @@ class LearningDelegationCreateRequest(BaseModel):
     action_id: str = Field(min_length=1, max_length=100)
     outcome_id: str = Field(min_length=1, max_length=100)
     criterion_id: str | None = Field(default=None, min_length=1, max_length=100)
-    boundaries: str = Field(default="", max_length=2000)
-    stop_conditions: str = Field(min_length=1, max_length=2000)
+    boundaries: str = Field(default="")
+    stop_conditions: str = Field(min_length=1)
     time_budget_minutes: int | None = Field(default=None, ge=1, le=1440)
     expected_version: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1, max_length=200)
@@ -461,7 +461,7 @@ class LearningSessionStartRequest(BaseModel):
 
 class LearningArtifactSaveRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=100)
-    content: str = Field(min_length=1, max_length=1_000_000)
+    content: str = Field(min_length=1)
     expected_version: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1, max_length=200)
 
@@ -492,15 +492,15 @@ class LearningPositionRequest(LearningRoomConversationRequest):
 
 class LearningPositionCorrectionRequest(LearningPositionRequest):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    current: str = Field(min_length=1, max_length=500)
-    next: str = Field(max_length=500)
+    current: str = Field(min_length=1)
+    next: str = Field()
 
 
 class LearningVerificationSubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     responses: dict[str, str] = Field(default_factory=dict)
-    material: str = Field(default="", max_length=1_000_000)
-    learner_work: str = Field(default="", max_length=1_000_000)
+    material: str = Field(default="")
+    learner_work: str = Field(default="")
     evidence_condition: Literal["independent", "with_materials", "with_hints"] = "with_materials"
     request_key: str = Field(min_length=1, max_length=200)
 
@@ -524,7 +524,7 @@ class LearningVerificationPurgeRequest(BaseModel):
 
 
 class LearningArtifactCorrectRequest(BaseModel):
-    content: str = Field(min_length=1, max_length=1_000_000)
+    content: str = Field(min_length=1)
     expected_version: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1, max_length=200)
 
@@ -546,7 +546,7 @@ class AgentPermissionRequestCreate(BaseModel):
 
 
 class AgentPermissionDenyRequest(BaseModel):
-    reason: str | None = Field(default=None, max_length=1000)
+    reason: str | None = Field(default=None)
 
     @field_validator("reason")
     @classmethod
@@ -557,7 +557,7 @@ class AgentPermissionDenyRequest(BaseModel):
 
 
 class AgentPermissionRevokeRequest(BaseModel):
-    reason: str | None = Field(default=None, max_length=1000)
+    reason: str | None = Field(default=None)
 
     @field_validator("reason")
     @classmethod
@@ -574,7 +574,7 @@ class EvidenceAnalysisRequest(BaseModel):
 
 class EvidenceHumanReviewRequest(BaseModel):
     request_key: str = Field(min_length=1, max_length=200)
-    note: str | None = Field(default=None, max_length=1000)
+    note: str | None = Field(default=None)
 
     @field_validator("note")
     @classmethod
@@ -587,7 +587,7 @@ class EvidenceHumanReviewRequest(BaseModel):
 class EvidenceSupplementalVerificationRequest(BaseModel):
     request_key: str = Field(min_length=1, max_length=200)
     due_at: datetime | None = None
-    note: str | None = Field(default=None, max_length=1000)
+    note: str | None = Field(default=None)
 
     @field_validator("note")
     @classmethod
@@ -599,7 +599,7 @@ class EvidenceSupplementalVerificationRequest(BaseModel):
 
 class EvidenceClaimReviewRequest(BaseModel):
     action: Literal["adopt", "question", "withdraw", "supersede", "defer"]
-    reason: str | None = Field(default=None, max_length=1000)
+    reason: str | None = Field(default=None)
     request_key: str = Field(min_length=1, max_length=200)
     replacement_claim_id: str | None = Field(default=None, min_length=1, max_length=100)
 
@@ -618,7 +618,7 @@ class DerivedStateRecalculateRequest(BaseModel):
 class EvidenceBatchReviewRequest(BaseModel):
     claim_ids: list[str] = Field(min_length=1, max_length=100)
     action: Literal["adopt", "question", "withdraw", "defer"]
-    reason: str | None = Field(default=None, max_length=1000)
+    reason: str | None = Field(default=None)
     request_key: str = Field(min_length=1, max_length=200)
 
     @field_validator("reason")
@@ -675,7 +675,7 @@ class QuestionDiscussionMessageRequest(BaseModel):
     regenerate_turn_id: str | None = Field(default=None, max_length=64)
     parent_turn_id: str | None = Field(default=None, max_length=64)
     edit_turn_id: str | None = Field(default=None, max_length=64)
-    content: str = Field(min_length=1, max_length=12000)
+    content: str = Field(min_length=1)
     request_key: str = Field(min_length=1, max_length=200)
     retry: bool = False
 

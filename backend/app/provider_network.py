@@ -121,13 +121,23 @@ class ProviderDiagnostics:
 
 
 class _ObservedStream(httpx.AsyncByteStream):
-    def __init__(self, stream, context, metadata, started):
+    def __init__(self, stream, context, metadata, started, deadline=None):
         self.stream, self.context, self.metadata, self.started = stream, context, metadata, started
+        self.deadline = deadline
 
     async def __aiter__(self):
+        from .content_resources import ensure_capacity
+        size = 0
         try:
-            async for chunk in self.stream:
-                yield chunk
+            remaining = max(0.0, self.deadline - time.monotonic()) if self.deadline is not None else None
+            try:
+                async with asyncio.timeout(remaining):
+                    async for chunk in self.stream:
+                        size += len(chunk)
+                        ensure_capacity(size)
+                        yield chunk
+            except TimeoutError as error:
+                raise httpx.ReadTimeout('Provider request deadline exceeded') from error
         except httpx.HTTPError as error:
             if self.context:
                 details = error_details(error)
@@ -157,6 +167,8 @@ class ProviderHTTPClient(httpx.AsyncClient):
             context.request_seq += 1
             context.last_error = {}
         started = time.monotonic()
+        timeout = self.timeout.read
+        deadline = started + timeout if timeout is not None else None
         for attempt in range(1, maximum + 1):
             metadata = {'request_seq': context.request_seq if context else 1,
                         'attempt': attempt, 'max_attempts': maximum,
@@ -166,7 +178,11 @@ class ProviderHTTPClient(httpx.AsyncClient):
                 if context.check:
                     context.check()
             try:
-                response = await super().send(request, stream=True, **kwargs)
+                try:
+                    async with asyncio.timeout(max(0.0, deadline - time.monotonic()) if deadline is not None else None):
+                        response = await super().send(request, stream=True, **kwargs)
+                except TimeoutError as error:
+                    raise httpx.ReadTimeout('Provider request deadline exceeded') from error
             except httpx.HTTPError as error:
                 details = error_details(error)
                 retry = (isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
@@ -196,7 +212,7 @@ class ProviderHTTPClient(httpx.AsyncClient):
                     context.record('provider.recovered', **metadata, result='connected',
                                    status=response.status_code,
                                    duration_ms=round((time.monotonic() - started) * 1000))
-            response.stream = _ObservedStream(response.stream, context, metadata, started)
+            response.stream = _ObservedStream(response.stream, context, metadata, started, deadline)
             if not stream:
                 try:
                     await response.aread()

@@ -614,7 +614,7 @@ class QuestionDiscussionService:
                     plan = await provider.generate_text([
                         {'role': 'system', 'content': '为题目讨论决定是否查阅当前委托的历史。只输出 JSON {"history_query":null} 或 {"history_query":"用于原文子串检索的简短关键词"}。无需要时为 null；不能调用网络或任意工具。'},
                         {'role': 'user', 'content': json.dumps(dict(question=source['question'], request=content), ensure_ascii=False)},
-                    ], max_tokens=2048, json_mode=True)
+                    ], max_tokens=None, json_mode=True)
                     selection = json.loads(_clean_json(plan))
                     if not isinstance(selection, dict) or set(selection) != {'history_query'} or (selection['history_query'] is not None and (not isinstance(selection['history_query'], str) or len(selection['history_query']) > 80)):
                         raise ValueError('invalid search decision')

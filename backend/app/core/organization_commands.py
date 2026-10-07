@@ -10,7 +10,7 @@ class OrganizationCommand(Command):
 
 class CreatePlan(OrganizationCommand):
     title: str = Field(min_length=1, max_length=200)
-    description: str = Field(default='', max_length=1000)
+    description: str = Field(default='')
     goal_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
@@ -22,7 +22,7 @@ class PlanRevision(OrganizationCommand):
 class ModuleFields(BaseModel):
     model_config = ConfigDict(extra='forbid',str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=200)
-    description: str = Field(default='', max_length=1000)
+    description: str = Field(default='')
     parent_module_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
@@ -59,13 +59,13 @@ class TaskFields(BaseModel):
     model_config = ConfigDict(extra='forbid',str_strip_whitespace=True)
     action_title: str = Field(min_length=1, max_length=300)
     context_key: str = Field(min_length=1, max_length=200)
-    object_description: str = Field(min_length=1, max_length=500)
-    behavior: str = Field(min_length=1, max_length=500)
+    object_description: str = Field(min_length=1)
+    behavior: str = Field(min_length=1)
     outcome_context_key: str = Field(min_length=1, max_length=200)
     outcome_id: str | None = Field(default=None, min_length=1, max_length=100)
     criterion_id: str | None = Field(default=None, min_length=1, max_length=100)
-    boundaries: str = Field(default='', max_length=2000)
-    stop_conditions: str = Field(min_length=1, max_length=2000)
+    boundaries: str = Field(default='')
+    stop_conditions: str = Field(min_length=1)
     time_budget_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 

@@ -361,7 +361,7 @@ async def test_setup_requests_complete_json_with_enough_room_for_reasoning(learn
     def handler(request):
         payload = json.loads(request.content)
         requests.append(payload)
-        if payload['max_tokens'] < 8192:
+        if 'max_tokens' in payload:
             return httpx.Response(200, json={'choices': [{'finish_reason': 'length', 'message': {'content': '{'}}]})
         assert payload['response_format'] == {'type': 'json_object'}
         prompt = json.loads(payload['messages'][-1]['content'])

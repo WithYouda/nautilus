@@ -58,7 +58,7 @@ export default function BranchComparison({ kind, left, right, nodes, onBack, onS
     {preview?.preview_id && <><p className="branch-map-muted">勾选要保留的观点，可直接修改结论文字。</p>
       <div className="branch-comparison-cards">{preview.cards.map(card => <article className="branch-comparison-card" key={card.id}>
         <label className="branch-comparison-choice"><input type="checkbox" aria-label={`采用：${card.topic}`} checked={!!selection[card.id]} disabled={saving || !!savedId} onChange={event => setSelection(old => ({ ...old, [card.id]: event.target.checked }))} /><strong>{card.topic}</strong><span>{relations[card.relation]}</span></label>
-        <textarea aria-label={`结论：${card.topic}`} value={texts[card.id] ?? ''} rows={3} maxLength={4000} disabled={saving || !!savedId} onChange={event => setTexts(old => ({ ...old, [card.id]: event.target.value }))} />
+        <textarea aria-label={`结论：${card.topic}`} value={texts[card.id] ?? ''} rows={3} disabled={saving || !!savedId} onChange={event => setTexts(old => ({ ...old, [card.id]: event.target.value }))} />
         <details><summary>查看原文依据</summary>{card.references.map((reference, index) => <blockquote key={index}><small>{reference.side === 'left' ? '来源一' : '来源二'}</small><p>{reference.quote}</p></blockquote>)}</details>
       </article>)}</div>
       <label className="branch-comparison-title"><span>合并后的主题</span><input aria-label="合并后的主题" value={title} placeholder="为合并后的主题命名" maxLength={60} disabled={saving || !!savedId} onChange={event => setTitle(event.target.value)} /></label>

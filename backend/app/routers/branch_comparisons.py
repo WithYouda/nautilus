@@ -22,13 +22,13 @@ class Compare(BaseModel):
 
 class Selection(BaseModel):
     id: str = Field(min_length=1, max_length=200)
-    text: str = Field(min_length=1, max_length=4000)
+    text: str = Field(min_length=1)
 
 
 class Confirm(BaseModel):
     preview_id: str = Field(min_length=1, max_length=200)
     title: str = Field(min_length=1, max_length=60)
-    selected: list[Selection] = Field(min_length=1, max_length=24)
+    selected: list[Selection] = Field(min_length=1)
 
 
 def error(exc):

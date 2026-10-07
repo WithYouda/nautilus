@@ -37,7 +37,7 @@ CASES = [
 def config(kind, parameters):
     return ProviderConfig(
         base_url="https://api.example.test/v1beta" if kind == "google" else "https://api.example.test/v1",
-        model="selected-model", api_key="fixture-key", provider_kind=kind,
+        model="selected-model", api_key="fixture-key", provider_kind=kind, max_output_tokens=64000,
         reasoning_parameters_json=None if parameters is None else json.dumps(parameters, sort_keys=True),
     )
 
@@ -112,7 +112,7 @@ async def test_controls_reach_complete_stream_and_every_tool_round(kind, paramet
         assert_format(kind, body, json_output)
     if kind == "anthropic":
         budget = (expected or {}).get("thinking", {}).get("budget_tokens", 0)
-        assert [body["max_tokens"] for body in requests] == [96 + budget, 4096 + budget, 4096 + budget, 4096 + budget]
+        assert [body["max_tokens"] for body in requests] == [96 + budget, 64000, 64000, 64000]
     assert messages == original_messages and turn.continuation == continuation
     continued = wire_history(kind, requests[-1])
     if kind == "openai_responses":

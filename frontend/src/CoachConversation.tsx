@@ -10,7 +10,7 @@ export function CoachHomeEntry({ onOpen, opening = false }: { onOpen: (draft?: s
     <div className="coach-home-entry__heading"><h2>学习教练</h2><button className="text-button" type="button" disabled={opening} onClick={() => onOpen()}>{opening ? '打开中…' : '继续对话'}<ArrowUpRight size={14} /></button></div>
     <form onSubmit={event => { event.preventDefault(); if (draft.trim()) onOpen(draft.trim()); }}>
       <label className="sr-only" htmlFor="coach-home-input">和教练说说今天</label>
-      <textarea id="coach-home-input" rows={2} maxLength={8000} disabled={opening} value={draft} onChange={event => setDraft(event.target.value)} placeholder="今天只有20分钟，有点累。接下来学什么？" onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (draft.trim() && !opening) onOpen(draft.trim()); } }} />
+      <textarea id="coach-home-input" rows={2} disabled={opening} value={draft} onChange={event => setDraft(event.target.value)} placeholder="今天只有20分钟，有点累。接下来学什么？" onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (draft.trim() && !opening) onOpen(draft.trim()); } }} />
       <button className="button button--accent button--compact button--with-icon" type="submit" disabled={!draft.trim() || opening}><Send size={14} />{opening ? '打开中…' : '和教练聊聊'}</button>
     </form>
   </section>;

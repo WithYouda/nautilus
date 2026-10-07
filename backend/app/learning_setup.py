@@ -16,7 +16,6 @@ from .learning_service import LearningService
 from .providers import ProviderError, build_provider
 
 
-SETUP_MAX_TOKENS = 8192
 SETUP_FAILURE_MESSAGES = {
     "setup_provider_unavailable": "当前默认 AI 提供方或模型不可用，请检查提供方设置。",
     "setup_timeout": "生成学习安排超时，请增加提供方超时时间后重试；已完成的学习记录不受影响。",
@@ -40,19 +39,19 @@ class LearningSetupDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     goal_title: str = Field(min_length=1, max_length=200)
-    goal_description: str = Field(max_length=1000)
+    goal_description: str = Field()
     plan_title: str = Field(min_length=1, max_length=200)
-    plan_description: str = Field(max_length=1000)
+    plan_description: str = Field()
     action_title: str = Field(min_length=1, max_length=300)
     context_key: str = Field(min_length=1, max_length=200)
-    outcome_object: str = Field(min_length=1, max_length=500)
-    outcome_behavior: str = Field(min_length=1, max_length=500)
+    outcome_object: str = Field(min_length=1)
+    outcome_behavior: str = Field(min_length=1)
     outcome_context_key: str = Field(min_length=1, max_length=200)
-    boundaries: str = Field(max_length=2000)
-    stop_conditions: str = Field(min_length=1, max_length=2000)
+    boundaries: str = Field()
+    stop_conditions: str = Field(min_length=1)
     time_budget_minutes: int = Field(ge=1, le=1440)
     recommended_criterion_id: str | None = Field(default=None, max_length=100)
-    rationale: str = Field(min_length=1, max_length=1000)
+    rationale: str = Field(min_length=1)
 
 
 def _clean_json(text: str) -> str:
@@ -122,7 +121,7 @@ class LearningSetupService:
                     {"role": "system", "content": "你是 Nautilus 的学习初始化助手，只返回符合要求的 JSON。"},
                     {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                 ],
-                max_tokens=SETUP_MAX_TOKENS,
+                max_tokens=None,
                 json_mode=True,
             )
         except ProviderError as exc:

@@ -84,7 +84,7 @@ export function LearningReplyActions({ content, onRetry, retryDisabled, onBranch
   </div>;
 }
 
-export function LearningUserMessage({ content, automatic, editing, onStartEdit, onCancelEdit, onSendEdit, editDisabled, sendDisabled, version, attachments, maxLength = 8000 }: {
+export function LearningUserMessage({ content, automatic, editing, onStartEdit, onCancelEdit, onSendEdit, editDisabled, sendDisabled, version, attachments, maxLength }: {
   content: string; automatic?: boolean; editing: boolean; onStartEdit: () => void; onCancelEdit: () => void;
   onSendEdit: (content: string) => Promise<boolean>; editDisabled?: boolean; sendDisabled?: boolean;
   version?: MessageVersion; attachments?: ReactNode; maxLength?: number;
@@ -138,7 +138,7 @@ export function LearningUserMessage({ content, automatic, editing, onStartEdit, 
   return <LearningMessage role="user" state={editing ? 'editing' : undefined}>{body}</LearningMessage>;
 }
 
-export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, sendDisabled, maxLength = 8000, textareaRef, attachments, tools, suggestions, actions, sendSettings, sendLabel = '发送问题' }: {
+export function LearningComposer({ id, label = '输入学习问题', value, onChange, onSubmit, onKeyDown, placeholder, disabled, sendDisabled, maxLength, textareaRef, attachments, tools, suggestions, actions, sendSettings, sendLabel = '发送问题' }: {
   id: string; label?: string; value: string; onChange: (value: string) => void;
   onSubmit: FormEventHandler<HTMLFormElement>; onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   placeholder: string; disabled?: boolean; sendDisabled?: boolean; maxLength?: number;
@@ -161,7 +161,7 @@ export function LearningComposer({ id, label = '输入学习问题', value, onCh
           if (!disabled && !sendDisabled && value.trim()) event.currentTarget.form?.requestSubmit();
         }
       })} placeholder={placeholder} rows={1} maxLength={maxLength} disabled={disabled} /></div>
-    <div className="ai-composer-actions"><span>Enter 发送 · Shift+Enter 换行 · {value.length}/{maxLength}</span>
+    <div className="ai-composer-actions"><span>Enter 发送 · Shift+Enter 换行</span>
       <div>{tools}{actions}{sendSettings}<button className="button button--accent button--with-icon" type="submit" disabled={disabled || sendDisabled || !value.trim()}><Send size={14} />{sendLabel}</button></div>
     </div>
   </form>;

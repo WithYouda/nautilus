@@ -21,9 +21,9 @@ export default function PlanOverview({
     .filter((task) => task.status !== "canceled")
     .sort(taskPriority)
     .slice(0, 6);
-  const upcomingThisWeek = recent.filter((task) => {
+  const upcomingThisWeek = schedule.filter((task) => {
     const days = Math.ceil((new Date(`${task.due_date}T23:59:59`).getTime() - Date.now()) / 86_400_000);
-    return task.status !== "completed" && days >= 0 && days <= 7;
+    return task.status !== "completed" && task.status !== "canceled" && days >= 0 && days <= 7;
   }).length;
 
   return (

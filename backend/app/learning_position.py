@@ -101,7 +101,7 @@ class LearningPositionService:
                                   "content": item["content"][:2000]} for item in basis],
                     "previous_note": existing["revisions"][-1] if existing["revisions"] else None,
                 }, ensure_ascii=False)},
-            ], max_tokens=4096, json_mode=True)
+            ], max_tokens=None, json_mode=True)
         except (ProviderError, TimeoutError) as exc:
             raise DomainError("position_generation_failed", 502) from exc
         if await is_disconnected():

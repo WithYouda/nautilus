@@ -240,7 +240,7 @@ def configure(client):
     assert response.status_code==200,response.text
 
 
-@pytest.mark.parametrize('model_limit,expected_budget',[(None,32768),(16384,16384),(65536,32768)])
+@pytest.mark.parametrize('model_limit,expected_budget',[(None,None),(16384,None),(65536,None)])
 def test_graph_request_budget_honors_known_cap_and_frozen_high_settings(tmp_path,model_limit,expected_budget):
     calls=[]
     with ai_client(tmp_path,calls) as client:
@@ -263,7 +263,7 @@ def test_graph_request_budget_honors_known_cap_and_frozen_high_settings(tmp_path
         run=wait_run(client,client.post(BASE+'/suggestions',json=payload).json()['id'])
         assert run['status']=='succeeded' and len(calls)==1
         assert run['provider_snapshot']['max_tokens']==expected_budget
-        assert calls[0]['max_tokens']==expected_budget
+        assert 'max_tokens' not in calls[0]
         assert calls[0]['reasoning_effort']=='high'
         assert run['provider_snapshot']['reasoning_parameters']=={'reasoning_effort':'high'}
         assert run['provider_snapshot']['timeout_seconds']==11

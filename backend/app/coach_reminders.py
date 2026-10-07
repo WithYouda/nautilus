@@ -253,6 +253,18 @@ class CoachReminders:
             settings=self._settings(c,owner);items,active,quiet=self._sync(c,owner,settings,now)
             return self._view(c,owner,settings,now,items,active,quiet)
 
+    def history(self, identity, before=None):
+        owner = self._owner(identity)
+        with self.db.transaction() as c:
+            items = current_items(c, owner)
+            sql = 'SELECT rowid AS page_cursor,* FROM learning_coach_reminder WHERE owner_id=? AND dispatched_at IS NOT NULL'
+            values = [owner]
+            if before is not None:
+                sql += ' AND rowid<?'; values.append(before)
+            rows = c.execute(sql + ' ORDER BY rowid DESC LIMIT 51', values).fetchall()
+            return {'items': [self._public(row, items) for row in rows[:50]],
+                    'next_before': rows[49]['page_cursor'] if len(rows) > 50 else None}
+
     def dispatch(self,identity,identifier,expected_revision,key):
         owner=self._owner(identity);now=parse(self.clock());fingerprint=digest({'id':identifier,'revision':expected_revision})
         with self.db.transaction(immediate=True) as c:

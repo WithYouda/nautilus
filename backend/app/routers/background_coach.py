@@ -1,6 +1,6 @@
 """Owner-authenticated coach proposals; accepting never executes a formal change."""
 from typing import Literal
-from fastapi import APIRouter,Depends,Request,Response,HTTPException
+from fastapi import APIRouter,Depends,Request,Response,HTTPException,Query
 from pydantic import BaseModel,ConfigDict,Field
 from ..dependencies import current_identity
 from ..learning_domain import DomainError
@@ -49,6 +49,9 @@ def overview(request:Request,scope:Literal['global','plan']='global',plan_id:str
     return invoke(request,'view',identity,scope,plan_id)
 @router.get('/settings')
 def get_settings(request:Request,identity=Depends(current_identity)): return invoke(request,'get_settings',identity)
+@router.get('/history')
+def history(request:Request,scope:Literal['global','plan']='global',plan_id:str|None=None,before:int|None=Query(default=None,ge=1),identity=Depends(current_identity)):
+    return invoke(request,'history',identity,scope,plan_id,before)
 @router.put('/settings')
 async def save_settings(payload:Settings,request:Request,identity=Depends(current_identity)):
     data,key=values(payload)

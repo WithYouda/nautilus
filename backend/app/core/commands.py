@@ -22,27 +22,27 @@ class ChangeGoalStatus(Command):
 
 class CreateOutcome(Command):
     kind: Literal['atomic', 'composite'] = 'atomic'
-    object_description: str = Field(min_length=1, max_length=500)
-    behavior: str = Field(min_length=1, max_length=500)
+    object_description: str = Field(min_length=1)
+    behavior: str = Field(min_length=1)
     context_key: str = Field(min_length=1, max_length=200)
 
 
 class ConfirmLearningSetup(Command):
     plan_id: str | None = Field(default=None, min_length=1, max_length=100)
-    original_intent: str = Field(min_length=1, max_length=4000)
+    original_intent: str = Field(min_length=1)
     goal_title: str = Field(min_length=1, max_length=200)
-    goal_description: str = Field(default="", max_length=1000)
+    goal_description: str = Field(default="")
     plan_title: str = Field(min_length=1, max_length=200)
-    plan_description: str = Field(default="", max_length=1000)
+    plan_description: str = Field(default="")
     action_title: str = Field(min_length=1, max_length=300)
     context_key: str = Field(min_length=1, max_length=200)
     outcome_id: str | None = Field(default=None, min_length=1, max_length=100)
-    object_description: str = Field(min_length=1, max_length=500)
-    behavior: str = Field(min_length=1, max_length=500)
+    object_description: str = Field(min_length=1)
+    behavior: str = Field(min_length=1)
     outcome_context_key: str = Field(min_length=1, max_length=200)
     criterion_id: str | None = Field(default=None, min_length=1, max_length=100)
-    boundaries: str = Field(default="", max_length=2000)
-    stop_conditions: str = Field(min_length=1, max_length=2000)
+    boundaries: str = Field(default="")
+    stop_conditions: str = Field(min_length=1)
     time_budget_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 
@@ -50,8 +50,8 @@ class CreateDelegation(Command):
     action_id: str = Field(min_length=1, max_length=100)
     outcome_id: str = Field(min_length=1, max_length=100)
     criterion_id: str | None = Field(default=None, min_length=1, max_length=100)
-    boundaries: str = Field(max_length=2000)
-    stop_conditions: str = Field(min_length=1, max_length=2000)
+    boundaries: str = Field()
+    stop_conditions: str = Field(min_length=1)
     time_budget_minutes: int | None = Field(default=None, ge=1, le=1440)
     expected_version: int = Field(ge=1)
 
@@ -69,7 +69,7 @@ class CompleteLearningAction(Command):
 
 class SaveTextArtifact(Command):
     session_id: str
-    content: str = Field(min_length=1, max_length=1_000_000)
+    content: str = Field(min_length=1)
     expected_version: int = Field(ge=1)
 
 
@@ -83,7 +83,7 @@ class EndSession(Command):
     expected_version: int = Field(ge=1)
 class CorrectArtifact(Command):
     artifact_id: str
-    content: str = Field(min_length=1, max_length=1_000_000)
+    content: str = Field(min_length=1)
     expected_version: int = Field(ge=1)
 
 

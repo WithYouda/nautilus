@@ -7,6 +7,7 @@ from ..conversations import ConversationError
 from ..providers import ProviderError
 from ..personas import PersonaError
 from ..learning_domain import DomainError
+from ..content_resources import ensure_capacity
 
 
 def private(response: Response):
@@ -31,9 +32,11 @@ def error(exc):
 async def body(request):
     data = bytearray()
     async for chunk in request.stream():
+        try:
+            ensure_capacity(len(data) + len(chunk))
+        except ProviderError as exc:
+            raise HTTPException(413, str(exc)) from None
         data.extend(chunk)
-        if len(data) > 64 * 1024:
-            raise HTTPException(413, '人格内容过大，请限制在64KB以内。')
     try:
         return json.loads(data)
     except ValueError:

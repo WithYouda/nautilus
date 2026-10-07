@@ -184,7 +184,7 @@ class VerificationService:
                         {"role": "system", "content": "你是 Nautilus 的验证设计助手。验证必须与教学分离，且不能向考生泄露答案。只输出 JSON。"},
                         {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                     ],
-                    max_tokens=8192,
+                    max_tokens=None,
                     json_mode=True,
                 )
             parsed = json.loads(_clean_json(text))
@@ -532,14 +532,14 @@ class VerificationService:
                 text = await provider.generate_text([
                     {"role": "system", "content": "你是 Nautilus 的独立验证评估器。当前作答已提交，可以提供面向学习者的解释性参考解法；不得复制隐藏评分指令或输出内部推理。只输出 JSON。"},
                     {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-                ], max_tokens=8192, json_mode=True)
+                ], max_tokens=None, json_mode=True)
             evaluation = json.loads(_clean_json(text))
             if (not isinstance(evaluation, dict)
                 or set(evaluation) != {"passed", "stop_condition_met", "feedback", "next_step", "question_feedback"}
                 or any(not isinstance(evaluation.get(key), bool) for key in ("passed", "stop_condition_met"))
                 or any(not isinstance(evaluation.get(key), str) or not evaluation[key].strip() for key in ("feedback", "next_step"))):
                 raise ValueError("invalid verification result")
-            result = {**evaluation, "feedback": evaluation["feedback"][:4000], "next_step": evaluation["next_step"][:1000]}
+            result = dict(evaluation)
             if "question_feedback" in result:
                 expected = {q["id"] for q in json.loads(current["challenge_json"]).get("questions", [])} or {"material"}
                 feedback = result["question_feedback"]
@@ -554,12 +554,12 @@ class VerificationService:
                         raise ValueError("invalid feedback question")
                     seen.add(qid)
                     for key in ("feedback", "reference_answer"):
-                        if not isinstance(item[key], str) or len(item[key]) > 6000:
+                        if not isinstance(item[key], str):
                             raise ValueError("invalid feedback text")
                     if not item["feedback"].strip():
                         raise ValueError("empty question feedback")
                     for key in ("follow_up_questions", "unmet_requirements"):
-                        if not isinstance(item[key], list) or len(item[key]) > 5 or any(not isinstance(v, str) or len(v) > 1000 for v in item[key]):
+                        if not isinstance(item[key], list) or any(not isinstance(v, str) for v in item[key]):
                             raise ValueError("invalid feedback list")
                     if item["unmet_requirements"]:
                         result.update(passed=False, stop_condition_met=False)

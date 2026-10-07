@@ -27,7 +27,6 @@ HEARTBEAT_SECONDS = 15.0
 MAX_RESPONSE_CHARS = 1_000_000
 MAX_CONCURRENT_PROVIDER_RUNS = 4
 SUBSCRIBER_QUEUE_SIZE = 256
-TITLE_MAX_OUTPUT_TOKENS = 512
 _SUBSCRIBER_OVERFLOW = object()
 
 
@@ -415,7 +414,7 @@ class AiRunManager:
                 async with asyncio.timeout(float(title_config.timeout_seconds)):
                     title = await provider.generate_text(
                         prompt,
-                        max_tokens=TITLE_MAX_OUTPUT_TOKENS,
+                        max_tokens=None,
                     )
             self.conversations.finalize_title_run(
                 title_run_id,

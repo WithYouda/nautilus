@@ -470,14 +470,16 @@ class ToolSession:
         yield self._finish(calls, {"role": "model", "parts": parts})
 
     async def _anthropic(self, tools: list[dict], allow_tools: bool) -> AsyncIterator[ProviderChunk | ToolTurn]:
+        maximum = await self.provider._model_output_limit()
         payload: dict[str, Any] = {"model": self.provider.config.model, "messages": self._history,
-            "max_tokens": 4096, "stream": True,
+            "max_tokens": maximum, "stream": True,
             "tools": [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]} for t in tools],
             "tool_choice": {"type": "auto" if allow_tools else "none"}}
         if self._system:
             payload["system"] = self._system
         apply_json_output(payload, self.kind, self.messages)
         apply_reasoning_parameters(payload, self.provider.config)
+        self.provider._use_model_maximum(payload, maximum)
         blocks: dict[int, dict] = {}
         raw_inputs: dict[int, str] = {}
         stopped = False

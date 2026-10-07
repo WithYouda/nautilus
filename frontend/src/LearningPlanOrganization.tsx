@@ -174,7 +174,7 @@ function OrganizationEditor({ data, closed, onClose, onRead, onSaved, suspended 
             <h3>{selection.kind === 'new' ? '新建模块' : '编辑模块'}</h3>
             {modulePurged && <p className="form-hint">名称和说明已清除，结构仍可调整。</p>}
             <label className="field"><span>模块名称</span><input required maxLength={200} value={modulePurged ? selectedModule!.title : title} disabled={disabled || modulePurged} onChange={event => setTitle(event.target.value)} /></label>
-            <label className="field"><span>说明（可选）</span><textarea maxLength={1000} value={modulePurged ? '' : description} disabled={disabled || modulePurged} onChange={event => setDescription(event.target.value)} /></label>
+            <label className="field"><span>说明（可选）</span><textarea value={modulePurged ? '' : description} disabled={disabled || modulePurged} onChange={event => setDescription(event.target.value)} /></label>
             <label className="field"><span>父模块</span><select aria-label="父模块" value={parent} disabled={disabled} onChange={event => setParent(event.target.value)}><ModuleOptions data={data} exclude={selection.kind === 'module' ? selection.id : undefined} /></select></label>
           </>}
           {selection.kind !== 'new' && !selectedChild && <p role="alert">当前项目已不可编辑。输入已保留，可选择其他项目。</p>}
@@ -250,7 +250,7 @@ export function PlanCreateDialog({ goals, onClose, onCreated, onCreateGoal }: {
   }
   return <AttachmentDialog title="创建学习计划" closeLabel="关闭创建学习计划" className="learning-organization-dialog learning-plan-create-dialog" onClose={() => { if (!busy) onClose(); }}><form onSubmit={save}><div className="learning-organization-dialog__body">
     <label className="field"><span>计划名称</span><input required maxLength={200} value={title} disabled={busy} onChange={event => setTitle(event.target.value)} /></label>
-    <label className="field"><span>说明（可选）</span><textarea maxLength={1000} value={description} disabled={busy} onChange={event => setDescription(event.target.value)} /></label>
+    <label className="field"><span>说明（可选）</span><textarea value={description} disabled={busy} onChange={event => setDescription(event.target.value)} /></label>
     <label className="field"><span>关联目标（可选）</span><select aria-label="关联目标（可选）" value={goalId} disabled={busy} onChange={event => setGoalId(event.target.value)}><option value="">暂不关联目标</option>{goals.filter(goal => ['active', 'hypothesis'].includes(goal.status)).map(goal => <option key={goal.id} value={goal.id}>{goal.title}</option>)}</select></label>
     <button className="text-button" type="button" disabled={busy} onClick={onCreateGoal}>从目标开始</button>{error && <p role="alert" className="workspace-alert">{error}</p>}
   </div><div className="learning-organization-dialog__footer"><button className="button button--quiet" type="button" disabled={busy} onClick={onClose}>取消</button><button className="button button--accent" type="submit" disabled={busy || !title.trim()}>{busy ? '正在创建…' : '创建计划'}</button></div></form></AttachmentDialog>;
@@ -338,12 +338,12 @@ export function PlanTaskDialog({ planId, onClose, onCreated, pathTarget }: {
     {target && <p className="form-hint">添加到阶段：{target.node_title}</p>}
     <ConflictNotice state={stale} busy={busy} onRead={() => void readLatest()} onReviewed={() => setStale(null)} />
     <label className="field"><span>任务名称</span><input required maxLength={300} disabled={disabled} value={title} onChange={event => setTitle(event.target.value)} /></label>
-    <fieldset className="learning-organization-outcome"><legend>希望能够做什么</legend><label className="field"><span>学习对象</span><input required maxLength={500} disabled={disabled || !!outcomeId} value={object} onChange={event => setObject(event.target.value)} placeholder="例如：含空行的文本" /></label><label className="field"><span>希望具备的能力</span><textarea required maxLength={500} disabled={disabled || !!outcomeId} value={behavior} onChange={event => setBehavior(event.target.value)} placeholder="例如：独立拆分并清理文本" /></label></fieldset>
-    <label className="field"><span>做到哪里可以停</span><textarea required maxLength={2000} disabled={disabled} value={stop} onChange={event => setStop(event.target.value)} /></label>
+    <fieldset className="learning-organization-outcome"><legend>希望能够做什么</legend><label className="field"><span>学习对象</span><input required  disabled={disabled || !!outcomeId} value={object} onChange={event => setObject(event.target.value)} placeholder="例如：含空行的文本" /></label><label className="field"><span>希望具备的能力</span><textarea required disabled={disabled || !!outcomeId} value={behavior} onChange={event => setBehavior(event.target.value)} placeholder="例如：独立拆分并清理文本" /></label></fieldset>
+    <label className="field"><span>做到哪里可以停</span><textarea required disabled={disabled} value={stop} onChange={event => setStop(event.target.value)} /></label>
     <details className="learning-organization-advanced" onToggle={event => { if (event.currentTarget.open) void loadSources(); }}><summary>情境、时间与已有成果</summary><div>
       <label className="field"><span>情境</span><input maxLength={200} value={context} disabled={disabled || !!chosenStandard} onChange={event => setContext(event.target.value)} /></label>
       <label className="field"><span>时间预算（分钟，可留空）</span><input type="number" step="any" value={budget} disabled={disabled} onChange={event => setBudget(event.target.value)} placeholder="不确定" /></label>
-      <label className="field"><span>范围说明（可选）</span><textarea maxLength={2000} disabled={disabled} value={boundaries} onChange={event => setBoundaries(event.target.value)} /></label>
+      <label className="field"><span>范围说明（可选）</span><textarea disabled={disabled} value={boundaries} onChange={event => setBoundaries(event.target.value)} /></label>
       {sourcesLoading && <p role="status">正在读取已有成果…</p>}{sourceError && <div><p role="alert">{sourceError}</p><button className="text-button" type="button" disabled={sourcesLoading} onClick={() => void loadSources()}>重读已有成果</button></div>}
       <label className="field"><span>成果来源</span><select aria-label="成果来源" value={outcomeId} disabled={disabled || sourcesLoading} onChange={event => chooseOutcome(event.target.value)}><option value="">新建上述期望能力声明</option>{outcomes.map(item => <option key={item.id} value={item.id}>{item.object_description} · {item.behavior}</option>)}</select></label>
       <label className="field"><span>验证标准（可选）</span><select aria-label="验证标准（可选）" value={criterionId} disabled={disabled || sourcesLoading} onChange={event => chooseStandard(event.target.value)}><option value="">暂不选择标准</option>{standards.filter(item => !outcomeId || item.outcome_id === outcomeId).map(item => <option key={item.id} value={item.id}>{item.package_title} · {item.object_description}</option>)}</select></label>

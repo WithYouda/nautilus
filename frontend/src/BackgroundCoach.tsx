@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { ApiError, approveAgentPermissionRequest, createAgentPermissionRequest, denyAgentPermissionRequest, listAgentPermissionRequests, revokeAgentPermissionGrant, type AgentPermissionRequest } from './api';
 import { AttachmentDialog } from './AttachmentReview';
-import { cancelCoachRun, checkCoach, coachHref, coachKey, correctCoachSignal, decideCoachCandidate, getCoach, getCoachCandidate, getCoachRun, getCoachSignals, navigateCoach, purgeCoachRun, type CoachAssignmentSignal, type CoachCandidate, type CoachDecision, type CoachRun, type CoachRunDetail, type CoachScope, type CoachSignal, type CoachView } from './background-coach-api';
+import { cancelCoachRun, checkCoach, coachHref, coachKey, correctCoachSignal, decideCoachCandidate, getCoach, getCoachHistory, getCoachCandidate, getCoachRun, getCoachSignals, navigateCoach, purgeCoachRun, type CoachAssignmentSignal, type CoachCandidate, type CoachDecision, type CoachRun, type CoachRunDetail, type CoachScope, type CoachSignal, type CoachView } from './background-coach-api';
 import './styles/background-coach.css';
 
 const statusLabels = { pending: '待考虑', accepted: '已接受', rejected: '已拒绝', ignored: '暂不处理', unavailable: '来源已变化' };
@@ -81,6 +81,7 @@ function Signals({ scope, planId }: { scope: CoachScope; planId?: string }) {
 export default function BackgroundCoach({ scope = 'global', planId }: { scope?: CoachScope; planId?: string }) {
   const [view, setView] = useState<CoachView | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [detailId, setDetailId] = useState<string | null>(null), [signalsOpen, setSignalsOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [historyPage, setHistoryPage] = useState<{ items: CoachCandidate[]; next_before: number | null } | null>(null), [historyBusy, setHistoryBusy] = useState(false);
   const listId = useId();
   const identity = `${scope}:${planId ?? ''}`, current = useRef(identity); current.current = identity;
   const alive = useRef(false), serial = useRef(0);
@@ -91,8 +92,18 @@ export default function BackgroundCoach({ scope = 'global', planId }: { scope?: 
   const here = () => alive.current && current.current === identity;
   async function read() {
     const sequence = ++serial.current, generation = mutation.current, next = await getCoach(scope, planId);
-    if (here() && sequence === serial.current && generation === mutation.current) setView(next);
+    if (here() && sequence === serial.current && generation === mutation.current) { setView(next); setHistoryPage(null); }
     return next;
+  }
+  async function moreHistory() {
+    if (historyBusy) return;
+    const generation = mutation.current;
+    setHistoryBusy(true);
+    try {
+      const page = await getCoachHistory(scope, planId, historyPage?.next_before ?? undefined);
+      if (here() && generation === mutation.current) setHistoryPage(previous => ({ items: [...(previous?.items ?? []), ...page.items], next_before: page.next_before }));
+    } catch (reason) { if (here()) setError(errorText(reason)); }
+    finally { if (here()) setHistoryBusy(false); }
   }
   async function check(trigger: 'manual' | 'return', retryRunId?: string) {
     if (busy) return;
@@ -115,7 +126,7 @@ export default function BackgroundCoach({ scope = 'global', planId }: { scope?: 
     finally { if (here() && generation === mutation.current) setBusy(false); }
   }
   useEffect(() => {
-    alive.current = true; setView(null); setError(''); setNotice(''); setExpanded(false); attempt.current = null;
+    alive.current = true; setHistoryPage(null); setHistoryBusy(false); setView(null); setError(''); setNotice(''); setExpanded(false); attempt.current = null;
     const generation = mutation.current;
     void read().then(value => { if (here() && generation === mutation.current && value.settings.enabled && !ongoing(value.active_run)) void check('return'); }).catch(reason => { if (here()) setError(errorText(reason)); });
     const refresh = () => { void read().catch(reason => { if (here()) setError(errorText(reason)); }); };
@@ -199,7 +210,8 @@ export default function BackgroundCoach({ scope = 'global', planId }: { scope?: 
     {view && !view.candidates.length && !ongoing(run) && run?.status !== 'failed' && run?.status !== 'canceled' && <p className="background-coach__empty">暂无待处理建议。</p>}
     {view && <details className="background-coach__more"><summary>处理记录与复盘设置</summary>
       <p>接受建议会打开原入口；实际变化仍由本人在原流程确认。撤销处理只恢复建议。</p>
-      {view.history.map(candidate => card(candidate, true))}
+      {(historyPage?.items ?? view.history).map(candidate => card(candidate, true))}
+      {(!historyPage || historyPage.next_before !== null) && <button className="text-button" type="button" disabled={historyBusy} onClick={() => void moreHistory()}>{historyBusy ? "正在读取…" : historyPage ? "查看更早记录" : "查看全部处理记录"}</button>}
       <p>{view.settings.enabled ? '自动复盘已开启' : '自动复盘已关闭'} · 今天自动发起 {view.budget.used_today} 次 · 每天限额 {view.settings.max_calls_per_day} 次</p>
       <p>每会话最多 {view.settings.max_calls_per_session} 次，间隔至少 {view.settings.cooldown_minutes} 分钟 · 保存时区 {view.settings.timezone}</p>
       {view.budget.next_allowed_at && <p>下次自动复盘最早在 {new Date(view.budget.next_allowed_at).toLocaleString()}</p>}

@@ -245,7 +245,7 @@ def test_ai_frozen_plan_runtime_single_call_bounded_sources_preview_confirmation
     run=wait_run(ctx,response.json()['id'])
     assert run['status']=='succeeded',run
     assert len(calls)==1 and runtime==[(ctx['identity']['id'],'plan',ctx['plan_id'])]
-    assert calls[0]['max_tokens']==1024 and calls[0]['reasoning_effort']=='high'
+    assert 'max_tokens' not in calls[0] and calls[0]['reasoning_effort']=='high'
     assert run['provider_snapshot']['timeout_seconds']==111
     assert 'SESSION_FEEDBACK_PRIVATE' not in json.dumps(calls[0])
     absent(ctx['db'].database_path,'FAKE_KEY_DO_NOT_PERSIST')

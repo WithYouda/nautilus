@@ -35,7 +35,7 @@ async def test_claude_uses_reported_model_maximum_including_thinking():
             return httpx.Response(200,json={'id':'model-test','max_tokens':64000})
         payload=json.loads(request.content);seen.append(payload)
         return httpx.Response(200,json={'stop_reason':'end_turn','content':[{'type':'text','text':'{"ok":true}'}]})
-    settings=config('anthropic');settings.reasoning_parameters_json=json.dumps({'thinking':{'type':'enabled','budget_tokens':2048}})
+    settings=config('anthropic');settings.max_output_tokens=None;settings.reasoning_parameters_json=json.dumps({'thinking':{'type':'enabled','budget_tokens':2048}})
     provider=AnthropicProvider(settings,httpx.MockTransport(handler))
     await provider.generate_text([{'role':'user','content':'synthetic'}],max_tokens=None,json_mode=True)
     assert seen[0]['max_tokens']==64000 and seen[0]['thinking']['budget_tokens']==2048
@@ -48,7 +48,8 @@ async def test_claude_missing_model_maximum_does_not_guess_a_replacement():
     def handler(request):
         seen.append(request.method)
         return httpx.Response(200,json={'id':'model-test'})
-    provider=AnthropicProvider(config('anthropic'),httpx.MockTransport(handler))
+    settings=config('anthropic');settings.max_output_tokens=None
+    provider=AnthropicProvider(settings,httpx.MockTransport(handler))
     with pytest.raises(ProviderError,match='未退回固定额度'):
         await provider.generate_text([{'role':'user','content':'synthetic'}],max_tokens=None)
     assert seen==['GET']

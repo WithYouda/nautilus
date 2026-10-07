@@ -84,7 +84,7 @@ export default function LearningObservations({ entries, identity, disabled, busy
           onChange={event => setEditing({ ...currentEdit, value: { ...currentEdit.value, state: event.target.value as LearningObservationState } })}>
           <option value="progress">有进展</option><option value="difficulty">仍有困难</option><option value="uncertain">尚不明确</option>
         </select></label>
-        <label>补充说明（可选）<textarea aria-label="补充说明（可选）" value={currentEdit.value.note} maxLength={600} rows={2} disabled={blocked}
+        <label>补充说明（可选）<textarea aria-label="补充说明（可选）" value={currentEdit.value.note} rows={2} disabled={blocked}
           onChange={event => setEditing({ ...currentEdit, value: { ...currentEdit.value, note: event.target.value } })} /></label>
         {currentEdit.revision !== observation.revision && <p className="form-hint">记录已更新，请取消后重新纠正。</p>}
         <div className="learning-observation__actions">

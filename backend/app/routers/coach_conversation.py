@@ -1,6 +1,6 @@
 """Explicit coach identity and deterministic notification dispatch endpoints."""
 from typing import Literal
-from fastapi import APIRouter,Depends,HTTPException,Request,Response
+from fastapi import APIRouter,Depends,HTTPException,Request,Response,Query
 from pydantic import BaseModel,ConfigDict,Field
 from ..dependencies import current_identity
 from ..conversations import ConversationError,ConversationConflict
@@ -54,6 +54,9 @@ async def purge(identifier:str,payload:Purge,request:Request,identity=Depends(cu
 @router.get('/reminders/settings')
 def reminder_settings(request:Request,identity=Depends(current_identity)):
     return invoke(request,'coach_reminders','settings',identity)
+@router.get('/reminders/history')
+def reminder_history(request:Request,before:int|None=Query(default=None,ge=1),identity=Depends(current_identity)):
+    return invoke(request,'coach_reminders','history',identity,before)
 @router.put('/reminders/settings')
 def save_reminder_settings(payload:SaveReminderSettings,request:Request,identity=Depends(current_identity)):
     return invoke(request,'coach_reminders','save',identity,payload.model_dump(mode='json',exclude={'request_key','expected_revision'}),payload.expected_revision,payload.request_key)
