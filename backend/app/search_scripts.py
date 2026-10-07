@@ -1,5 +1,6 @@
 """Validate custom JS input/output and supervise its isolated worker."""
 from __future__ import annotations
+import math
 
 import asyncio
 import base64
@@ -29,7 +30,7 @@ def _number(value, *, default, low, high, name):
         parsed = float(value)
     except (TypeError, ValueError):
         raise SearchError(f"{name}格式不正确", "invalid_config") from None
-    if not low <= parsed <= high or parsed != parsed:
+    if parsed < low or (high is not None and parsed > high) or not math.isfinite(parsed):
         raise SearchError(f"{name}格式不正确", "invalid_config")
     return parsed
 
@@ -54,7 +55,7 @@ def _url(value):
 
 
 def _string(value, maximum):
-    if not isinstance(value, str) or len(value) > maximum:
+    if not isinstance(value, str) or (maximum is not None and len(value) > maximum):
         raise SearchError("自定义脚本返回的数据格式不正确", "invalid_response")
     return value
 
@@ -79,7 +80,7 @@ def _normalize_search(result, size):
             raise SearchError("自定义脚本返回的搜索结果格式不正确", "invalid_response")
         date = item.get("published_date", item.get("publishedDate"))
         items.append({"title": _string(item.get("title"), 300), "url": url,
-                      "text": _string(item.get("text", ""), 20000),
+                      "text": _string(item.get("text", ""), None),
                       "published_date": _string(date, 100) if date is not None else None,
                       "highlights": [_string(part, 1000) for part in highlights]})
     images = result.get("images", [])
@@ -103,7 +104,7 @@ def _normalize_scrape(result):
             if meta.get(key) is not None:
                 target = "published_date" if key == "publishedDate" else key
                 metadata[target] = _string(meta[key], 500)
-        urls.append({"url": _url(item.get("url")), "content": _string(item.get("content"), 100000), "metadata": metadata})
+        urls.append({"url": _url(item.get("url")), "content": _string(item.get("content"), None), "metadata": metadata})
     return {"urls": urls, "retrieved_at": _stamp()}
 
 
@@ -113,7 +114,7 @@ async def execute_script(options: dict, params: dict, common: dict, fetch: bool 
         raise SearchError("自定义脚本配置格式不正确", "invalid_config")
     size = int(_number(common.get("result_size"), default=10, low=1, high=50, name="结果数量"))
     timeout = _number(common.get("timeout_seconds"), default=30, low=0.1, high=120, name="超时时间")
-    max_requests = int(_number(common.get("max_requests"), default=5, low=0, high=20, name="请求次数"))
+    max_requests = int(_number(common.get("max_requests"), default=5, low=0, high=None, name="请求次数"))
     mode = "scrape" if fetch else "search"
     script = options.get("scrape_script" if fetch else "search_script")
     if not isinstance(script, str) or not script.strip():

@@ -12,9 +12,10 @@ from .core.events import digest
 from .core.background_coach import settings,budget,original,owned,source_key
 from .core.coach_commands import (SaveCoachSettings,RecordCoachSignal,CorrectCoachSignal,ClaimCoachRun,SendCoachRun,
     FinishCoachRun,CancelCoachRun,PurgeCoachRun,DecideCoachCandidate)
-from .coach_sources import (input_state,source_available,source_summary,signal_available,collect,target,IMMEDIATE,link,MAX_INPUT_BYTES,input_bytes,target_available)
+from .coach_sources import (input_state,source_available,source_summary,signal_available,collect,target,IMMEDIATE,link,input_bytes,target_available)
 from .managed_purge import ManagedPurge
 from .core.learning import utc_timestamp
+from .content_resources import ensure_capacity
 
 GATES={'coach_disabled','coach_active','coach_no_new_signals','coach_day_limit','coach_session_limit','coach_cooldown','coach_batch_consumed'}
 
@@ -22,15 +23,15 @@ class CandidateProposal(BaseModel):
     model_config=ConfigDict(extra='forbid')
     kind: str | None = None
     title: str = Field(min_length=1,max_length=160)
-    explanation: str = Field(min_length=1,max_length=1200)
-    unknowns: list[str] = Field(default_factory=list,max_length=8)
-    source_refs: list[dict] = Field(min_length=1,max_length=64)
+    explanation: str = Field(min_length=1)
+    unknowns: list[str] = Field(default_factory=list)
+    source_refs: list[dict] = Field(min_length=1)
     target: dict
     access_request: dict | None = None
 
 class Proposal(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    candidates: list[CandidateProposal] = Field(max_length=8)
+    candidates: list[CandidateProposal] = Field()
 
 def validated_candidates(items,inputs):
     result=[];seen=set();refs={source_key(r):r for r in inputs['refs']}
@@ -150,7 +151,7 @@ class BackgroundCoach:
                 history=[x for x in candidates if x['status']!='pending'][:100],
                 active_run=next((self._run(c,owner,r) for r in runs if r['status'] in {'queued','running'}),None),
                 latest_run=next((self._run(c,owner,r) for r in runs if scope=='global' or r['plan_id']==plan_id or any(x['run_id']==r['id'] for x in candidates)),None),
-                pending_signals=len(collect(c,owner,scope,plan_id,self.clock(),self.chats)),budget=limits)
+                pending_signals=len(collect(c,owner,scope,plan_id,self.clock(),self.chats,all_pending=True)),budget=limits)
 
     def history(self, identity, scope='global', plan_id=None, before=None):
         owner = self._owner(identity)
@@ -221,9 +222,7 @@ class BackgroundCoach:
                 excluded={session for session,count in counts.items() if count>=config['max_calls_per_session']}
                 refs=collect(c,owner,scope,plan_id,self.clock(),self.chats,excluded);return_value=None if refs else 'coach_no_new_signals'
             inputs=input_state(c,owner,scope,plan_id,refs,self.chats) if refs else None
-            while inputs and input_bytes(inputs)>MAX_INPUT_BYTES and len(refs)>1 and not permission_request:
-                refs=refs[:-1];inputs=input_state(c,owner,scope,plan_id,refs,self.chats)
-            if inputs and input_bytes(inputs)>MAX_INPUT_BYTES: raise DomainError('coach_input_too_large',422)
+            if inputs: ensure_capacity(input_bytes(inputs))
         if return_value: return dict(view=self.view(identity,scope,plan_id),run=None,reason=return_value)
         try: _,config,snapshot=self.chats.model_control.runtime(owner,scope,'default' if scope=='global' else plan_id)
         except ConversationError as error: raise DomainError('coach_provider_unavailable',503) from error

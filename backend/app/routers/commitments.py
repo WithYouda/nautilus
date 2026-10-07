@@ -49,7 +49,7 @@ class Revision(Key):
 class Draft(Revision):
     route_version_id:str
     items:list[ItemFields]=Field(max_length=100)
-    reason:str=Field(default='',max_length=2000)
+    reason:str=Field(default='')
     draft_id:str|None=None
     expected_draft_revision:int|None=Field(default=None,ge=1)
 class DraftPreview(BaseModel):

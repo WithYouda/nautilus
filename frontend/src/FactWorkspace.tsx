@@ -1095,7 +1095,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                 value={setupIntent}
                 onChange={(event) => setSetupIntent(event.target.value)}
                 placeholder="例如：我想学会用 Python 正则处理日志，并能独立写出几个实际脚本。"
-                maxLength={4000}
+
                 rows={3}
                 disabled={busy || Boolean(setupDraft)}
               />
@@ -1479,7 +1479,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                     value={delegationForm.boundaries}
                     onChange={(event) => setDelegationForm({ ...delegationForm, boundaries: event.target.value })}
                     placeholder="本次学习的边界"
-                    maxLength={2000}
+
                   />
                 </label>
                 <label className="field">
@@ -1488,7 +1488,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
                     value={delegationForm.stopConditions}
                     onChange={(event) => setDelegationForm({ ...delegationForm, stopConditions: event.target.value })}
                     placeholder="完成后停止"
-                    maxLength={2000}
+
                     required
                   />
                 </label>

@@ -45,7 +45,7 @@ export default function OutcomeSuggestions({ nodes, runs, currentPlanId, onClose
   }
   async function start(retry = false) {
     const ids = retry && run ? run.outcome_ids : selected;
-    if (busy || ids.length < 2 || ids.length > 30) return;
+    if (busy || ids.length < 2) return;
     const serialized = JSON.stringify(ids);
     if (retry || startAttempt.current?.ids !== serialized) startAttempt.current = { ids: serialized, key: requestKey() };
     setBusy(true); setError('');
@@ -79,8 +79,8 @@ export default function OutcomeSuggestions({ nodes, runs, currentPlanId, onClose
       <details open={!run}><summary>选择要分析的成果{selected.length ? `（${selected.length}）` : ''}</summary>
         <label>查找成果<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
         {currentPlanId && <label className="outcome-graph__cross-plan"><input type="checkbox" checked={crossPlan} onChange={event => setCrossPlan(event.target.checked)} />包含其他计划的成果</label>}
-        <div className="outcome-graph__picker">{choices.map(node => <label key={node.id}><input type="checkbox" checked={selected.includes(node.id)} disabled={busy || run?.status === 'running' || (!selected.includes(node.id) && selected.length >= 30)} onChange={event => setSelected(ids => event.target.checked ? [...ids, node.id] : ids.filter(id => id !== node.id))} /><span><strong>{node.object_description}</strong><small>{node.behavior}</small></span></label>)}</div>
-        <button className="button button--accent" type="button" disabled={busy || run?.status === 'running' || selected.length < 2 || selected.length > 30} onClick={() => void start()}>{busy ? '正在提交…' : '分析选中成果'}</button>
+        <div className="outcome-graph__picker">{choices.map(node => <label key={node.id}><input type="checkbox" checked={selected.includes(node.id)} disabled={busy || run?.status === 'running'} onChange={event => setSelected(ids => event.target.checked ? [...ids, node.id] : ids.filter(id => id !== node.id))} /><span><strong>{node.object_description}</strong><small>{node.behavior}</small></span></label>)}</div>
+        <button className="button button--accent" type="button" disabled={busy || run?.status === 'running' || selected.length < 2} onClick={() => void start()}>{busy ? '正在提交…' : '分析选中成果'}</button>
       </details>
       {runs.length > 1 && <details><summary>先前的分析</summary><label>选择分析记录<select value={run?.id ?? ''} disabled={busy} onChange={event => void load(event.target.value)}>{runs.map(item => <option value={item.id} key={item.id}>{graphTime(item.created_at)} · {runLabels[item.status]}</option>)}</select></label></details>}
       {error && <div role="alert"><p>{error}</p>{run && <button className="text-button" type="button" disabled={busy} onClick={() => void load(run.id)}>重新读取分析</button>}</div>}

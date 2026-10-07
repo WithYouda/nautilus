@@ -12,6 +12,7 @@ from .function_tools import ToolSession, ToolTurn
 from .search_service import SearchService
 from .search_adapters import SearchError
 from .learning_domain import DomainError
+from .content_resources import ensure_capacity
 
 
 def now():
@@ -29,15 +30,15 @@ def apply_native_event(trace, chunk):
         if isinstance(suggestions, str) and len(suggestions.encode("utf-8")) <= 65536:
             trace["search_suggestions_html"] = suggestions
         existing = {item["url"] for item in trace.get("items", [])}
-        for item in update.get("items", [])[:50]:
+        for item in update.get("items", []):
             url = item.get("url", "")
             try:
                 parsed = urlsplit(url)
                 valid = parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password
             except ValueError:
                 valid = False
-            if valid and url not in existing and len(trace.setdefault("items", [])) < 50:
-                trace["items"].append({"title": str(item.get("title") or parsed.hostname)[:300], "url": url[:4096]})
+            if valid and url not in existing:
+                trace.setdefault("items", []).append({"title": str(item.get("title") or parsed.hostname)[:300], "url": url[:4096]})
                 existing.add(url)
 
 
@@ -53,7 +54,7 @@ def _tools(catalog, run):
 def _add_results(trace, result, fetch):
     trace["retrieved_at"] = result["retrieved_at"]
     if result.get("answer"):
-        trace["answer"] = str(result["answer"])[:12000]
+        trace["answer"] = str(result["answer"])
     incoming = result.get("items", [])
     if fetch:
         incoming = [{"url": item["url"], "title": (item.get("metadata") or {}).get("title") or item["url"], "text": item["content"], "published_date": (item.get("metadata") or {}).get("published_date")}
@@ -61,42 +62,39 @@ def _add_results(trace, result, fetch):
     by_url = {item["url"]: item for item in trace["items"]}
     for item in incoming:
         raw_text = str(item.get("text", ""))
-        clean = {**item, "text": raw_text[:12000],
+        clean = {**item, "text": raw_text,
                  "content_kind": "page" if fetch else "excerpt",
-                 "content_truncated": len(raw_text) > 12000,
+                 "content_truncated": bool(item.get("content_truncated", False)),
                  "retrieved_at": result["retrieved_at"]}
         if clean["url"] in by_url:
             by_url[clean["url"]].update(clean)
-        elif len(trace["items"]) < 50:
+        else:
             trace["items"].append(clean)
             by_url[clean["url"]] = clean
     if result.get("images"):
-        trace["images"] = list(dict.fromkeys(trace.get("images", []) + result["images"]))[:20]
+        trace["images"] = list(dict.fromkeys(trace.get("images", []) + result["images"]))
 
 
 def _tool_result(result, fetch):
     # Keep valid JSON rather than truncating the serialized tool message mid-string.
     content = {"retrieved_at": result["retrieved_at"], "untrusted_external_data": True}
     if result.get("answer"):
-        content["answer"] = str(result["answer"])[:12000]
-    remaining = 60000
+        content["answer"] = str(result["answer"])
     items = []
-    for item in result.get("urls" if fetch else "items", [])[:20]:
+    for item in result.get("urls" if fetch else "items", []):
         field = "content" if fetch else "text"
-        text = str(item.get(field, ""))[:min(12000, remaining)]
+        text = str(item.get(field, ""))
         clean = {"url": item.get("url", ""), "title": str(item.get("title") or (item.get("metadata") or {}).get("title", ""))[:300], field: text}
         published = item.get("published_date") or (item.get("metadata") or {}).get("published_date")
         if published:
             clean["published_date"] = str(published)[:100]
         if item.get("highlights"):
-            clean["highlights"] = [str(value)[:2000] for value in item["highlights"][:5]]
+            clean["highlights"] = [str(value) for value in item["highlights"]]
         items.append(clean)
-        remaining -= len(text)
-        if remaining <= 0:
-            break
     content["pages" if fetch else "items"] = items
     if result.get("images"):
-        content["images"] = result["images"][:20]
+        content["images"] = result["images"]
+    ensure_capacity(sum(len(item.get("text", item.get("content", "")).encode("utf-8")) for item in items))
     return json.dumps(content, ensure_ascii=False)
 
 

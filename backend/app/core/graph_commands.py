@@ -27,9 +27,9 @@ class RelationFields(BaseModel):
     target_outcome_id: str = Field(min_length=1, max_length=100)
     relation_type: Literal['contains', 'prerequisite', 'equivalent', 'overlap']
     context_key: str = Field(min_length=1, max_length=200)
-    rationale: str = Field(default='', max_length=2000)
-    uncertainty: str = Field(default='', max_length=1000)
-    source_refs: list[GraphSource] = Field(default_factory=list, max_length=30)
+    rationale: str = Field(default='')
+    uncertainty: str = Field(default='')
+    source_refs: list[GraphSource] = Field(default_factory=list)
 
 
 class GraphCommand(Command):
@@ -55,7 +55,7 @@ class PurgeRelation(RevokeRelation):
 
 
 class StartGraphRun(GraphCommand):
-    outcome_ids: list[str] = Field(min_length=2, max_length=30)
+    outcome_ids: list[str] = Field(min_length=2)
     provider_snapshot: dict
     inputs: list[dict]
 
@@ -65,7 +65,7 @@ class FinishGraphRun(GraphCommand):
     expected_revision: int = Field(ge=1)
     status: Literal['succeeded', 'failed']
     reason: str | None = None
-    candidates: list[RelationFields] = Field(default_factory=list, max_length=60)
+    candidates: list[RelationFields] = Field(default_factory=list)
 
 
 class CancelGraphRun(GraphCommand):

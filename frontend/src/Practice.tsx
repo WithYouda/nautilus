@@ -92,7 +92,7 @@ export function PracticePanel({ verificationId, submissionId, evaluationId, ques
       <button className="button button--quiet" type="button" disabled={busy || Boolean(pendingCreate.current) || Boolean(objection.trim())} onClick={() => void create('exercise')}>建议一个练习</button>
       <button className="button button--quiet" type="button" onClick={() => void refresh()}>刷新补练记录</button>
     </div>
-    <label className="field"><span>对原反馈有疑问？先说出要复核的具体判断</span><textarea value={objection} onChange={event => setObjection(event.target.value)} maxLength={4000} disabled={busy || Boolean(pendingCreate.current)} /></label>
+    <label className="field"><span>对原反馈有疑问？先说出要复核的具体判断</span><textarea value={objection} onChange={event => setObjection(event.target.value)}  disabled={busy || Boolean(pendingCreate.current)} /></label>
     {objection.trim() && <p className="form-hint">已写下质疑。先复核反馈，或清空质疑后再建议练习。</p>}
     <button className="button button--quiet" type="button" disabled={busy || !objection.trim() || Boolean(pendingCreate.current)} onClick={() => void create('recheck')}>先复核反馈</button>
     {pendingCreate.current && <button className="button button--quiet" type="button" disabled={busy} onClick={() => void create(pendingCreate.current!.operation, pendingCreate.current!.recheckId, pendingCreate.current!.previousId)}>重试上次请求</button>}

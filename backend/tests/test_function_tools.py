@@ -278,7 +278,7 @@ async def test_anthropic_export_restores_final_thinking_signature():
 
 
 @pytest.mark.asyncio
-async def test_replay_budget_keeps_recent_whole_turn_and_falls_back_for_older(monkeypatch):
+async def test_replay_keeps_all_permitted_whole_turns_without_byte_truncation():
     import app.function_tools as function_tools
 
     older_native = [{"role": "assistant", "content": None,
@@ -291,8 +291,7 @@ async def test_replay_budget_keeps_recent_whole_turn_and_falls_back_for_older(mo
                                       "function": {"name": "search", "arguments": '{"q":"new"}'}}]},
                      {"role": "tool", "tool_call_id": "new_call", "content": "new result"},
                      {"role": "assistant", "content": "new final", "reasoning_content": "new thought"}]
-    monkeypatch.setattr(function_tools, "MAX_REPLAY_BYTES",
-                        len(json.dumps(recent_native, ensure_ascii=False).encode("utf-8")))
+    older_native[1]["content"] += "x" * (256 * 1024)
     base = {"provider_kind": "openai_compatible", "model": "test",
             "base_url": "https://api.example.test/v1"}
     messages = [{"role": "user", "content": "q1"},
@@ -311,7 +310,7 @@ async def test_replay_budget_keeps_recent_whole_turn_and_falls_back_for_older(mo
     await collect(session)
     wire = seen[0]["messages"]
     assert [m["content"] for m in wire if m["role"] == "user"] == ["q1", "q2", "q3"]
-    assert wire[1] == {"role": "assistant", "content": "old final", "reasoning_content": "old saved"}
-    assert wire[3:6] == recent_native
+    assert wire[1:4] == older_native
+    assert wire[5:8] == recent_native
     assert not any("_model_turn" in m for m in wire)
-    assert not any(m.get("tool_call_id") == "old_call" for m in wire)
+    assert any(m.get("tool_call_id") == "old_call" for m in wire)

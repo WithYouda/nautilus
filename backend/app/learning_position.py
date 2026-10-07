@@ -12,12 +12,13 @@ from .learning_room import LearningRoomService
 from .learning_setup import _clean_json
 from .providers import ProviderError, build_provider
 from .source_runtime import scoped_path
+from .content_resources import ensure_capacity
 
 
 class PositionText(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    current: str = Field(min_length=1, max_length=500)
-    next: str = Field(max_length=500)
+    current: str = Field(min_length=1)
+    next: str = Field()
 
 
 class LearningPositionService:
@@ -85,11 +86,12 @@ class LearningPositionService:
             _, config, _ = self.chats.runtime_for_conversation(identity["id"], conversation_id)
         except ConversationError as exc:
             raise DomainError("position_provider_unavailable", 503) from exc
-        basis = path[-12:]
+        ensure_capacity(sum(len(item['content'].encode('utf-8')) for item in path))
+        basis = path
         try:
             result = await build_provider(config, transport=self.transport).generate_text([
                 {"role": "system", "content": (
-                    "你为Nautilus整理学习位置，只返回JSON：current和next两个字符串，每项最多500字。"
+                    "你为Nautilus整理学习位置，只返回JSON：current和next两个简洁的字符串。"
                     "current用一句话概括当前讨论到哪里，next只建议一个可选的下一步。"
                     "仅依据给出的任务及最近所选路径的对话摘录，不虚构此前经历或剩余必经步骤。"
                     "资料不足就明确说尚不清楚；讲解、用户自报与已验证结果分开，不能宣称掌握或完成。"
@@ -98,7 +100,7 @@ class LearningPositionService:
                 {"role": "user", "content": json.dumps({
                     "task": brief["action_title"],
                     "messages": [{"id": item["id"], "role": item["role"],
-                                  "content": item["content"][:2000]} for item in basis],
+                                  "content": item["content"]} for item in basis],
                     "previous_note": existing["revisions"][-1] if existing["revisions"] else None,
                 }, ensure_ascii=False)},
             ], max_tokens=None, json_mode=True)

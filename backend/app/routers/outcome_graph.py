@@ -50,7 +50,7 @@ class Purge(Revision):
     confirmation:Literal['PURGE']
 
 class Suggest(Key):
-    outcome_ids:list[str]=Field(min_length=2,max_length=30)
+    outcome_ids:list[str]=Field(min_length=2)
 
 class CandidateReview(Revision):
     decision:Literal['accept','reject']

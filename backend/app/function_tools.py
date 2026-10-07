@@ -16,13 +16,9 @@ from .providers import ProviderChunk, ProviderError, _ThinkStreamParser, _teachi
 from .provider_messages import encode_message, message_images
 from .teaching_wire import apply_json_output, output_kind, uses_json
 from .reasoning_wire import apply_reasoning_parameters
+from .content_resources import ensure_capacity
 
-MAX_CALLS = 8
-MAX_ARGUMENTS = 20_000
 MAX_NAME = 128
-MAX_CONTENT = 2_000_000
-MAX_CONTINUATION = 4_000_000
-MAX_REPLAY_BYTES = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -44,8 +40,7 @@ def _bad(message: str = "提供方工具响应格式不正确") -> ProviderError
 
 
 def _args(value: str) -> str:
-    if len(value.encode("utf-8")) > MAX_ARGUMENTS:
-        raise _bad("提供方工具参数过大")
+    ensure_capacity(len(value.encode("utf-8")))
     try:
         parsed = json.loads(value)
     except ValueError as error:
@@ -64,7 +59,7 @@ def _call(id: Any, name: Any, arguments: str) -> ToolCall:
 
 
 def _bounded(calls: list[ToolCall]) -> list[ToolCall]:
-    if len(calls) > MAX_CALLS or len({call.id for call in calls}) != len(calls):
+    if len({call.id for call in calls}) != len(calls):
         raise _bad("提供方工具调用数量或标识无效")
     return calls
 
@@ -88,8 +83,7 @@ class ToolSession:
         for message in self.messages:
             self._image_data.update(image["data"] for image in message_images(message))
         self._system = "\n".join(str(m.get("content", "")) for m in self.messages if m.get("role") == "system")
-        # This limits only private protocol replay, not the ordinary conversation
-        # history. Keep complete recent turns; never trim inside a tool exchange.
+        # Replay all permitted protocol turns intact; never cut a tool exchange.
         selected: dict[int, list[dict]] = {}
         replay_bytes = 0
         for index in range(len(self.messages) - 1, -1, -1):
@@ -112,9 +106,9 @@ class ToolSession:
             size = len(json.dumps(native, ensure_ascii=False).encode("utf-8"))
             if saved.get('teaching_input'):
                 size += len(json.dumps(saved['teaching_input'], ensure_ascii=False).encode('utf-8'))
-            if size <= MAX_CONTINUATION and replay_bytes + size <= MAX_REPLAY_BYTES:
-                selected[index] = native
-                replay_bytes += size
+            ensure_capacity(replay_bytes + size)
+            selected[index] = native
+            replay_bytes += size
         history: list[dict] = []
         for index, message in enumerate(self.messages):
             role = message.get("role")
@@ -150,12 +144,11 @@ class ToolSession:
         # transient input bytes, even when it appears inside a text field.
         if any(data in serialized for data in self._image_data):
             raise _bad("模型轮次记录包含图片输入")
-        if len(serialized.encode("utf-8")) > MAX_CONTINUATION:
-            raise _bad("模型轮次记录过大")
+        ensure_capacity(len(serialized.encode("utf-8")))
         runtime = next(({'role': 'user', 'content': m['content']} for m in reversed(self.messages)
                         if m.get('_teaching_runtime') is True), None)
-        if runtime and len(serialized.encode('utf-8')) + len(json.dumps(runtime, ensure_ascii=False).encode('utf-8')) > MAX_CONTINUATION:
-            raise _bad('模型轮次记录过大')
+        if runtime:
+            ensure_capacity(len(serialized.encode('utf-8')) + len(json.dumps(runtime, ensure_ascii=False).encode('utf-8')))
         return {"provider_kind": self.kind, "model": self.provider.config.model,
                 "base_url": self.provider.config.base_url, "messages": copy.deepcopy(generated),
                 'teaching_output': output_kind(self.messages),
@@ -167,8 +160,7 @@ class ToolSession:
         if self._history is None:
             self._history = self._initial()
             self._initial_history_length = len(self._history)
-        if len(tools) > MAX_CALLS:
-            raise ProviderError("工具声明数量过多", kind="config_error")
+        ensure_capacity(len(json.dumps(tools).encode("utf-8")))
         if self.kind == "openai_compatible":
             async for item in self._chat(tools, allow_tools):
                 yield item
@@ -184,8 +176,7 @@ class ToolSession:
 
     def _finish(self, calls: list[ToolCall], continuation: Any, *,
                 completion: Literal["complete", "unknown"] = "complete") -> ToolTurn:
-        if len(json.dumps(continuation, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
-            raise _bad("提供方响应过大")
+        ensure_capacity(len(json.dumps(continuation, ensure_ascii=False).encode("utf-8")))
         turn = ToolTurn(_bounded(calls), continuation, completion)
         if turn.calls:
             self._pending = turn
@@ -206,8 +197,9 @@ class ToolSession:
         supplied = [result.get("call_id") for result in results]
         if len(supplied) != len(expected) or set(supplied) != expected:
             raise ProviderError("工具结果与调用不匹配", kind="protocol_error")
-        if any(not isinstance(result.get("content"), str) or len(result["content"].encode("utf-8")) > MAX_CONTENT for result in results):
+        if any(not isinstance(result.get("content"), str) for result in results):
             raise ProviderError("工具结果格式不正确", kind="protocol_error")
+        ensure_capacity(sum(len(result["content"].encode("utf-8")) for result in results))
         by_id = {result["call_id"]: result["content"] for result in results}
         if self.kind == "openai_compatible":
             self._history.append(copy.deepcopy(turn.continuation))
@@ -299,8 +291,7 @@ class ToolSession:
                         content += value
                     else:
                         reasoning += value
-                    if len(content.encode("utf-8")) + len(reasoning.encode("utf-8")) > MAX_CONTINUATION:
-                        raise _bad("提供方响应过大")
+                    ensure_capacity((len(content) + len(reasoning)) * 4)
                     if kind == "content" and not json_output:
                         for chunk in think_parser.feed(value):
                             yield chunk
@@ -312,7 +303,7 @@ class ToolSession:
                 if not isinstance(item, dict) or not isinstance(item.get("index"), int):
                     raise _bad()
                 index = item["index"]
-                if index < 0 or index >= MAX_CALLS:
+                if index < 0:
                     raise _bad("提供方工具调用数量过多")
                 current = indexed.setdefault(index, {"id": "", "name": "", "arguments": ""})
                 for key, value in (("id", item.get("id")), ("name", (item.get("function") or {}).get("name")), ("arguments", (item.get("function") or {}).get("arguments"))):
@@ -320,7 +311,7 @@ class ToolSession:
                         if not isinstance(value, str):
                             raise _bad()
                         current[key] += value
-                if len(current["arguments"].encode("utf-8")) > MAX_ARGUMENTS or len(current["name"]) > MAX_NAME or len(current["id"]) > MAX_NAME:
+                if len(current["name"]) > MAX_NAME or len(current["id"]) > MAX_NAME:
                     raise _bad("提供方工具调用过大")
             if choice.get("finish_reason") is not None:
                 finish = choice["finish_reason"]
@@ -377,8 +368,7 @@ class ToolSession:
                     raise _bad()
                 key = str(index)
                 calls_delta[key] = calls_delta.get(key, "") + delta
-                if len(calls_delta[key].encode("utf-8")) > MAX_ARGUMENTS:
-                    raise _bad("提供方工具参数过大")
+                ensure_capacity(len(calls_delta[key].encode("utf-8")))
             elif kind == "response.output_item.done":
                 index, item = body.get("output_index"), body.get("item")
                 if isinstance(index, int) and isinstance(item, dict):
@@ -450,10 +440,7 @@ class ToolSession:
                 if not isinstance(part, dict):
                     raise _bad()
                 parts.append(copy.deepcopy(part))
-                if len(parts) > 512:
-                    raise _bad("提供方响应片段过多")
-                if len(json.dumps(parts, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
-                    raise _bad("提供方响应过大")
+                ensure_capacity(len(json.dumps(parts, ensure_ascii=False).encode("utf-8")))
                 value = part.get("text")
                 if isinstance(value, str) and value:
                     yield ProviderChunk("reasoning" if part.get("thought") else "content", value)
@@ -488,7 +475,7 @@ class ToolSession:
             kind = body.get("type") or event
             if kind == "content_block_start":
                 index, block = body.get("index"), body.get("content_block")
-                if not isinstance(index, int) or not isinstance(block, dict) or index < 0 or index >= 512:
+                if not isinstance(index, int) or not isinstance(block, dict) or index < 0:
                     raise _bad()
                 blocks[index] = copy.deepcopy(block)
             elif kind == "content_block_delta":
@@ -518,10 +505,8 @@ class ToolSession:
                     if not isinstance(value, str):
                         raise _bad()
                     raw_inputs[index] = raw_inputs.get(index, "") + value
-                    if len(raw_inputs[index].encode("utf-8")) > MAX_ARGUMENTS:
-                        raise _bad("提供方工具参数过大")
-                if len(json.dumps(block, ensure_ascii=False).encode("utf-8")) > MAX_CONTINUATION:
-                    raise _bad("提供方响应过大")
+                    ensure_capacity(len(raw_inputs[index].encode("utf-8")))
+                ensure_capacity(len(json.dumps(block, ensure_ascii=False).encode("utf-8")))
             elif kind == "message_delta":
                 current_reason = (body.get("delta") or {}).get("stop_reason")
                 if current_reason is not None:

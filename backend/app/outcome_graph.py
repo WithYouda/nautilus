@@ -19,12 +19,12 @@ from .managed_purge import ManagedPurge
 
 class ProposalOutput(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    candidates: list[RelationFields] = Field(max_length=60)
+    candidates: list[RelationFields] = Field()
 
 
 PROVIDER_FAILURE_REASONS = frozenset({
     'timeout', 'auth_error', 'rate_limited', 'network_error', 'endpoint_not_found',
-    'request_error', 'upstream_error', 'output_truncated', 'reasoning_only',
+    'context_limit', 'resource_limit', 'request_error', 'upstream_error', 'output_truncated', 'reasoning_only',
     'content_filtered', 'protocol_error', 'config_error', 'provider_error',
 })
 GRAPH_FAILURE_REASONS = frozenset({

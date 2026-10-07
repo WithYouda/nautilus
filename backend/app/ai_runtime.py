@@ -15,6 +15,7 @@ from .providers import ProviderChunk, ProviderConfig, ProviderError, build_provi
 from .learning_domain import DomainError
 from .search_runtime import external_stream, apply_native_event
 from .generation_trace import GenerationRecorder, interrupt_trace
+from .content_resources import ensure_capacity
 from .outbound import OutboundApprovals, RunOutbound, ProviderLease
 from .provider_network import ProviderDiagnostics
 from .material_images import attach_material_images, check_image_sources
@@ -24,7 +25,6 @@ logger = logging.getLogger("nautilus.ai")
 # 已完成的运行在内存中保留一段时间，供刷新后的重放使用。
 MAX_RETAINED_RUNS = 64
 HEARTBEAT_SECONDS = 15.0
-MAX_RESPONSE_CHARS = 1_000_000
 MAX_CONCURRENT_PROVIDER_RUNS = 4
 SUBSCRIBER_QUEUE_SIZE = 256
 _SUBSCRIBER_OVERFLOW = object()
@@ -271,10 +271,8 @@ class AiRunManager:
                         if chunk.kind in {"tool_start", "tool_end", "turn_end"}:
                             state.recorder.observe(chunk)
                             continue
-                        remaining = MAX_RESPONSE_CHARS - state.response_chars
-                        if remaining <= 0:
-                            raise ProviderError("AI 回复超过长度限制", kind="output_limit")
-                        accepted = chunk.text[:remaining]
+                        ensure_capacity((state.response_chars + len(chunk.text)) * 4)
+                        accepted = chunk.text
                         if accepted:
                             if chunk.kind == "reasoning":
                                 state.reasoning_chunks.append(accepted)
@@ -289,8 +287,6 @@ class AiRunManager:
                                     {"kind": chunk.kind, "text": accepted},
                                 ),
                             )
-                        if len(accepted) != len(chunk.text):
-                            raise ProviderError("AI 回复超过长度限制", kind="output_limit")
             if not state.cancel_requested and not state.text.strip():
                 raise ProviderError('提供方没有返回回答正文', kind='empty_response')
             self._finish(state, "canceled" if state.cancel_requested else "succeeded")

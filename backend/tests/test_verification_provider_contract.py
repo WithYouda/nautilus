@@ -20,7 +20,7 @@ async def test_deepseek_json_request_and_math_answer_isolation(learning_database
     def handler(request):
         payload = json.loads(request.content)
         assert payload["response_format"] == {"type": "json_object"}
-        assert payload["max_tokens"] >= 8192
+        assert "max_tokens" not in payload
         prompt = json.loads(payload["messages"][1]["content"])
         assert prompt["schema"]["questions"][0]["type"] == "short_response"
         challenge = json.loads(CHALLENGE)

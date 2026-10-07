@@ -322,6 +322,7 @@ class MaterialService:
                     'knowledge_base': dict(knowledge), 'knowledge_base_name': record['vault_name'],
                     'selection_version_ids': list(ids),
                     '_knowledge_generation': self.obsidian._generation(owner),
+                    '_knowledge_budget': self.preferences.search.get(owner).get('knowledge_max_requests', 4) if self.preferences else 4,
                     '_knowledge_scope_epoch': self._knowledge_epochs.get((owner, kind, scope_id), 0),
                 }
             if (selection['mode'] == 'unspecified' and (ids or knowledge)) or (selection['mode'] != 'unspecified' and not ids and not knowledge):

@@ -19,7 +19,7 @@ import httpx
 
 from app.search_catalog import SEARCH_CATALOG
 
-MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+from .content_resources import ensure_capacity
 KINDS = {item["kind"]: item for item in SEARCH_CATALOG}
 
 
@@ -124,17 +124,17 @@ async def _request(method, url, *, common, transport=None, headers=None, body=No
             try:
                 if response.status_code < 200 or response.status_code >= 300:
                     raise SearchError("搜索服务请求失败。", "service_failure")
-                content = bytearray()
-                async for chunk in response.aiter_bytes():
-                    content.extend(chunk)
-                    if len(content) > MAX_RESPONSE_BYTES:
-                        raise SearchError("搜索服务返回的数据超过大小限制。", "response_too_large")
+                async with asyncio.timeout(timeout):
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        content.extend(chunk)
+                        ensure_capacity(len(content))
                 return bytes(content)
             finally:
                 await response.aclose()
     except SearchError:
         raise
-    except (httpx.HTTPError, ValueError, UnicodeError):
+    except (TimeoutError, httpx.HTTPError, ValueError, UnicodeError):
         if approval_error is not None:
             raise approval_error
         raise SearchError("无法连接搜索服务。", "service_failure") from None
@@ -190,8 +190,7 @@ async def _bing_request(query, *, common, transport=None, headers=None, before_r
                         content = bytearray()
                         async for chunk in response.aiter_bytes():
                             content.extend(chunk)
-                            if len(content) > MAX_RESPONSE_BYTES:
-                                raise SearchError("搜索服务返回的数据超过大小限制。", "response_too_large")
+                            ensure_capacity(len(content))
                         return bytes(content)
                     finally:
                         await response.aclose()
@@ -205,7 +204,7 @@ async def _bing_request(query, *, common, transport=None, headers=None, before_r
         if approval_error is not None:
             raise approval_error
         raise SearchError("无法建立到 Bing 的连接，请检查服务端网络。", "connection_failure") from None
-    except (httpx.HTTPError, ValueError, UnicodeError):
+    except (TimeoutError, httpx.HTTPError, ValueError, UnicodeError):
         if approval_error is not None:
             raise approval_error
         raise SearchError("Bing 搜索响应传输失败。", "service_failure") from None
@@ -449,7 +448,7 @@ async def search(kind: str, params: dict, common: dict, options: dict, *, transp
                 body["contents"]["maxAgeHours"] = _age(params["maxAgeHours"])
                 evidence = True
             if evidence:
-                body["contents"].update({"text": {"maxCharacters": 8000}, "highlights": {"maxCharacters": 1200}})
+                body["contents"].update({"text": True, "highlights": True})
         elif kind == "linkup":
             url = "https://api.linkup.so/v1/search"
             body = {"q": query, "depth": options.get("depth", "standard"), "outputType": "sourcedAnswer"}
@@ -641,7 +640,7 @@ async def scrape(kind: str, params: dict, common: dict, options: dict, *, transp
         body = {"urls": [page]}
     elif kind == "exa":
         endpoint = "https://api.exa.ai/contents"
-        body = {"urls": [page], "text": {"maxCharacters": 8000}}
+        body = {"urls": [page], "text": True}
         if "maxAgeHours" in params:
             body["maxAgeHours"] = _age(params["maxAgeHours"])
     elif kind == "linkup":

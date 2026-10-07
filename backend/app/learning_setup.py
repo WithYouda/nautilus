@@ -23,6 +23,8 @@ SETUP_FAILURE_MESSAGES = {
     "setup_rate_limited": "生成学习安排时遇到提供方限流或额度不足，请稍后重试或检查账户额度。",
     "setup_network_error": "生成学习安排时无法连接提供方，请检查网络和服务地址。",
     "setup_endpoint_not_found": "学习安排使用的接口或模型不存在，请核对默认提供方的地址和模型名称。",
+    "setup_context_limit": "完整内容超过当前模型上下文容量；原文未截断，请调整本次范围或模型后重试。",
+    "setup_resource_limit": "本机可用内存不足，请关闭其他任务或缩小本次范围后重试。",
     "setup_request_error": "提供方不接受学习安排请求，请检查当前模型是否支持 JSON 输出及请求参数。",
     "setup_upstream_error": "提供方在生成学习安排时发生服务错误，请稍后重试。",
     "setup_output_truncated": "AI 输出达到长度上限，学习安排被截断；请缩小这一步的范围或更换模型后重试。",

@@ -160,6 +160,9 @@ class ProviderHTTPClient(httpx.AsyncClient):
         self.diagnostics = diagnostics
 
     async def send(self, request, **kwargs):
+        from .content_resources import ensure_capacity
+        if isinstance(request.stream, httpx.ByteStream):
+            ensure_capacity(len(request.content))
         stream = kwargs.pop('stream', False)
         context = self.diagnostics
         maximum = len(RETRY_DELAYS) + 1

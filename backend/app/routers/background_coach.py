@@ -4,6 +4,7 @@ from fastapi import APIRouter,Depends,Request,Response,HTTPException,Query
 from pydantic import BaseModel,ConfigDict,Field
 from ..dependencies import current_identity
 from ..learning_domain import DomainError
+from ..providers import ProviderError
 
 def no_store(response:Response): response.headers['Cache-Control']='no-store'
 router=APIRouter(prefix='/api/learning/coach',dependencies=[Depends(no_store)])
@@ -18,9 +19,11 @@ def fail(error):
 def invoke(request,method,*args):
     try: return getattr(request.app.state.background_coach,method)(*args)
     except DomainError as error: fail(error)
+    except ProviderError as error: raise HTTPException(413, detail={"kind":error.kind,"message":str(error)}) from None
 async def invoke_async(request,method,*args):
     try: return await getattr(request.app.state.background_coach,method)(*args)
     except DomainError as error: fail(error)
+    except ProviderError as error: raise HTTPException(413, detail={"kind":error.kind,"message":str(error)}) from None
 class Key(BaseModel):
     model_config=ConfigDict(extra='forbid')
     request_key:str=Field(min_length=1,max_length=200)

@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 
 from .providers import ProviderError
+from .content_resources import ensure_capacity
 
 
 def stamp():
@@ -39,8 +40,7 @@ class GenerationRecorder:
         self.native = None
 
     def _new(self, kind, **fields):
-        if len(self.trace['parts']) >= 1024:
-            raise ProviderError('回复过程片段超过限制', kind='output_limit')
+        ensure_capacity((len(self.trace['parts']) + 1) * 1024)
         part = {'id': f"part-{len(self.trace['parts']) + 1}", 'type': kind, 'status': 'running',
                 'started_at': stamp(), 'duration_ms': 0, **fields}
         self.beginnings[part['id']] = self.clock()

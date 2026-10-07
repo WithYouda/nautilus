@@ -5,6 +5,7 @@ from pydantic import BaseModel,ConfigDict,Field
 from ..dependencies import current_identity
 from ..conversations import ConversationError,ConversationConflict
 from ..learning_domain import DomainError
+from ..providers import ProviderError
 from ..coach_reminders import ReminderSettings
 
 
@@ -16,6 +17,8 @@ def invoke(request,service,method,*args):
     except DomainError as error:
         messages={'coach_reminder_time_required':'请先选择学习时间，或确认一项带时间的近期安排。','version_conflict':'设置或提醒已更新，请读取最新状态。','coach_source_unavailable':'安排或学习状态已变化，请重新核对。'}
         raise HTTPException(error.status,detail={'kind':error.code,'code':error.code,'message':messages.get(error.code,'操作未完成，请重新核对。')}) from error
+    except ProviderError as error:
+        raise HTTPException(413, detail={"kind":error.kind,"message":str(error)}) from None
     except ConversationError as error:
         raise HTTPException(409 if isinstance(error,ConversationConflict) else 404,detail={'kind':'coach_conversation_unavailable','message':str(error)}) from error
 
@@ -50,6 +53,8 @@ def purge_status(identifier:str,request:Request,identity=Depends(current_identit
 @router.post('/conversations/{identifier}/purge')
 async def purge(identifier:str,payload:Purge,request:Request,identity=Depends(current_identity)):
     try: return await request.app.state.coach_conversation_purge.purge(identity,identifier,payload.request_key)
+    except ProviderError as error:
+        raise HTTPException(413, detail={"kind":error.kind,"message":str(error)}) from None
     except ConversationError as error: raise HTTPException(404,detail={'kind':'coach_conversation_unavailable','message':str(error)}) from error
 @router.get('/reminders/settings')
 def reminder_settings(request:Request,identity=Depends(current_identity)):

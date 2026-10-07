@@ -36,7 +36,7 @@ class Key(BaseModel):
 
 class Create(Key):
     title: str = Field(min_length=1,max_length=200)
-    description: str = Field(default='',max_length=1000)
+    description: str = Field(default='')
     goal_id: str | None = Field(default=None,min_length=1,max_length=100)
 
 class Revision(Key):

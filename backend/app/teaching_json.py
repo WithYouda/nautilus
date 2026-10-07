@@ -2,6 +2,8 @@
 
 import json
 import math
+from io import StringIO
+from .content_resources import ensure_capacity
 
 
 _WHITESPACE = ' \t\r\n'
@@ -120,14 +122,14 @@ class JsonTeachingDecoder:
                  '_state', '_string', '_key_parts', '_field', '_seen', '_stack',
                  '_proposal', '_finished', 'reason', 'reply_length', '_fields', '_metadata_field')
 
-    def __init__(self, token: str, max_metadata: int = 16384, *, metadata_field: str = 'teaching'):
-        if max_metadata < 0:
+    def __init__(self, token: str, max_metadata: int | None = None, *, metadata_field: str = 'teaching'):
+        if max_metadata is not None and max_metadata < 0:
             raise ValueError('max_metadata must be nonnegative')
         self._token = token
         self._metadata_field = metadata_field
         self._fields = {'reply', metadata_field, 'token'}
         self._max_metadata = max_metadata
-        self._metadata = []
+        self._metadata = StringIO()
         self._metadata_length = 0
         self._state = 'start'
         self._string = None
@@ -141,15 +143,17 @@ class JsonTeachingDecoder:
         self.reply_length = 0
 
     def _append(self, char):
-        if self._metadata_length >= self._max_metadata:
+        if self._max_metadata is not None and self._metadata_length >= self._max_metadata:
             raise _Oversized
-        self._metadata.append(char)
+        self._metadata.write(char)
         self._metadata_length += 1
+        if self._metadata_length % 65536 == 0:
+            ensure_capacity(self._metadata_length * 4)
 
     def _fail(self, reason):
         if self.reason is None:
             self.reason = reason
-        self._metadata.clear()
+        self._metadata = StringIO()
         self._key_parts.clear()
         self._stack.clear()
         self._string = None
@@ -272,7 +276,7 @@ class JsonTeachingDecoder:
             self._fail('envelope_incomplete')
             return
         try:
-            envelope = json.loads(''.join(self._metadata), object_pairs_hook=_strict_object,
+            envelope = json.loads(self._metadata.getvalue(), object_pairs_hook=_strict_object,
                                   parse_constant=_invalid_constant, parse_float=_finite_float)
         except _InvalidSchema:
             self._fail('envelope_invalid_schema')
@@ -287,7 +291,7 @@ class JsonTeachingDecoder:
             self._fail('envelope_token_mismatch')
         else:
             self._proposal = envelope[self._metadata_field]
-            self._metadata.clear()
+            self._metadata = StringIO()
 
     def proposal(self) -> dict | None:
         return self._proposal

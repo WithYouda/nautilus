@@ -264,9 +264,6 @@ def dispatch_path(core, connection, principal, command, command_id, key, now):
         node = next((node for node in fields['nodes'] if node['id'] == command.node_id), None)
         if node is None:
             raise DomainError('path_node_missing')
-        if (len(node['action_ids']) >= 30 or
-                (len(node['outcome_ids']) >= 30 and command.outcome_id not in node['outcome_ids'])):
-            raise DomainError('path_node_task_limit', 422)
         result = core.execute_in_transaction(connection, principal, CreatePlanTask(plan_id=plan_id,
             expected_revision=command.expected_organization_revision,
             **command.model_dump(mode='json', include=set(TaskFields.model_fields))),

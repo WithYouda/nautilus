@@ -44,7 +44,7 @@ def ending(kind, outcome="complete"):
 
 def provider(kind, response):
     config = ProviderConfig(base_url="https://provider.example.test/v1", model="fixture-model",
-                            api_key="fixture-key", provider_kind=kind, web_search=kind != "openai_compatible")
+                            api_key="fixture-key", provider_kind=kind, web_search=kind != "openai_compatible", max_output_tokens=64000)
     return build_provider(config, httpx.MockTransport(lambda _: response))
 
 

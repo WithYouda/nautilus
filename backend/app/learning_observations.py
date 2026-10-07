@@ -22,13 +22,13 @@ def help_context(path, before):
 
 
 def _text(value, limit):
-    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+    if not isinstance(value, str) or not value.strip():
         raise ValueError('learning_observation_invalid')
     return value.strip()
 
 
 def _span(quote, original, limit):
-    if not isinstance(quote, str) or not quote.strip() or len(quote) > limit:
+    if not isinstance(quote, str) or not quote.strip():
         raise ValueError('learning_observation_source_invalid')
     start = original.find(quote)
     if start < 0:
@@ -42,7 +42,7 @@ def evaluate(value, frozen, attempt, *, body, user_text, at):
     if not isinstance(value, dict) or set(value) != {'observations', 'used'}:
         raise ValueError('learning_observation_invalid')
     observations, used = value['observations'], value['used']
-    if not isinstance(observations, list) or len(observations) > 4 or not isinstance(used, list) or len(used) > 12:
+    if not isinstance(observations, list) or not isinstance(used, list):
         raise ValueError('learning_observation_invalid')
     available = {record['id'] for point in frozen.get('learning_context', []) for record in point['observations']}
     if any(not isinstance(identifier, str) or identifier not in available for identifier in used) or len(set(used)) != len(used):
@@ -90,11 +90,11 @@ def context(path):
             observation = {key: copy.deepcopy(item[key]) for key in
                            ('id', 'point_id', 'topic', 'state', 'source', 'feedback', 'at', 'note', 'revision')}
             observation['help_context'] = [copy.deepcopy(help_item) for help_item in item.get('help_context', [])
-                                           if help_item['answer_id'] in allowed][-3:]
+                                           if help_item['answer_id'] in allowed]
             observation['recorded_help_count'] = sum(help_item['answer_id'] in allowed for help_item in item.get('help_context', []))
-            point['observations'] = [*point['observations'], observation][-3:]
+            point['observations'] = [*point['observations'], observation]
             points[item['point_id']] = point
-    return list(points.values())[-12:]
+    return list(points.values())
 
 
 def prompt_context(frozen, user_texts, answer_texts):
@@ -132,7 +132,7 @@ def correct(snapshot, *, observation_id, expected_revision, topic, state, note, 
     if original is None:
         raise ValueError('learning_observation_unavailable')
     topic = _text(topic, 120)
-    if (state not in STATES or type(excluded) is not bool or not isinstance(note, str) or len(note) > 600
+    if (state not in STATES or type(excluded) is not bool or not isinstance(note, str)
             or type(expected_revision) is not int or expected_revision < 0
             or not isinstance(request_key, str) or not 1 <= len(request_key) <= 100):
         raise ValueError('learning_observation_invalid')

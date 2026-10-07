@@ -116,8 +116,9 @@ def dispatch(core,c,principal,command,command_id,key,now):
         return {'id':value['id'],'revision':value['revision']+1}
     if isinstance(command,ClaimCoachRun):
         config=settings(c,owner);automatic=command.trigger!='manual';inputs=command.inputs
-        from ..coach_sources import MAX_INPUT_BYTES,MAX_SOURCES,input_bytes
-        if len(inputs['refs'])>MAX_SOURCES or input_bytes(inputs)>MAX_INPUT_BYTES: raise DomainError('coach_input_too_large',422)
+        from ..coach_sources import input_bytes
+        from ..content_resources import ensure_capacity
+        ensure_capacity(input_bytes(inputs))
         authorization=next((r for r in inputs['refs'] if r['kind']=='permission'),None)
         if bool(command.permission_candidate_id)!=bool(command.permission_request_id): raise DomainError('coach_permission_invalid',403)
         if authorization and (automatic or authorization['id']!=command.permission_request_id or authorization.get('candidate_id')!=command.permission_candidate_id): raise DomainError('coach_permission_invalid',403)

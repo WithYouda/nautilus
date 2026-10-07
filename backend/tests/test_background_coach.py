@@ -254,12 +254,13 @@ def test_permission_revoked_after_http_never_writes_late_candidates(coach):
     assert result['run']['status']=='failed' and result['candidates']==[]
 
 def test_chinese_large_scope_is_bounded_and_unselected_events_stay_pending(coach):
-    from app.coach_sources import input_bytes,MAX_INPUT_BYTES,collect
+    from app.coach_sources import input_bytes,collect
     ctx=coach;client=ctx['client']
     for n in range(12): task(client,get(client,ctx['plan_id']),'long-'+str(n),action_title='中'*220+str(n))
     end(ctx)
     result=finish(ctx,check(ctx)['run']['id']);assert result['run']['status']=='succeeded',result
-    assert input_bytes(ctx['calls'][0][1])<=MAX_INPUT_BYTES
+    assert len(ctx['calls'][0][1]['actions']) == 13
+    assert all(len(action['title']) >= 220 for action in ctx['calls'][0][1]['actions'] if action['id'] != ctx['item']['action_id'])
     for n in range(26): end(ctx,'additional-'+str(n),artifact=False)
     with ctx['db'].transaction() as c:
         pending=collect(c,ctx['identity']['id'],'global',None,utc_timestamp(),ctx['service'].chats)

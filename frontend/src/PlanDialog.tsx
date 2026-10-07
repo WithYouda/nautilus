@@ -130,7 +130,7 @@ export default function PlanDialog({ open, onClose, onCreated }: Props) {
               </label>
               <label className="field field--wide">
                 <span>目标说明</span>
-                <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} maxLength={1000} />
+                <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2}  />
               </label>
               <label className="field">
                 <span>开始日期</span>

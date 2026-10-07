@@ -35,7 +35,7 @@ class SearchRun:
 
 
 def _integer(value, low, high):
-    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+    if isinstance(value, bool) or not isinstance(value, int) or value < low or (high is not None and value > high):
         raise SearchError("搜索设置中的数值超出允许范围", "invalid_settings")
     return value
 
@@ -77,10 +77,11 @@ class SearchService:
         service_id = str(uuid5(NAMESPACE_URL, f"nautilus-search:{owner}:bing"))
         return {"revision": 0, "services": [{"id": service_id, "kind": "bing", "name": "Bing",
                  "options": {}, "secrets": {}}], "selected_service_id": service_id,
-                "result_size": 10, "timeout_seconds": 30, "max_requests": 3}
+                "result_size": 10, "timeout_seconds": 30, "max_requests": 3, "knowledge_max_requests": 4}
 
     def _public(self, settings):
         value = copy.deepcopy(settings)
+        value.setdefault('knowledge_max_requests', 4)
         for service in value["services"]:
             if service.get("kind") == "bing" and isinstance(service.get("options"), dict):
                 service["options"].setdefault("language", "zh-CN")
@@ -166,7 +167,8 @@ class SearchService:
                      "selected_service_id": selected,
                      "result_size": _integer(payload.get("result_size", 10), 1, 50),
                      "timeout_seconds": _integer(payload.get("timeout_seconds", 30), 5, 120),
-                     "max_requests": _integer(payload.get("max_requests", 3), 1, 5)}
+                     "max_requests": _integer(payload.get("max_requests", 3), 1, None),
+                     "knowledge_max_requests": _integer(payload.get('knowledge_max_requests', current.get('knowledge_max_requests', 4)), 1, None)}
             self.credentials.set(f"search-settings:{owner}", json.dumps(saved, ensure_ascii=False))
             return self._public(saved)
 

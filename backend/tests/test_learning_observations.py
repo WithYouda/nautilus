@@ -170,7 +170,7 @@ def test_same_point_preserves_conflicting_observations_nested_branches_and_local
         assert second['teaching']['learning_observations'][1]['point_id'] == records[1]['point_id']
 
 
-@pytest.mark.parametrize('bad', ['quote', 'feedback', 'point', 'used', 'outside_attempt', 'no_attempt', 'too_many'])
+@pytest.mark.parametrize('bad', ['quote', 'feedback', 'point', 'used', 'outside_attempt', 'no_attempt'])
 def test_invalid_observation_cannot_publish_state(bad):
     first = teaching.freeze([], answer_id='first', message_id='initial', kind='conversation', scope_id='synthetic')
     teaching.adopt(first, prop(step=STEP), body=STEP, user_text='开始', at='now')
@@ -183,7 +183,6 @@ def test_invalid_observation_cannot_publish_state(bad):
     if bad == 'used': proposal['learning']['used'] = ['outside:0']
     if bad == 'outside_attempt': proposal['attempt']['quote'] = '但空列表时我会访问第一项'
     if bad == 'no_attempt': proposal['attempt'] = None
-    if bad == 'too_many': proposal['learning']['observations'] *= 3
     teaching.adopt(frozen, proposal, body=BODY, user_text=WORK, at='now')
     public = teaching.public({'teaching': frozen}, 'complete')
     assert public['status'] == 'not_updated' and public['learning_observations'] == []

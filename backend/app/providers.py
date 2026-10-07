@@ -35,6 +35,23 @@ class ProviderError(RuntimeError):
         self.kind = kind
 
 
+CONTEXT_LIMIT_MESSAGE = '本次完整内容超过当前模型的上下文容量。原文已保留且未静默截断；请明确缩小本次范围或选择容量更大的模型后重试。'
+
+
+def context_limit_error(body: bytes) -> bool:
+    """Classify the vendor's error without exposing any echoed private text."""
+    try:
+        value = json.loads(body)
+        error = value.get('error', value) if isinstance(value, dict) else {}
+        text = json.dumps(error, ensure_ascii=False).lower()
+    except (ValueError, UnicodeError):
+        return False
+    return any(marker in text for marker in (
+        'context_length_exceeded', 'maximum context length', 'context window exceeded',
+        'prompt is too long', 'input is too long', 'input token count exceeds',
+        'exceeds the maximum number of tokens', 'exceeds the model context'))
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     """一次出站调用需要的配置。api_key 只在内存中出现，不写库不写日志。"""
@@ -541,6 +558,8 @@ class OpenAICompatibleProvider:
 
     # ------------------------------------------------------------------
     def _http_error(self, status_code: int, body: bytes, *, include_detail: bool = True) -> ProviderError:
+        if status_code in (400, 413, 422) and context_limit_error(body):
+            return ProviderError(CONTEXT_LIMIT_MESSAGE, kind='context_limit')
         detail = ""
         try:
             parsed = json.loads(body.decode("utf-8"))

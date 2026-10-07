@@ -213,11 +213,11 @@ async def test_bing_timeout_covers_whole_redirect_chain():
 
 
 @pytest.mark.asyncio
-async def test_bing_response_size_remains_bounded():
-    with pytest.raises(SearchError) as caught:
-        await search('bing', {'query': 'example'}, {}, {},
-                     transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b'x' * (2 * 1024 * 1024 + 1))))
-    assert caught.value.kind == 'response_too_large'
+async def test_bing_response_beyond_former_size_cap_is_parsed_completely():
+    text = 'x' * (2 * 1024 * 1024 + 1) + '<li class="b_algo"><h2><a href="https://example.com/last">Last</a></h2><p>END</p></li>'
+    result = await search('bing', {'query':'example'}, {}, {}, transport=httpx.MockTransport(lambda r: httpx.Response(200, text=text)))
+    assert result['items'][0]['url'] == 'https://example.com/last'
+
 
 
 @pytest.mark.asyncio
@@ -268,9 +268,10 @@ async def test_bing_decodes_safe_target_and_keeps_redirect_for_dangerous_targets
 async def test_no_redirect_with_key_and_bounded_body():
     with pytest.raises(SearchError):
         await search("brave", {"query": "x"}, {}, {"api_key": "secret-test"}, transport=httpx.MockTransport(lambda r: httpx.Response(302, headers={"Location": "https://other.example/"})))
-    with pytest.raises(SearchError) as caught:
-        await search("brave", {"query": "x"}, {}, {"api_key": "secret-test"}, transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"x" * (2 * 1024 * 1024 + 1))))
-    assert caught.value.kind == "response_too_large"
+    text = 'x' * (2 * 1024 * 1024 + 1) + 'END'
+    result = await search('brave', {'query':'x'}, {}, {'api_key':'secret-test'}, transport=httpx.MockTransport(lambda r: httpx.Response(200, json={'web':{'results':[{'title':'A','url':'https://example.com/a','description':text}]}})))
+    assert result['items'][0]['text'] == text
+
 
 @pytest.mark.asyncio
 async def test_exa_advanced_parameters_and_result_cap():
@@ -279,7 +280,7 @@ async def test_exa_advanced_parameters_and_result_cap():
         assert body["type"] == "deep"
         assert body["startPublishedDate"] == "2025-01-01T00:00:00Z"
         assert body["includeDomains"] == ["example.com"]
-        assert body["contents"] == {"text": {"maxCharacters": 8000}, "highlights": {"maxCharacters": 1200}, "maxAgeHours": 24}
+        assert body["contents"] == {"text": True, "highlights": True, "maxAgeHours": 24}
         return httpx.Response(200, json={"results": [
             {"title": "A", "url": "https://example.com/a", "text": "T", "highlights": ["H"], "publishedDate": "2025-01-02"},
             {"title": "B", "url": "https://example.com/b", "text": "U"},

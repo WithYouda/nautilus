@@ -57,7 +57,7 @@ class Restore(Key):
     intent:Literal['restore','undo']='restore'
     expected_revision:int=Field(ge=0)
     expected_organization_revision:int=Field(ge=0)
-    reason:str=Field(default='',max_length=2000)
+    reason:str=Field(default='')
 
 class Purge(Key):
     expected_revision:int=Field(ge=1)

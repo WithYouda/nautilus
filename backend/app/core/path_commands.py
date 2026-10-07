@@ -11,8 +11,8 @@ class PathNode(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=200)
-    action_ids: list[str] = Field(default_factory=list, max_length=30)
-    outcome_ids: list[str] = Field(default_factory=list, max_length=30)
+    action_ids: list[str] = Field(default_factory=list)
+    outcome_ids: list[str] = Field(default_factory=list)
 
 
 class PathEdge(BaseModel):
@@ -24,11 +24,11 @@ class PathEdge(BaseModel):
 class PathFields(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=200)
-    nodes: list[PathNode] = Field(min_length=1, max_length=60)
-    edges: list[PathEdge] = Field(default_factory=list, max_length=100)
+    nodes: list[PathNode] = Field(min_length=1)
+    edges: list[PathEdge] = Field(default_factory=list)
     entry_node_id: str = Field(min_length=1, max_length=100)
     current_node_id: str = Field(min_length=1, max_length=100)
-    reason: str = Field(default='', max_length=2000)
+    reason: str = Field(default='')
 
     @model_validator(mode='after')
     def graph_shape(self):
@@ -135,7 +135,7 @@ class ConfirmPathDecision(PathCommand):
 
 class TransferFields(PathFields):
     destination_title: str = Field(min_length=1, max_length=200)
-    destination_description: str = Field(default='', max_length=1000)
+    destination_description: str = Field(default='')
     pause_original: bool = True
     expected_revision: int = Field(ge=0)
     expected_organization_revision: int = Field(ge=0)

@@ -23,7 +23,7 @@ def runtime(*, json_output=True):
 def provider(kind, handler):
     return build_provider(ProviderConfig(
         base_url="https://api.example.test/v1beta" if kind == "google" else "https://api.example.test/v1",
-        model="selected-model", api_key="fixture-key", provider_kind=kind,
+        model="selected-model", api_key="fixture-key", provider_kind=kind, max_output_tokens=64000,
     ), transport=httpx.MockTransport(handler))
 
 

@@ -136,10 +136,10 @@ export default function LearningPosition({ sessionId, conversationId, visibleMes
     </div>
     {loading ? <p className="learning-position__empty" role="status">正在读取位置记录…</p> : editing ? <div className="learning-position__editor">
       <label>当前讨论
-        <textarea value={currentDraft} onChange={event => setCurrentDraft(event.target.value)} maxLength={500} rows={2} placeholder="目前讨论到哪里？" />
+        <textarea value={currentDraft} onChange={event => setCurrentDraft(event.target.value)}  rows={2} placeholder="目前讨论到哪里？" />
       </label>
       <label>建议下一步
-        <textarea value={nextDraft} onChange={event => setNextDraft(event.target.value)} maxLength={500} rows={2} placeholder="可以留空，稍后再决定" />
+        <textarea value={nextDraft} onChange={event => setNextDraft(event.target.value)}  rows={2} placeholder="可以留空，稍后再决定" />
       </label>
       <div className="learning-position__actions">
         <button className="button button--accent button--compact" type="button" disabled={busy !== null || !currentDraft.trim()} onClick={() => void save()}>{busy === "save" ? "保存中…" : "保存记录"}</button>

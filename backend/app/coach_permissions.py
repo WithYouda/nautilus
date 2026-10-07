@@ -3,6 +3,7 @@ import json
 from datetime import datetime,timezone
 from .core.background_coach import original
 from .agent_runtime import GLOBAL_AGENT_ID
+from .content_resources import ensure_capacity
 
 def request_fields(c,owner,candidate_id):
     candidate=c.execute('SELECT * FROM learning_coach_candidate WHERE owner_id=? AND id=?',(owner,candidate_id)).fetchone()
@@ -63,12 +64,11 @@ def context(c,owner,ref,chats=None):
         JOIN learning_delegation d ON d.owner_id=s.owner_id AND d.id=s.delegation_id
         WHERE r.owner_id=? AND d.action_id=? AND a.visibility='visible' AND a.evidence_status='eligible'
           AND r.purged_at IS NULL AND r.content IS NOT NULL ORDER BY r.created_at DESC,r.artifact_id''',(owner,authorization['action_id'])).fetchall()
-    remaining=12000;artifacts=[]
-    for row in rows[:3]:
-        content=row['content'][:4000].encode()[:remaining].decode('utf-8','ignore')
-        if not content: break
-        remaining-=len(content.encode())
+    ensure_capacity(sum(len(row['content'].encode('utf-8')) for row in rows))
+    artifacts=[]
+    for row in rows:
+        content=row['content']
         artifacts.append(dict(id=row['artifact_id'],version=row['content_version'],session_id=row['session_id'],
-            start=0,end=len(content),content=content,content_hash=row['content_hash'],partial=len(content)<len(row['content'])))
+            start=0,end=len(content),content=content,content_hash=row['content_hash'],partial=False))
     return {**authorization,'artifacts':artifacts,'available_artifact_count':len(rows),
         'limited':len(artifacts)<len(rows) or any(x['partial'] for x in artifacts)}

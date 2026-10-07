@@ -44,7 +44,7 @@ class ItemFields(BaseModel):
     due_at: str | None = None
     timezone: str | None = None
     reason: str = Field(default='')
-    source_refs: list[SourceReference] = Field(default_factory=list,max_length=30)
+    source_refs: list[SourceReference] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def valid_time(self):
@@ -67,7 +67,7 @@ class PlanCommand(CommitmentCommand):
 
 class SaveCommitmentDraft(PlanCommand):
     route_version_id: str
-    items: list[ItemFields] = Field(max_length=100)
+    items: list[ItemFields] = Field()
     reason: str = Field(default='')
     draft_id: str | None = None
     expected_draft_revision: int | None = Field(default=None,ge=1)
@@ -149,7 +149,7 @@ class FinishCommitmentRun(CommitmentCommand):
     expected_revision: int = Field(ge=1)
     status: Literal['succeeded','failed']
     reason: str | None = None
-    items: list[ItemFields] = Field(default_factory=list,max_length=30)
+    items: list[ItemFields] = Field(default_factory=list)
     explanation: str = Field(default='')
 
 

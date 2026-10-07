@@ -21,6 +21,8 @@ export function graphError(reason: unknown): string {
     auth_error: 'AI 服务鉴权失败，请在设置中检查该服务的 API 密钥。',
     rate_limited: 'AI 服务暂时限制了请求频率，请稍后重试。',
     endpoint_not_found: 'AI 服务地址不可用，请在设置中检查服务地址。',
+    context_limit: '完整内容超过当前模型上下文容量，原文未截断。请调整范围或模型后重试。',
+    resource_limit: '本机可用内存不足，请关闭其他任务后重试。',
     request_error: 'AI 服务不接受本次请求，请检查所选模型的配置。',
     upstream_error: 'AI 服务暂时出错，请稍后重试。',
     output_truncated: 'AI 返回内容超过本次长度限制，请减少选中的成果后重试。',
@@ -62,8 +64,8 @@ export function OutcomeCreateDialog({ onClose, onCreated }: { onClose: () => voi
   return <AttachmentDialog title="新建成果" className="outcome-graph__dialog" closeLabel="关闭新建成果" onClose={() => { if (!busy) onClose(); }}>
     <form onSubmit={event => void save(event)}>
       <label>成果类型<select value={kind} onChange={event => setKind(event.target.value as typeof kind)} disabled={busy}><option value="composite">综合成果</option><option value="atomic">可验证成果</option></select></label>
-      <label>关于什么<input value={object} onChange={event => setObject(event.target.value)} maxLength={500} required disabled={busy} placeholder="例如：独立完成一个数据分析项目" /></label>
-      <label>希望能够做什么<textarea value={behavior} onChange={event => setBehavior(event.target.value)} maxLength={500} required disabled={busy} placeholder={kind === 'composite' ? '描述整体结果，之后可以关联组成成果' : '写出可以单独观察的行为'} /></label>
+      <label>关于什么<input value={object} onChange={event => setObject(event.target.value)}  required disabled={busy} placeholder="例如：独立完成一个数据分析项目" /></label>
+      <label>希望能够做什么<textarea value={behavior} onChange={event => setBehavior(event.target.value)}  required disabled={busy} placeholder={kind === 'composite' ? '描述整体结果，之后可以关联组成成果' : '写出可以单独观察的行为'} /></label>
       <details><summary>适用情境</summary><label>在哪些情况下<input value={context} onChange={event => setContext(event.target.value)} maxLength={200} disabled={busy} placeholder="例如：使用 Python 分析公开数据" /></label></details>
       {error && <p role="alert">{error}</p>}
       <div className="outcome-graph__actions"><button className="button button--quiet" type="button" onClick={onClose} disabled={busy}>取消</button><button className="button button--accent" type="submit" disabled={busy || !object.trim() || !behavior.trim()}>{busy ? '正在保存…' : '创建成果'}</button></div>

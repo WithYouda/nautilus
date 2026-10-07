@@ -9,10 +9,7 @@ EVENTS={'session.ended','action.completed','delegation.completed','artifact.crea
         'feedback.recorded','commitment.item_changed','commitment.confirmed','path.decision_confirmed'}
 IMMEDIATE={'separate_work_requested','cannot_continue','permission_or_cost_change'}
 MAX_SOURCES=24
-MAX_PLANS=4
-MAX_ACTIONS=32
-MAX_DELEGATIONS=64
-MAX_INPUT_BYTES=32768
+from .content_resources import ensure_capacity
 
 def input_bytes(inputs):
     return len(json.dumps(inputs,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode())
@@ -158,17 +155,15 @@ def input_state(c,owner,scope,plan_id,refs,chats=None):
         LEFT JOIN learning_action_link l ON l.owner_id=a.owner_id AND l.action_id=a.id
         WHERE a.owner_id=? AND NOT EXISTS(SELECT 1 FROM learning_action_removal x WHERE x.owner_id=a.owner_id AND x.action_id=a.id)'''
     params=[owner]
-    source_plans=sorted({ref['plan_id'] for ref in refs if ref.get('plan_id')})[:MAX_PLANS]
+    source_plans=sorted({ref['plan_id'] for ref in refs if ref.get('plan_id')})
     source_actions={ref['action_id'] for ref in refs if ref.get('action_id')}
     if scope=='plan': sql+=' AND l.plan_id=?';params.append(plan_id)
     elif source_plans: sql+=' AND l.plan_id IN ('+','.join('?' for _ in source_plans)+')';params.extend(source_plans)
     else: sql+=' AND a.id IN ('+','.join('?' for _ in source_actions)+')' if source_actions else ' AND 0';params.extend(sorted(source_actions))
     available=[dict(r) for r in c.execute(sql+' ORDER BY a.id',params)]
     available.sort(key=lambda a:(a['id'] not in source_actions,a['status']!='open',a['id']))
-    remaining=MAX_DELEGATIONS
-    for action in available[:MAX_ACTIONS]:
-        action['delegations']=[dict(r) for r in c.execute('SELECT id,status,contract_version,criterion_id,outcome_id FROM learning_delegation WHERE owner_id=? AND action_id=? ORDER BY id LIMIT ?',(owner,action['id'],remaining))]
-        remaining-=len(action['delegations'])
+    for action in available:
+        action['delegations']=[dict(r) for r in c.execute('SELECT id,status,contract_version,criterion_id,outcome_id FROM learning_delegation WHERE owner_id=? AND action_id=? ORDER BY id',(owner,action['id']))]
         p=row(c,'learning_plan',owner,action['plan_id']) if action['plan_id'] else None
         g=row(c,'learning_goal',owner,p['goal_id']) if p and p['goal_id'] else None
         action['plan_status']=p['status'] if p else None;action['goal_status']=g['status'] if g else None
@@ -197,14 +192,14 @@ def input_state(c,owner,scope,plan_id,refs,chats=None):
             route={'plan_id':identifier,**dict(path)}
             version=row(c,'learning_path_version',owner,path['adopted_version_id']) if path['adopted_version_id'] else None
             if version and not version['purged_at']:
-                data=json.loads(version['data_json']);nodes=sorted(data['nodes'],key=lambda n:(n['id']!=path['current_node_id'],not bool(set(n.get('action_ids',[]))&source_actions),n['id']))[:12]
+                data=json.loads(version['data_json']);nodes=sorted(data['nodes'],key=lambda n:(n['id']!=path['current_node_id'],not bool(set(n.get('action_ids',[]))&source_actions),n['id']))
                 identifiers={n['id'] for n in nodes}
-                route['topology']=dict(nodes=[{**n,'action_ids':n.get('action_ids',[])[:12],'outcome_ids':n.get('outcome_ids',[])[:12]} for n in nodes],
-                    edges=[e for e in data['edges'] if e['source'] in identifiers and e['target'] in identifiers][:24])
+                route['topology']=dict(nodes=[{**n,'action_ids':n.get('action_ids',[]),'outcome_ids':n.get('outcome_ids',[])} for n in nodes],
+                    edges=[e for e in data['edges'] if e['source'] in identifiers and e['target'] in identifiers])
                 route['topology_hash']=hashlib.sha256(version['data_json'].encode()).hexdigest()
                 route['topology_limited']=len(nodes)<len(data['nodes']) or len(route['topology']['edges'])<len(data['edges'])
             routes.append(route)
-        for item in c.execute('SELECT id,node_id,action_id,delegation_id,status,future_due_at,future_timezone FROM learning_commitment_item WHERE owner_id=? AND plan_id=? ORDER BY id LIMIT 8',(owner,identifier)): arrangements.append(dict(item))
+        for item in c.execute('SELECT id,node_id,action_id,delegation_id,status,future_due_at,future_timezone FROM learning_commitment_item WHERE owner_id=? AND plan_id=? ORDER BY id',(owner,identifier)): arrangements.append(dict(item))
     summaries=[]
     for ref in refs:
         summary=source_summary(c,owner,ref,chats)
@@ -227,13 +222,7 @@ def input_state(c,owner,scope,plan_id,refs,chats=None):
         from .coach_permissions import context
         result['authorization']=context(c,owner,permission,chats)
         result['targets']=[t for t in targets if t['kind']!='permission_review']
-    # Extra navigation context is optional. Preserve selected source actions,
-    # then trim only other tasks instead of making a busy plan permanently too large.
-    while input_bytes(result)>MAX_INPUT_BYTES:
-        extra=next((a for a in reversed(result['actions']) if a['id'] not in source_actions),None)
-        if extra is None: break
-        result['actions'].remove(extra)
-        result['targets']=[t for t in result['targets'] if t.get('action_id')!=extra['id']]
+    ensure_capacity(input_bytes(result))
     return result
 
 def target_available(c,owner,destination,inputs,chats=None):
@@ -249,20 +238,22 @@ def target_available(c,owner,destination,inputs,chats=None):
     if not action or not delegation or delegation['action_id']!=action['id']: return False
     return True
 
-def collect(c,owner,scope,plan_id,now,chats=None,excluded_sessions=frozenset()):
-    refs=[]
-    def add(kind,identifier,revision,action=None,session=None,delegation=None,plan=None):
+def collect(c,owner,scope,plan_id,now,chats=None,excluded_sessions=frozenset(),*,all_pending=False):
+    refs=[]; timestamps={}; urgent=set()
+    def add(kind,identifier,revision,action=None,session=None,delegation=None,plan=None,at=None,immediate=False):
         if session in excluded_sessions: return
         ref=dict(kind=kind,id=identifier,revision=revision,action_id=action,session_id=session,delegation_id=delegation,plan_id=plan or (link(c,owner,action) if action else None))
         if scope=='plan' and ref['plan_id']!=plan_id: return
         if c.execute('SELECT 1 FROM learning_coach_consumed WHERE owner_id=? AND source_key=?',(owner,source_key(ref))).fetchone(): return
-        if source_available(c,owner,ref,chats): refs.append(ref)
+        if source_available(c,owner,ref,chats):
+            ensure_capacity((len(refs) + 1) * 1024)
+            refs.append(ref); timestamps[source_key(ref)]=at or now
+            if immediate: urgent.add(source_key(ref))
     event_sql='''SELECT e.* FROM learning_event e WHERE e.owner_id=? AND e.event_type IN ('''+','.join('?' for _ in EVENTS)+''') AND NOT EXISTS (
         SELECT 1 FROM learning_coach_run_source x JOIN learning_coach_consumed m ON m.owner_id=x.owner_id AND m.source_key=x.source_key
         WHERE x.owner_id=e.owner_id AND x.source_kind='event' AND x.source_id=e.event_id AND x.source_revision=e.aggregate_version)
         ORDER BY e.position DESC'''
     for value in c.execute(event_sql,(owner,*sorted(EVENTS))):
-        if len(refs)>=MAX_SOURCES*2: break
         payload=json.loads(value['payload_json']);session=payload.get('session_id') or (payload.get('id') if value['event_type']=='feedback.recorded' else None)
         action=value['aggregate_id'] if value['aggregate_type']=='action' else payload.get('action_id')
         delegation=payload.get('delegation_id')
@@ -271,18 +262,14 @@ def collect(c,owner,scope,plan_id,now,chats=None,excluded_sessions=frozenset()):
             action=d['action_id'] if d else None
             delegation=d['id'] if d else None
         plan=payload.get('plan_id') or (value['aggregate_id'] if value['aggregate_type'] in {'path','commitment'} else None)
-        add('event',value['event_id'],value['aggregate_version'],action,session,delegation,plan=plan)
+        add('event',value['event_id'],value['aggregate_version'],action,session,delegation,plan=plan,at=value['occurred_at'])
     for value in c.execute("SELECT * FROM learning_coach_signal WHERE owner_id=? AND status='active' ORDER BY id",(owner,)):
-        if len(refs)>=MAX_SOURCES*3: break
-        add('answer',value['id'],value['revision'],value['action_id'],value['session_id'],value['delegation_id'],value['plan_id'])
+        add('answer',value['id'],value['revision'],value['action_id'],value['session_id'],value['delegation_id'],value['plan_id'],at=value['created_at'],immediate=value['kind'] in IMMEDIATE)
     for value in c.execute("SELECT x.*,d.action_id,d.id AS delegation_id,s.id AS session_id FROM learning_evidence_claim x JOIN learning_raw_artifact r ON r.owner_id=x.owner_id AND r.artifact_id=x.artifact_id AND r.content_version=x.content_version JOIN learning_session s ON s.owner_id=r.owner_id AND s.id=r.session_id JOIN learning_delegation d ON d.owner_id=s.owner_id AND d.id=s.delegation_id WHERE x.owner_id=? AND x.status='candidate' ORDER BY x.id",(owner,)):
-        if len(refs)>=MAX_SOURCES*4: break
-        add('claim',value['id'],value['content_version'],value['action_id'],value['session_id'],value['delegation_id'])
+        add('claim',value['id'],value['content_version'],value['action_id'],value['session_id'],value['delegation_id'],at=value['created_at'])
     for value in c.execute("SELECT f.*,d.action_id FROM learning_delayed_follow_up f JOIN learning_delegation d ON d.owner_id=f.owner_id AND d.id=f.delegation_id WHERE f.owner_id=? AND f.status='scheduled' AND f.due_at<=? ORDER BY f.id",(owner,now)):
-        if len(refs)>=MAX_SOURCES*5: break
-        add('delayed_follow_up',value['id'],len(json.loads(value['history_json'] or '[]'))+1,value['action_id'],delegation=value['delegation_id'])
+        add('delayed_follow_up',value['id'],len(json.loads(value['history_json'] or '[]'))+1,value['action_id'],delegation=value['delegation_id'],at=value['created_at'])
     for value in c.execute("SELECT * FROM learning_revisit_item WHERE owner_id=? AND status='pending' AND due_at<=? ORDER BY id",(owner,now)):
-        if len(refs)>=MAX_SOURCES*6: break
         action=session=delegation=None
         if value['claim_id']:
             position=c.execute('''SELECT d.action_id,d.id AS delegation_id,s.id AS session_id FROM learning_evidence_claim x
@@ -293,12 +280,11 @@ def collect(c,owner,scope,plan_id,now,chats=None,excluded_sessions=frozenset()):
         elif value['criterion_id']:
             positions=c.execute('SELECT action_id,id FROM learning_delegation WHERE owner_id=? AND criterion_id=?',(owner,value['criterion_id'])).fetchall()
             if len(positions)==1: action,delegation=positions[0]['action_id'],positions[0]['id']
-        add('revisit',value['id'],1,action,session,delegation)
+        add('revisit',value['id'],1,action,session,delegation,at=value['created_at'])
     priority={'delayed_follow_up':0,'answer':1,'revisit':2,'claim':3,'event':4}
     chosen=[];plans=set()
-    for ref in sorted(refs,key=lambda r:(priority[r['kind']],source_key(r))):
-        if ref.get('plan_id') and ref['plan_id'] not in plans and len(plans)>=MAX_PLANS: continue
+    for ref in sorted(refs,key=lambda r:(timestamps[source_key(r)],source_key(r) not in urgent,priority[r['kind']],source_key(r))):
         if ref.get('plan_id'): plans.add(ref['plan_id'])
         chosen.append(ref)
-        if len(chosen)>=MAX_SOURCES: break
+        if not all_pending and len(chosen)>=MAX_SOURCES: break
     return sorted(chosen,key=source_key)

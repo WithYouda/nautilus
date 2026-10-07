@@ -15,16 +15,15 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from .providers import ProviderChunk, ProviderConfig, ProviderError, normalize_base_url
+from .providers import context_limit_error, CONTEXT_LIMIT_MESSAGE
 from .provider_network import ProviderHTTPClient
 from .provider_messages import encode_messages
 from .teaching_wire import apply_json_output
 from .reasoning_wire import apply_reasoning_parameters
 from .model_metadata import add_catalog_entry
+from .content_resources import ensure_capacity
+from tempfile import SpooledTemporaryFile
 
-MAX_EVENT_BYTES = 512 * 1024
-MAX_EVENTS = 10000
-MAX_BODY_BYTES = 2 * 1024 * 1024
-MAX_SOURCES = 100
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -97,12 +96,23 @@ class _NativeProvider:
             kind="upstream_error" if status >= 500 else "request_error",
         )
 
+    async def _response_error(self, response):
+        if response.status_code in (400, 413, 422):
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk[:max(0, 65536 - len(body))])
+                if len(body) >= 65536:
+                    break
+            if context_limit_error(bytes(body)):
+                return ProviderError(CONTEXT_LIMIT_MESSAGE, kind='context_limit')
+        return self._error(response)
+
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             async with self._client() as client:
                 async with client.stream("POST", url, headers=self._headers(), json=payload) as response:
                     if not response.is_success:
-                        raise self._error(response)
+                        raise await self._response_error(response)
                     body = await _read_bounded(response)
         except httpx.TimeoutException as error:
             raise ProviderError("提供方响应超时", kind="timeout") from error
@@ -121,15 +131,14 @@ class _NativeProvider:
             async with self._client() as client:
                 async with client.stream("POST", url, headers=self._headers(), json=payload) as response:
                     if not response.is_success:
-                        raise self._error(response)
+                        raise await self._response_error(response)
                     event_name = ""
                     data_lines: list[str] = []
                     size = 0
                     count = 0
                     async for line in response.aiter_lines():
                         size += len(line.encode("utf-8"))
-                        if size > MAX_EVENT_BYTES:
-                            raise ProviderError("提供方流式事件过大", kind="protocol_error")
+                        ensure_capacity(size)
                         if not line:
                             if data_lines:
                                 data = "\n".join(data_lines)
@@ -144,8 +153,6 @@ class _NativeProvider:
                                         raise ProviderError("提供方流式事件格式不正确", kind="protocol_error")
                                     yield event_name, parsed
                                 count += 1
-                                if count > MAX_EVENTS:
-                                    raise ProviderError("提供方流式事件过多", kind="protocol_error")
                             event_name, data_lines, size = "", [], 0
                         elif line.startswith("event:"):
                             event_name = line[6:].strip()
@@ -169,7 +176,7 @@ class _NativeProvider:
             async with self._client() as client:
                 async with client.stream("GET", url, headers=self._headers()) as response:
                     if not response.is_success:
-                        raise self._error(response)
+                        raise await self._response_error(response)
                     body = await _read_bounded(response)
         except httpx.TimeoutException as error:
             raise ProviderError("获取模型列表超时", kind="timeout") from error
@@ -198,14 +205,16 @@ class _NativeProvider:
 
 
 async def _read_bounded(response: httpx.Response) -> bytes:
-    chunks: list[bytes] = []
     size = 0
-    async for chunk in response.aiter_bytes():
-        size += len(chunk)
-        if size > MAX_BODY_BYTES:
-            raise ProviderError("提供方响应过大", kind="protocol_error")
-        chunks.append(chunk)
-    return b"".join(chunks)
+    # The spool threshold controls buffering, not document length. The shared
+    # HTTP client enforces a total deadline and current memory capacity.
+    with SpooledTemporaryFile(max_size=1024 * 1024) as buffer:
+        async for chunk in response.aiter_bytes():
+            size += len(chunk)
+            ensure_capacity(size)
+            buffer.write(chunk)
+        buffer.seek(0)
+        return buffer.read()
 
 
 class OpenAIResponsesProvider(_NativeProvider):
@@ -300,7 +309,7 @@ class OpenAIResponsesProvider(_NativeProvider):
             raise ProviderError("提供方流式响应没有正文", kind="protocol_error")
         if enabled:
             if sources:
-                yield _sources(list(sources.values())[:MAX_SOURCES])
+                yield _sources(list(sources.values()))
             yield _status(self.kind, "succeeded" if searched else "not_used")
         yield ProviderChunk("completion", completion)
 
@@ -418,7 +427,7 @@ class GoogleProvider(_NativeProvider):
             raise ProviderError("提供方流式响应没有正文", kind="protocol_error")
         if enabled:
             if sources or search_suggestions_html is not None:
-                yield _sources(list(sources.values())[:MAX_SOURCES], search_suggestions_html=search_suggestions_html)
+                yield _sources(list(sources.values()), search_suggestions_html=search_suggestions_html)
             yield _status(self.kind, "succeeded" if grounded else "not_used")
         yield ProviderChunk("completion", "complete")
 
@@ -536,7 +545,7 @@ class AnthropicProvider(_NativeProvider):
             raise ProviderError("提供方流式响应没有正文", kind="protocol_error")
         if enabled:
             if sources:
-                yield _sources(list(sources.values())[:MAX_SOURCES])
+                yield _sources(list(sources.values()))
             yield _status(self.kind, "succeeded" if searched else "not_used")
         yield ProviderChunk("completion", "complete" if stop_reason == "end_turn" else "unknown")
 
@@ -551,7 +560,7 @@ class AnthropicProvider(_NativeProvider):
             async with self._client() as client:
                 async with client.stream('GET', url, headers=self._headers()) as response:
                     if not response.is_success:
-                        raise self._error(response)
+                        raise await self._response_error(response)
                     raw = await _read_bounded(response)
         except httpx.TimeoutException as error:
             raise ProviderError('获取模型输出能力超时', kind='timeout') from error

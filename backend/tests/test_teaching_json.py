@@ -193,12 +193,12 @@ def test_metadata_character_limit_ignores_unlimited_reply():
     decoder = JsonTeachingDecoder(TOKEN, max_metadata=80)
     assert decoder.feed('{"reply":"') == ''
     chunk = '中文😀' * 1000
-    retained_state = (list(decoder._metadata), decoder._metadata_length,
+    retained_state = (decoder._metadata.getvalue(), decoder._metadata_length,
                       list(decoder._key_parts), list(decoder._stack))
     for _ in range(400):
         assert decoder.feed(chunk) == chunk
     assert decoder.reply_length == len(chunk) * 400
-    assert (decoder._metadata, decoder._metadata_length, decoder._key_parts, decoder._stack) == retained_state
+    assert (decoder._metadata.getvalue(), decoder._metadata_length, decoder._key_parts, decoder._stack) == retained_state
     assert decoder.feed('","teaching":{},"token":"synthetic-token"}') == ''
     decoder.finish()
     assert decoder.reason is None
@@ -213,5 +213,5 @@ def test_oversized_non_reply_fields_never_leak():
         assert output == ''
         assert decoder.reason == 'envelope_oversized'
         assert decoder._metadata_length <= 80
-        assert decoder._metadata == []
+        assert decoder._metadata.getvalue() == ""
         assert decoder.proposal() is None

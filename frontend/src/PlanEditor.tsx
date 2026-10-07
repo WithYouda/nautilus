@@ -63,7 +63,7 @@ export const GoalEditorForm = forwardRef<EditorFormHandle, {
       <EditorHeading icon={<Target size={19} />} eyebrow="计划设置" title="编辑计划" description="调整计划范围、说明和当前状态。" />
       <div className="editor-form-body">
         <label className="field field--wide"><span>计划名称</span><input value={values.title} onChange={(event) => setValues((current) => ({ ...current, title: event.target.value }))} required maxLength={120} /></label>
-        <label className="field field--wide"><span>计划说明</span><textarea value={values.description} onChange={(event) => setValues((current) => ({ ...current, description: event.target.value }))} maxLength={1000} rows={4} /></label>
+        <label className="field field--wide"><span>计划说明</span><textarea value={values.description} onChange={(event) => setValues((current) => ({ ...current, description: event.target.value }))}  rows={4} /></label>
         <div className="field-grid field-grid--two">
           <label className="field"><span>开始日期</span><input type="date" value={values.start_date} onChange={(event) => setValues((current) => ({ ...current, start_date: event.target.value }))} required /></label>
           <label className="field"><span>结束日期</span><input type="date" value={values.end_date} onChange={(event) => setValues((current) => ({ ...current, end_date: event.target.value }))} required /></label>

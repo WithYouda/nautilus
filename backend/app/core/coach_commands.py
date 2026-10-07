@@ -49,7 +49,7 @@ class FinishCoachRun(CoachCommand):
     run_id: str
     expected_revision: int = Field(ge=1)
     status: Literal['succeeded','failed']
-    candidates: list[dict] = Field(default_factory=list,max_length=8)
+    candidates: list[dict] = Field(default_factory=list)
     reason: str | None = None
 
 class CancelCoachRun(CoachCommand):

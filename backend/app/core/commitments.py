@@ -198,7 +198,6 @@ def input_context(connection,owner,plan_id):
             blocks.append({'id':row['id'],'revision':row['revision'],**{key:data[key] for key in
                 ('purpose','origin_basis','actual_min_minutes','actual_max_minutes','grain','pace','method_feedback','progress','activity','source_refs')}})
     settings=connection.execute('SELECT revision,data_json FROM learning_commitment_availability WHERE owner_id=? AND plan_id=?',(owner,plan_id)).fetchone()
-    if len(tasks)>100:raise DomainError('commitment_input_scope_too_large',422)
     promises=[]
     if current['current_version_id']:
         confirmed=owned(connection,owner,'learning_commitment_version',current['current_version_id'])

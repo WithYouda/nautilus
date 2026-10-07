@@ -24,6 +24,8 @@ VERIFICATION_FAILURE_MESSAGES = {
     "verification_rate_limited": "AI 提供方限流或额度不足，请检查账户后重试。",
     "verification_network_error": "无法连接 AI 提供方，请检查服务地址和网络。",
     "verification_endpoint_not_found": "AI 接口或模型不存在，请检查提供方地址和模型名称。",
+    "verification_context_limit": "完整内容超过当前模型上下文容量；原文未截断，请调整本次范围或模型后重试。",
+    "verification_resource_limit": "本机可用内存不足，请关闭其他任务或缩小本次范围后重试。",
     "verification_request_error": "AI 提供方不接受本次请求，请检查模型是否支持 JSON 输出及当前请求参数。",
     "verification_upstream_error": "AI 提供方服务异常，请稍后重试。",
     "verification_output_truncated": "AI 输出达到长度上限，题目或评估不完整；请缩小本次学习范围或换用适合的模型后重试。",
@@ -220,7 +222,7 @@ class VerificationService:
                 "id": question_id,
                 "type": question_type,
                 "prompt": prompt_text.strip(),
-                "source_urls": urls[:5],
+                "source_urls": urls,
             }
             public_questions.append(item)
             answer_questions.append({

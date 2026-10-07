@@ -46,7 +46,8 @@ export default function LearningCompletion({ delegationId, allowCreate = true, o
     event.target.value = '';
     if (!file) return;
     if (!/\.(txt|md|json|py|js|ts)$/i.test(file.name)) { setError('请选择 txt、md、json、py、js 或 ts 文本文件。'); return; }
-    if (file.size > 100_000) { setError('文件过大，请摘取相关文字，最多 30000 字。'); return; }
+    const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+    if (memory && file.size * 8 > memory * 1024 ** 3) { setError('当前设备内存不足以完整读取这份文件，请在内存更大的设备上导入。'); return; }
     const current = generation.current;
     try {
       const text = await file.text();

@@ -22,7 +22,7 @@ export type SearchService = {
 export type SearchServiceDraft = SearchService & { secret_updates?: Record<string, string | null> };
 export type SearchSettingsData = {
   revision: number; services: SearchService[]; selected_service_id: string | null;
-  result_size: number; timeout_seconds: number; max_requests: number;
+  result_size: number; timeout_seconds: number; max_requests: number; knowledge_max_requests: number;
 };
 export type SearchSettingsDraft = Omit<SearchSettingsData, 'services'> & { services: SearchServiceDraft[] };
 export type SearchResult = {

@@ -16,16 +16,11 @@ from .providers import ProviderConfig, normalize_base_url
 from .help_records import public_help, record_display
 from .source_runtime import material_guard, scope_key, scoped_path, public_scope
 
-# 单次请求带入的历史消息条数上限，避免上下文无界增长。
-HISTORY_LIMIT = 20
 MAX_TITLE_LENGTH = 60
 GENERATED_TITLE_MAX_LENGTH = 32
 TITLE_INPUT_MESSAGE_LIMIT = 4
 TITLE_INPUT_MESSAGE_CHARS = 500
 TITLE_INPUT_TOTAL_CHARS = 2000
-GLOBAL_PLAN_LIMIT = 12
-GLOBAL_TASK_LIMIT = 20
-PLAN_TASK_LIMIT = 40
 DEFAULT_CAPABILITIES = {
     "input_modalities": ["text"],
     "output_modalities": ["text"],
@@ -1158,7 +1153,7 @@ class ConversationService:
         except PlanError as error:
             raise ConversationError(str(error)) from error
         active_tasks = [task for task in schedule if task["status"] != "canceled"]
-        included_tasks = active_tasks[:PLAN_TASK_LIMIT]
+        included_tasks = active_tasks
         subjects = [
             {
                 "id": subject["id"],
@@ -1227,8 +1222,8 @@ class ConversationService:
                 task["id"],
             )
         )
-        included_plans = summaries[:GLOBAL_PLAN_LIMIT]
-        included_tasks = tasks[:GLOBAL_TASK_LIMIT]
+        included_plans = summaries
+        included_tasks = tasks
         plan_payload = [
             {
                 key: plan[key]
@@ -1966,7 +1961,7 @@ class ConversationService:
                     raise ConversationError("回答上下文不存在")
                 teaching_path = scoped_path(self.message_path(messages, parent_id), frozen)
                 history_items = [item for item in teaching_path
-                                 if item['status'] == 'complete' and item['content']][-HISTORY_LIMIT:]
+                                 if item['status'] == 'complete' and item['content']]
                 history = [self._history_message(connection, item, bool(search_run and search_run.selection['mode'] == 'external'
                            and not (frozen and frozen['mode'] == 'only' and frozen.get('knowledge_base'))))
                            for item in history_items]
