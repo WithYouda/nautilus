@@ -85,6 +85,8 @@ MATERIAL_FAIL = for_material(FAIL)
 
 
 class FakeConversations:
+    persona_snapshot = ConversationService.persona_snapshot
+    personas = None
     default_teaching_mode = ConversationService.default_teaching_mode
     adaptive_profile = ConversationService.adaptive_profile
     adaptive_preferences = None

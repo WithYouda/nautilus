@@ -165,6 +165,9 @@ class AiRunManager:
                 from .teaching_runtime import add_prompt, TeachingStream
                 messages = add_prompt(messages, teaching, prepared.get('teaching_attempt_texts'), prepared.get('teaching_answer_texts'))
                 state.teaching_stream = TeachingStream(teaching)
+            if self.conversations.personas:
+                reference = json.loads(run.get("config_snapshot_json") or "{}").get("persona")
+                messages = self.conversations.personas.add_prompt(identity_id, messages, reference)
             state.task = asyncio.create_task(
                 self._execute(state, messages, prepared["provider_config"], prepared.get("search_run"), public_search_query,
                               prepared.get('frozen_scope'))

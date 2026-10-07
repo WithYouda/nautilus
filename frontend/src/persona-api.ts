@@ -1,0 +1,12 @@
+import { learningRequest } from './api';
+export { coachKey as personaKey } from './background-coach-api';
+export type PersonaStyle = { address: string; tone: 'neutral' | 'warm' | 'direct'; phrasing: 'plain' | 'lively' | 'formal'; detail: 'concise' | 'balanced' | 'detailed'; reminders: 'gentle' | 'direct' | 'neutral'; traits: string[] };
+export type PersonaPackage = { format: 'nautilus.persona'; schema_version: 1; name: string; description: string; style: PersonaStyle };
+export type PersonaVersion = PersonaPackage & { version: number; created_at: string };
+export type PersonaProfile = { id: string; versions: PersonaVersion[] };
+export type PersonaState = { revision: number; active_id: string | null; profiles: PersonaProfile[] };
+export type PersonaPreview = { preview_id: string; profile_id: string | null; package: PersonaPackage; issues: string[]; sample_reply: string | null; can_confirm: boolean };
+export const getPersonas = () => learningRequest<PersonaState>('/api/personas');
+export const previewPersona = (payload: { name?: string; description?: string; package?: unknown; profile_id?: string; request_key: string }) => learningRequest<PersonaPreview>('/api/personas/previews', { method: 'POST', body: JSON.stringify(payload) });
+export const changePersona = (payload: { action: 'confirm' | 'activate' | 'disable' | 'restore'; expected_revision: number; request_key: string; preview_id?: string; profile_id?: string; version?: number }) => learningRequest<PersonaState>('/api/personas/changes', { method: 'POST', body: JSON.stringify(payload) });
+export const exportPersona = (id: string) => learningRequest<PersonaPackage>(`/api/personas/${encodeURIComponent(id)}/export`);

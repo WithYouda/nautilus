@@ -1,0 +1,10 @@
+.persona-settings .persona-current,.persona-actions,.persona-choice{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.persona-choice .field{flex:1;min-width:180px}.persona-current .text-button{margin-left:auto}
+.persona-editor{margin-top:16px;display:grid;gap:12px}.persona-editor textarea{width:100%;resize:vertical;min-height:100px}
+.persona-preview{border-left:2px solid var(--accent,#b85640);padding:4px 16px;margin-top:4px}
+.persona-preview h4{margin:0 0 10px}.persona-style p{margin:6px 0;font-size:13px;line-height:1.7}
+.persona-preview blockquote{margin:14px 0;padding:10px 14px;background:rgba(80,90,92,.05)}
+.persona-preview blockquote span{font-size:12px;color:var(--text-muted,#6e7779)}.persona-preview blockquote p{margin:6px 0;line-height:1.7}
+.persona-settings details{margin-top:12px}.persona-version{border-top:1px solid var(--border,#d8d0c3);padding-top:8px}
+.persona-description{white-space:pre-wrap;overflow-wrap:anywhere}.persona-file{display:none}
+@media(max-width:480px){.persona-choice{align-items:stretch}.persona-choice .field{min-width:0;flex-basis:100%}.persona-preview{padding-right:0}}

@@ -204,6 +204,8 @@ class QuestionDiscussionService:
         snapshot = json.loads(turn.pop('provider_snapshot_json'))
         from .model_control import public_snapshot
         turn['model_config'] = public_snapshot(snapshot)
+        if turn['model_config'] is not None and self.chats.personas:
+            turn['model_config']['persona'] = self.chats.personas.public(owner, snapshot.get('persona'))
         reply = snapshot.get('reply', {})
         if snapshot.get('branch_origin'):
             origin = snapshot['branch_origin']
@@ -359,6 +361,7 @@ class QuestionDiscussionService:
         try:
             teaching_default = self.chats.default_teaching_mode(owner, original_snapshot) if not existing_turn else 'stepwise'
             adaptive_profile = self.chats.adaptive_profile(owner, original_snapshot) if not existing_turn else None
+            persona = self.chats.persona_snapshot(owner, original_snapshot) if not existing_turn else None
         except ConversationError as error:
             raise DomainError('teaching_defaults_unavailable', 400) from error
         teaching_output = {'format': 'plain', 'version': 1, 'reason': 'not_checked'}
@@ -434,7 +437,7 @@ class QuestionDiscussionService:
                     VALUES (?,?,?,?,'running',?)""", (turn_id, discussion_id, request_key, content, utc_timestamp()))
                 c.execute('UPDATE learning_discussion_turn SET provider_snapshot_json=? WHERE id=?',
                           (json.dumps({**runtime_snapshot,
-                                       'attempt_id': attempt_id, 'reply': reply, 'search_request': search or {'mode': 'off'},
+                                       'attempt_id': attempt_id, 'reply': reply, 'persona': persona, 'search_request': search or {'mode': 'off'},
                                        'source_request': source_scope or {'mode': 'unspecified', 'version_ids': []},
                                        'source_scope': public_scope(frozen),
                                        'teaching_mode': teaching_mode, 'teaching_action': teaching_action,
@@ -667,6 +670,8 @@ class QuestionDiscussionService:
                     answer_texts = {item['id']: item['assistant_content'] or '' for item in originals}
                     messages = teaching.add_prompt(messages, snapshot['teaching'], attempt_texts, answer_texts)
                     teaching_stream = teaching.TeachingStream(snapshot['teaching'])
+                if self.chats.personas:
+                    messages = self.chats.personas.add_prompt(owner, messages, snapshot.get('persona'))
                 def active():
                     # Also used inside KnowledgeRun's learning DB transaction:
                     # do not start a nested transaction on the same connection.

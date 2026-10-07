@@ -300,7 +300,7 @@ export type ModelConfig = {
   effective: ModelEffective; sources: ModelSources;
   layers: Array<{ kind: ModelScopeKind; id: string; revision: string; override: ModelOverride }>; issues: string[];
 };
-export type ModelRunConfig = Partial<ModelEffective> & { sources?: ModelSources | null };
+export type ModelRunConfig = Partial<ModelEffective> & { sources?: ModelSources | null; persona?: { name: string; version: number } | null };
 const modelConfigPath = (kind: ModelScopeKind, id: string) => `/api/model-config/${kind}/${encodeURIComponent(id)}`;
 export function getModelConfig(kind: ModelScopeKind, id: string): Promise<ModelConfig> { return request(modelConfigPath(kind, id)); }
 export function putModelConfig(kind: ModelScopeKind, id: string, expected_revision: string, override: ModelOverride): Promise<ModelConfig> {

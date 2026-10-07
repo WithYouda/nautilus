@@ -104,6 +104,7 @@ class ConversationService:
         self.current_state = None
         self.preferences = None
         self.adaptive_preferences = None
+        self.personas = None
         self.model_control = None
         self.coach_conversations = None
         self._teaching_checks = set()
@@ -123,6 +124,13 @@ class ConversationService:
             return self.preferences.get(owner)['teaching_mode'] if self.preferences else 'stepwise'
         except (PreferencesError, CredentialError) as error:
             raise ConversationError('默认学习方式无法读取，请先检查设置') from error
+
+    def persona_snapshot(self, owner, original_snapshot=None):
+        from .personas import PersonaError
+        try:
+            return self.personas.freeze(owner, original_snapshot) if self.personas else None
+        except (PersonaError, CredentialError) as error:
+            raise ConversationError("人格配置无法读取，请检查设置") from error
 
     def adaptive_profile(self, owner, original_snapshot=None):
         from .adaptive_preferences import AdaptivePreferencesError
@@ -1568,6 +1576,8 @@ class ConversationService:
             if item["role"] == "assistant":
                 from .model_control import public_snapshot
                 item['model_config'] = public_snapshot(snapshot)
+                if item['model_config'] is not None and self.personas:
+                    item['model_config']['persona'] = self.personas.public(identity_id, snapshot.get('persona'))
                 from .teaching_runtime import public as public_teaching
                 item['teaching'] = public_teaching(snapshot, item['status'])
                 if snapshot.get('coach') and self.coach_conversations:
@@ -1846,6 +1856,7 @@ class ConversationService:
             config_snapshot["attachment_version_ids"] = self.materials.attachment_ids(frozen, attachment_version_ids) if self.materials else []
         except DomainError as error:
             raise ConversationError("附件不可用，请重新选择文件") from error
+        config_snapshot["persona"] = self.persona_snapshot(identity_id, original_snapshot)
         config_snapshot["source_request"] = source_scope or {"mode": "unspecified", "version_ids": []}
         config_snapshot["source_scope"] = public_scope(frozen)
         from .search_adapters import SearchError

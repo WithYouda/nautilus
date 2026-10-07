@@ -229,6 +229,9 @@ class CoachReminders:
         else:
             target={'kind':'coach','plan_id':None,'action_id':None,'delegation_id':None,'item_id':None,'href':'?view=home&coach=1','label':'打开教练'}
             title='到学习时间了';body='今天想从哪里开始？可以先和教练安排下一步。'
+        persona=getattr(self.learning,'personas',None)
+        if persona and value['status'] in {'pending','dispatched'}:
+            body=persona.reminder_body(value['owner_id'],body)
         return {k:value[k] for k in ('id','revision','occurrence_key','stage','status','scheduled_at','dispatched_at','source_revision','reason')} | {'title':title,'body':body,'target':target}
 
     def _view(self,c,owner,settings,now,items,active,quiet):

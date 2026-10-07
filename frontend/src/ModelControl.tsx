@@ -103,6 +103,7 @@ export function ModelSummary({ value }: { value: ModelRunConfig }) {
 export function ModelConfigHistory({ config }: { config?: ModelRunConfig | null }) {
   if (!config) return null;
   return <details className="model-config-history"><summary>本次模型配置</summary><ModelSummary value={config} />
+    {config.persona && <p>人格：{config.persona.name} · 第{config.persona.version}版</p>}
     {config.reasoning_parameters && Object.keys(config.reasoning_parameters).length > 0 && <details className="reasoning-parameters"><summary>思考请求参数</summary><pre>{JSON.stringify(config.reasoning_parameters, null, 2)}</pre></details>}
   </details>;
 }

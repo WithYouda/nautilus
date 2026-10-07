@@ -215,7 +215,8 @@ class BackgroundCoach:
         except ConversationError as error: raise DomainError('coach_provider_unavailable',503) from error
         maximum=MAX_OUTPUT_TOKENS;limit=snapshot['model']['capabilities'].get('max_output_tokens')
         if type(limit) is int and limit>0: maximum=min(maximum,limit)
-        frozen={**snapshot['model_control'],'max_tokens':maximum,'prompt_schema_version':1}
+        frozen={**snapshot['model_control'],'max_tokens':maximum,'prompt_schema_version':1,
+                'persona':self.chats.persona_snapshot(owner)}
         try:
             result=self.learning.core.execute(self.learning.principal(identity),ClaimCoachRun(run_id=str(uuid4()),scope=scope,plan_id=plan_id,
                 trigger=trigger,inputs=inputs,provider_snapshot=frozen,retry_run_id=retry,
@@ -242,7 +243,11 @@ class BackgroundCoach:
             async with self.slots:
                 current()
                 provider=build_provider(config,transport=self.transport);provider.diagnostics=diagnostic
-                text=await provider.generate_text(messages(inputs),max_tokens=maximum,json_mode=True)
+                prompt=messages(inputs)
+                if self.chats.personas:
+                    saved=json.loads(self.db.fetchone('SELECT provider_snapshot_json FROM learning_coach_run WHERE owner_id=? AND id=?',(owner,identifier))[0])
+                    prompt=self.chats.personas.add_prompt(owner,prompt,saved.get('persona'))
+                text=await provider.generate_text(prompt,max_tokens=maximum,json_mode=True)
             diagnostic.phase='output_validation';output=Proposal.model_validate_json(text)
             current()
             row=self.db.fetchone('SELECT revision FROM learning_coach_run WHERE owner_id=? AND id=?',(owner,identifier))
