@@ -2,13 +2,18 @@
 import json
 from .core.background_coach import erase_private
 
-PURGE_TABLES={'coach_run':('learning_coach_run','id')}
+PURGE_TABLES={'coach_run':('learning_coach_run','id'),'coach_conversation':('learning_coach_conversation','conversation_id')}
 PURGE_BARRIERS=(('learning_coach_private',('owner_id','run_id','revision')),
                 ('learning_coach_tombstone',('owner_id','run_id')),
-                ('learning_coach_run',('owner_id','id')))
+                ('learning_coach_run',('owner_id','id')),
+                ('learning_coach_conversation',('owner_id','conversation_id')))
 PRIVATE_COLUMNS={'learning_coach_private':['content_json','content_hash'],'learning_agent_permission_request':['purpose']}
 
 def erase_managed(c,owner,kind,identifier,now,*,submission_ids=(),artifact_ids=()):
+    if kind=='coach_conversation':
+        from .coach_conversation_purge import erase_learning
+        erase_learning(c,owner,identifier,now)
+        return True
     if not c.execute("SELECT 1 FROM sqlite_master WHERE name='learning_coach_private'").fetchone(): return False
     if kind=='coach_run': erase_private(c,owner,identifier,now);return True
     artifacts={identifier,*artifact_ids} if kind=='artifact' else set(artifact_ids)

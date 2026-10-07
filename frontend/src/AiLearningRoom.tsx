@@ -1,3 +1,6 @@
+import { COACH_SESSION_KEY, coachKey, getCoachConversation, listCoachConversations, openCoachConversation, type CoachConversationDetail, type CoachMessageContext } from './coach-conversation-api';
+import { CoachActions } from './CoachConversation';
+import CoachPurgeDialog from './CoachPurgeDialog';
 import useConversationState, { isStateConflict, isStateRejected } from './useConversationState';
 import ConversationStateNotice from './ConversationStateNotice';
 import { ModelControlEditor, ModelControlNotice, ModelConfigHistory, useModelControl } from './ModelControl';
@@ -110,9 +113,9 @@ type RoomSession = {
   learningBrief?: LearningRoomBrief;
 };
 
-function readSession(): RoomSession | null {
+function readSession(storageKey = SESSION_KEY): RoomSession | null {
   try {
-    const raw = window.sessionStorage.getItem(SESSION_KEY);
+    const raw = window.sessionStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<RoomSession>;
     const legacyTaskId = typeof parsed.taskId === "string" ? parsed.taskId : null;
@@ -171,10 +174,10 @@ function isContextScope(value: unknown): value is AiContextScope {
   return value === "independent" || value === "global" || value === "plan" || value === "task";
 }
 
-function writeSession(session: RoomSession | null) {
+function writeSession(session: RoomSession | null, storageKey = SESSION_KEY) {
   try {
-    if (!session) window.sessionStorage.removeItem(SESSION_KEY);
-    else window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+    if (!session) window.sessionStorage.removeItem(storageKey);
+    else window.sessionStorage.setItem(storageKey, JSON.stringify({
       ...session,
       pending: session.pending ? {
         ...session.pending,
@@ -208,6 +211,7 @@ function upsertAssistantMessage(
   reasoningContent?: string,
   searchTrace?: SearchTrace | null,
   generationTrace?: GenerationTrace | null,
+  coach?: CoachMessageContext | null,
 ): AiMessage[] {
   if (!messageId) return messages;
   let found = false;
@@ -221,6 +225,7 @@ function upsertAssistantMessage(
       search_trace: searchTrace === undefined ? message.search_trace : searchTrace,
       generation_trace: generationTrace === undefined ? message.generation_trace : generationTrace,
       status,
+      ...(coach === undefined ? {} : { coach }),
       updated_at: new Date().toISOString(),
     };
   });
@@ -277,6 +282,7 @@ function scopeLabel(item: AiConversation, entryScope: AiContextScope, entryTarge
 
 export default function AiLearningRoom({
   task,
+  coachMode = false,
   contextScope,
   targetId,
   initialDraft,
@@ -286,6 +292,7 @@ export default function AiLearningRoom({
   onProviderOpen,
 }: {
   task: Task | null;
+  coachMode?: boolean;
   contextScope?: AiContextScope;
   targetId?: string | null;
   initialDraft?: string;
@@ -294,6 +301,15 @@ export default function AiLearningRoom({
   onBack: () => void;
   onProviderOpen: () => void;
 }) {
+  const storageKey = coachMode ? COACH_SESSION_KEY : SESSION_KEY;
+  const readCurrentSession = () => readSession(storageKey);
+  const readConversation = useCallback((id: string) => coachMode ? getCoachConversation(id) : getAiConversation(id), [coachMode]);
+  const listConversations = useCallback(async () => {
+    const [ordinary, roles] = await Promise.all([listAiConversations(), listCoachConversations()]);
+    const ids = new Set(roles.items.filter(item => !item.purged_at).map(item => item.conversation_id));
+    return ordinary.filter(item => coachMode ? ids.has(item.id) : !ids.has(item.id));
+  }, [coachMode]);
+  const coachCreationKey = useRef<string | null>(null);
   const effectiveScope: AiContextScope = contextScope ?? (task ? "task" : "independent");
   const effectiveTargetId = targetId ?? (effectiveScope === "task" ? task?.id ?? null : null);
   const [detail, setDetail] = useState<AiConversationDetail | null>(null);
@@ -305,7 +321,7 @@ export default function AiLearningRoom({
   const [failedHelpDisplays, setFailedHelpDisplays] = useState<Record<string, number>>({});
   const helpHistoryTriggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { setCompletionOpen(false); }, [learningBrief?.delegation_id]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(coachMode ? initialDraft ?? "" : "");
   const [publicQuery, setPublicQuery] = useState('');
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<AiProvider[]>([]);
@@ -318,7 +334,7 @@ export default function AiLearningRoom({
   const [editingTitle, setEditingTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<AiConversation | null>(null);
   const [historyDismissSuspended, setHistoryDismissSuspended] = useState(false);
-  const [draftConfig, setDraftConfig] = useState<DraftConfig | null>(readSession()?.draftConfig ?? null);
+  const [draftConfig, setDraftConfig] = useState<DraftConfig | null>(readCurrentSession()?.draftConfig ?? null);
   const [openLayer, setOpenLayer] = useState<"history" | "config" | "context" | null>(null);
   const [verificationOpen, setVerificationOpen] = useState(learningBrief?.open_verification === true);
   const [verificationCompleted, setVerificationCompleted] = useState(false);
@@ -345,7 +361,7 @@ export default function AiLearningRoom({
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   // Only identifiers survive a refresh. Keep the question itself in memory
   // long enough to restore the controlled input after an ambiguous failure.
-  const pendingSubmissionRef = useRef<PendingSubmission | null>(readSession()?.pending ?? null);
+  const pendingSubmissionRef = useRef<PendingSubmission | null>(readCurrentSession()?.pending ?? null);
   const pendingContentRef = useRef<string | null>(null);
   const initialDraftSentRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
@@ -370,7 +386,7 @@ export default function AiLearningRoom({
 
   useEffect(() => {
     creationEpoch.current++; creatingConversation.current = null;
-  }, [effectiveScope, effectiveTargetId]);
+  }, [effectiveScope, effectiveTargetId, coachMode]);
   useEffect(() => {
     const update = () => { void listAiProviders().then(setProviders).catch(() => {}); };
     window.addEventListener('nautilus:image-settings-changed', update);
@@ -382,7 +398,7 @@ export default function AiLearningRoom({
   const modelEffective = modelControl.config?.effective;
   const sharedState = useConversationState('conversation', detail?.conversation.identity_id ?? null, conversationId, async () => {
     if (!conversationId) return;
-    const next = await getAiConversation(conversationId);
+    const next = await readConversation(conversationId);
     if (conversationIdRef.current === conversationId) setDetail(next);
   });
   const sourceScope = sharedState.sourceScope;
@@ -447,7 +463,7 @@ export default function AiLearningRoom({
   function persistSession(extra: Partial<RoomSession> = {}) {
     if (!mountedRef.current) return;
     const current = sessionContext();
-    const previous = readSession();
+    const previous = readCurrentSession();
     writeSession({
       taskId: current.scope === "task" ? current.targetId : null,
       contextScope: current.scope,
@@ -459,16 +475,16 @@ export default function AiLearningRoom({
       draftConfig: previous?.draftConfig ?? null,
       learningBrief,
       ...extra,
-    });
+    }, storageKey);
   }
 
   const saveCurrentSession = useCallback((extra: Partial<RoomSession> = {}) => {
     persistSession(extra);
-  }, [effectiveScope, effectiveTargetId]);
+  }, [effectiveScope, effectiveTargetId, coachMode]);
 
   const pollTitle = useCallback(async (id: string, attempt = 0) => {
     if (!mountedRef.current || attempt >= 25) return;
-    const next = await getAiConversation(id);
+    const next = await readConversation(id);
     if (!mountedRef.current || conversationIdRef.current !== id) return;
     setDetail(next);
     setConversations((items) => upsertConversation(items, conversationListItem(next)));
@@ -480,10 +496,10 @@ export default function AiLearningRoom({
     if (pending || awaitingQueue) {
       titlePollTimerRef.current = window.setTimeout(() => void pollTitle(id, attempt + 1), 800);
     }
-  }, []);
+  }, [readConversation]);
 
   const reconcile = useCallback(async (id: string) => {
-    const next = await getAiConversation(id);
+    const next = await readConversation(id);
     if (!mountedRef.current || conversationIdRef.current !== id) return next;
     setDetail(next);
     setConversations((items) => upsertConversation(items, conversationListItem(next), true));
@@ -492,13 +508,13 @@ export default function AiLearningRoom({
       saveCurrentSession({ conversationId: id, runId: next.active_run.id });
     } else {
       runIdRef.current = null;
-      const previous = readSession();
+      const previous = readCurrentSession();
       persistSession(previous?.pending
         ? { conversationId: id, runId: null, pending: previous.pending }
         : { conversationId: id, runId: null });
     }
     return next;
-  }, [effectiveScope, effectiveTargetId, saveCurrentSession]);
+  }, [effectiveScope, effectiveTargetId, saveCurrentSession, readConversation]);
 
   const subscribe = useCallback(async (run: AiRun, attempt = 0) => {
     if (!mountedRef.current) return;
@@ -526,6 +542,7 @@ export default function AiLearningRoom({
               event.data.reasoning_content,
               event.data.search_trace,
               event.data.generation_trace,
+              event.data.coach,
             ),
           } : previous);
           return;
@@ -578,6 +595,7 @@ export default function AiLearningRoom({
             event.data.reasoning_content,
             event.data.search_trace,
             event.data.generation_trace,
+            event.data.coach,
           ),
         } : previous);
         persistSession({ conversationId: run.conversation_id, runId: null });
@@ -611,7 +629,7 @@ export default function AiLearningRoom({
 
   const activateConversation = useCallback(async (id: string) => {
     if (learningBrief?.session_id) await selectLearningRoomConversation(learningBrief.session_id, id);
-    const next = await getAiConversation(id);
+    const next = await readConversation(id);
     if (!mountedRef.current) return;
     conversationIdRef.current = id;
     setDetail(next);
@@ -631,7 +649,7 @@ export default function AiLearningRoom({
       setStatus("idle");
     }
     return next;
-  }, [effectiveScope, effectiveTargetId, pollTitle, learningBrief?.session_id]);
+  }, [effectiveScope, effectiveTargetId, pollTitle, learningBrief?.session_id, readConversation]);
 
   const loadRoom = useCallback(async () => {
     setEntryReady(false);
@@ -640,13 +658,13 @@ export default function AiLearningRoom({
     setHistoryLoading(true);
     setHistoryError("");
     setHistoryActionError("");
-    const saved = readSession();
+    const saved = readCurrentSession();
     const savedForEntry = saved?.contextScope === effectiveScope && saved.targetId === effectiveTargetId
       && saved.learningBrief?.session_id === learningBrief?.session_id ? saved : null;
     try {
       const [entryContext, conversationItems, providerList, room] = await Promise.all([
-        getAiContextPreview(effectiveScope, effectiveTargetId),
-        listAiConversations().catch((reason: unknown) => {
+        coachMode ? Promise.resolve(null) : getAiContextPreview(effectiveScope, effectiveTargetId),
+        listConversations().catch((reason: unknown) => {
           setHistoryError(reason instanceof Error ? reason.message : "对话历史加载失败");
           return [] as AiConversation[];
         }),
@@ -669,7 +687,7 @@ export default function AiLearningRoom({
       const savedConversation = savedForEntry?.conversationId
         ? conversationItems.find((item) => item.id === savedForEntry.conversationId)
         : null;
-      let candidate = !initialDraft && savedConversation && conversationMatchesEntry(savedConversation, effectiveScope, effectiveTargetId)
+      let candidate = (!initialDraft || coachMode) && savedConversation && conversationMatchesEntry(savedConversation, effectiveScope, effectiveTargetId)
         ? savedConversation.id
         : null;
       if (room) {
@@ -679,7 +697,7 @@ export default function AiLearningRoom({
         }
         candidate=anchorConversation ?? room.conversation_id;
       }
-      if (!room && !candidate && !initialDraft) {
+      if (!room && !candidate && (!initialDraft || coachMode)) {
         candidate = conversationItems.find((item) => conversationMatchesEntry(item, effectiveScope, effectiveTargetId))?.id ?? null;
       }
       if (candidate) {
@@ -702,7 +720,7 @@ export default function AiLearningRoom({
         }
       } else {
         setDetail(null);
-        setDraft("");
+        setDraft(coachMode ? initialDraft ?? "" : "");
         setStatus("idle");
       }
       if (mountedRef.current && !learningBrief?.path_anchor?.leaf_id) setEntryReady(true);
@@ -712,7 +730,7 @@ export default function AiLearningRoom({
       setStatus("failed");
       setError(reason instanceof Error ? reason.message : "学习室加载失败");
     }
-  }, [activateConversation, effectiveScope, effectiveTargetId, initialDraft, learningBrief?.session_id, learningBrief?.path_anchor?.conversation_id, learningBrief?.path_anchor?.leaf_id]);
+  }, [activateConversation, effectiveScope, effectiveTargetId, initialDraft, learningBrief?.session_id, learningBrief?.path_anchor?.conversation_id, learningBrief?.path_anchor?.leaf_id, coachMode, listConversations]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -727,12 +745,12 @@ export default function AiLearningRoom({
 
   useEffect(() => {
     const content = initialDraft?.trim();
-    if (!searchChoice.ready || !content || status !== "idle" || detail?.messages.some((message) => message.role === "user") || initialDraftSentRef.current === content) return;
+    if (!searchChoice.ready || !content || !entryReady || !modelEffective?.available || !modelEffective.has_api_key || status !== "idle" || (!coachMode && detail?.messages.some((message) => message.role === "user")) || initialDraftSentRef.current === content) return;
     const timer = window.setTimeout(() => {
       if (mountedRef.current) void submitMessage(content);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [detail, initialDraft, provider, providers, status, searchChoice.ready, modelControl.config?.token, modelControl.busy]);
+  }, [detail, initialDraft, provider, providers, status, searchChoice.ready, modelControl.config?.token, modelControl.busy, entryReady, coachMode]);
 
 
   useEffect(() => {
@@ -747,7 +765,8 @@ export default function AiLearningRoom({
     const current = creationEpoch.current;
     const stillCurrent = () => mountedRef.current && creationEpoch.current === current;
     const create = async () => {
-      let created = await createAiConversation(effectiveScope, effectiveTargetId);
+      if (coachMode) coachCreationKey.current ??= coachKey();
+      let created: AiConversationDetail = coachMode ? await openCoachConversation(coachCreationKey.current!, true) : await createAiConversation(effectiveScope, effectiveTargetId);
       if (!stillCurrent()) throw new Error('对话已切换，请在当前对话重新上传。');
       if (learningBrief?.session_id) await selectLearningRoomConversation(learningBrief.session_id, created.conversation.id);
       if (draftConfig) {
@@ -755,7 +774,7 @@ export default function AiLearningRoom({
           provider_profile_id: draftConfig.providerProfileId,
           provider_model_id: draftConfig.providerModelId,
         });
-        created = await getAiConversation(created.conversation.id);
+        created = await readConversation(created.conversation.id);
         setDraftConfig(null);
         saveCurrentSession({ conversationId: created.conversation.id, draftConfig: null });
       }
@@ -802,7 +821,7 @@ export default function AiLearningRoom({
   async function submitMessage(content: string, preserveDraft = false, regenerateMessageId?: string, editMessageId?: string, requestedHelp?: HelpRequestKind | null, requestedAction?: TeachingAction | null): Promise<boolean> {
     if (attachmentBusy || !entryReady || !content || branchBusyRef.current || sendingRef.current || status === "submitting" || status === "streaming" || status === "reconnecting") return false;
     if (sharedState.blocked) { setError("请先确认或修复当前学习状态，再发送消息。"); return false; }
-    if (sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !sourceScope.knowledge_base && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本或知识库，或改为未指定资料。'); return false; }
+    if (!coachMode && sourceScope.mode !== 'unspecified' && sourceScope.version_ids.length === 0 && !sourceScope.knowledge_base && !pendingSubmissionRef.current) { setError('请先选择至少一个资料版本或知识库，或改为未指定资料。'); return false; }
     const unresolved = pendingSubmissionRef.current;
 
     if (unresolved && ((pendingContentRef.current !== null && pendingContentRef.current !== content) || unresolved.regenerateMessageId !== regenerateMessageId || unresolved.editMessageId !== editMessageId)) {
@@ -827,7 +846,7 @@ export default function AiLearningRoom({
     try {
       conversation = await ensureConversation();
       if (!stillCurrent() || conversationIdRef.current !== conversation.conversation.id) return false;
-      const savedPending = pendingSubmissionRef.current ?? readSession()?.pending;
+      const savedPending = pendingSubmissionRef.current ?? readCurrentSession()?.pending;
       const canReusePending = Boolean(
         savedPending &&
         savedPending.contextScope === effectiveScope &&
@@ -840,14 +859,14 @@ export default function AiLearningRoom({
       const automatic = !regenerateMessageId && !editMessageId && Boolean(learningBrief && initialDraft?.trim() === content);
       const clientMessageId = canReusePending ? savedPending!.clientMessageId : `${automatic ? LEARNING_PROMPT_ID_PREFIX : ""}${makeClientMessageId()}`;
       const parentMessageId = canReusePending ? savedPending!.parentMessageId : (!regenerateMessageId && !editMessageId ? replyHistory.leaf ?? undefined : undefined);
-      const frozenSearch = canReusePending ? savedPending!.search ?? { mode: "off" as const } : automatic ? { mode: "off" as const } : structuredClone(searchSelection);
+      const frozenSearch = coachMode ? { mode: "off" as const } : canReusePending ? savedPending!.search ?? { mode: "off" as const } : automatic ? { mode: "off" as const } : structuredClone(searchSelection);
       const frozenPublicQuery = canReusePending ? savedPending!.publicQuery ?? publicQuery.trim() : !automatic && !regenerateMessageId && !editMessageId && frozenSearch.mode === 'external' ? publicQuery.trim() : '';
-      const frozenHelp = canReusePending ? savedPending!.helpRequest ?? null : requestedHelp !== undefined ? requestedHelp : regenerateMessageId ? detail?.messages.find(message => message.id === regenerateMessageId)?.help_record?.request?.kind ?? null : null;
-      const frozenTeachingMode = canReusePending ? savedPending!.teachingMode ?? null : requestedTeachingMode;
-      const frozenTeachingAction = canReusePending ? savedPending!.teachingAction ?? null : regenerateMessageId
+      const frozenHelp = coachMode ? null : canReusePending ? savedPending!.helpRequest ?? null : requestedHelp !== undefined ? requestedHelp : regenerateMessageId ? detail?.messages.find(message => message.id === regenerateMessageId)?.help_record?.request?.kind ?? null : null;
+      const frozenTeachingMode = coachMode ? null : canReusePending ? savedPending!.teachingMode ?? null : requestedTeachingMode;
+      const frozenTeachingAction = coachMode ? null : canReusePending ? savedPending!.teachingAction ?? null : regenerateMessageId
         ? detail?.messages.find(message => message.id === regenerateMessageId)?.teaching?.requested_action ?? null : requestedAction ?? null;
-      const frozenScope = canReusePending ? savedPending!.sourceScope ?? emptySourceScope() : sourceScope;
-      const frozenAttachments = canReusePending ? savedPending!.attachmentVersionIds ?? [] : regenerateMessageId || editMessageId || automatic ? [] : attachmentDraftIds.filter(id => frozenScope.version_ids.includes(id));
+      const frozenScope = coachMode ? emptySourceScope() : canReusePending ? savedPending!.sourceScope ?? emptySourceScope() : sourceScope;
+      const frozenAttachments = coachMode ? [] : canReusePending ? savedPending!.attachmentVersionIds ?? [] : regenerateMessageId || editMessageId || automatic ? [] : attachmentDraftIds.filter(id => frozenScope.version_ids.includes(id));
       const frozenModel = canReusePending
         ? { model_override: savedPending!.modelOverride ?? null, model_config_token: savedPending!.modelConfigToken ?? null }
         : await modelControl.forSend('conversation', conversation.conversation.id);
@@ -861,7 +880,7 @@ export default function AiLearningRoom({
       if (!stillCurrent() || conversationIdRef.current !== conversation.conversation.id) return false;
       if (!regenerateMessageId && !editMessageId && !automatic) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
-      if (initialDraft?.trim() === content) initialDraftSentRef.current = content;
+      if (initialDraft?.trim() === content) { initialDraftSentRef.current = content; persistSession({ initialDraft: null }); }
       modelControl.clearOnce();
       pendingSubmissionRef.current = null;
       pendingContentRef.current = null;
@@ -955,6 +974,8 @@ export default function AiLearningRoom({
 
   function handleNewConversation() {
     if (!entryReady || branchBusyRef.current) return;
+    coachCreationKey.current = null;
+    if (coachMode) initialDraftSentRef.current = initialDraft?.trim() ?? null;
     creationEpoch.current++; creatingConversation.current = null; sendingRef.current = false; setAttachmentContext(value => value + 1);
     abortRef.current?.abort();
     runIdRef.current = null;
@@ -1001,6 +1022,15 @@ export default function AiLearningRoom({
       setStatus("failed");
       setError(reason instanceof Error ? reason.message : "切换对话失败");
     }
+  }
+
+  async function reloadConversationHistory() {
+    setHistoryLoading(true); setHistoryError('');
+    try {
+      const [items, room] = await Promise.all([listConversations(), learningBrief?.session_id ? getLearningRoom(learningBrief.session_id) : Promise.resolve(null)]);
+      if (mountedRef.current) setConversations(room ? items.filter(item => room.conversation_ids.includes(item.id)) : items);
+    } catch (reason) { if (mountedRef.current) setHistoryError(reason instanceof Error ? reason.message : '对话历史无法读取，请重试。'); }
+    finally { if (mountedRef.current) setHistoryLoading(false); }
   }
 
   async function handleBranch(messageId: string) {
@@ -1103,8 +1133,9 @@ export default function AiLearningRoom({
 
   const displayContext = detail ? detail.context : context;
   const displayScope = detail?.conversation.context_scope ?? effectiveScope;
-  const contextTitle = learningContextTitle(displayContext, displayScope);
-  const conversationTitle = detail?.conversation.title ?? "新的学习对话";
+  const contextTitle = coachMode ? "当前学习安排" : learningContextTitle(displayContext, displayScope);
+  const conversationTitle = detail?.conversation.title ?? (coachMode ? "新的教练对话" : "新的学习对话");
+  const coachActionEpoch = creationEpoch.current;
   const canSend = entryReady && !branchBusy && !sharedState.blocked && Boolean(
     pendingSubmissionRef.current || (!modelControl.busy && modelEffective?.available && modelEffective.has_api_key),
   ) && !["loading", "submitting", "streaming", "reconnecting"].includes(status);
@@ -1133,21 +1164,21 @@ export default function AiLearningRoom({
       <button className="button button--quiet" type="button" onClick={() => setCompletionOpen(false)}>返回学习室</button>
       <LearningCompletion key={learningBrief.delegation_id} delegationId={learningBrief.delegation_id} onCompleted={onBack} />
     </div></div>}
-    <div className="ai-room" style={verificationOpen || completionOpen || discussionId ? { display: "none" } : undefined}>
+    <div className={`ai-room${coachMode ? " coach-room" : ""}`} style={verificationOpen || completionOpen || discussionId ? { display: "none" } : undefined}>
       <header className="ai-room-header">
         <div className="ai-room-heading">
           <button className="button button--quiet button--compact button--with-icon" onClick={onBack} disabled={branchBusy} aria-label="返回工作区">
             <ArrowLeft size={15} /><span>返回工作区</span>
           </button>
           <div>
-            <p className="eyebrow">LEARNING ROOM</p>
-            <h1>AI 学习室</h1>
+            <p className="eyebrow">{coachMode ? "NAUTILUS" : "LEARNING ROOM"}</p>
+            <h1>{coachMode ? "学习教练" : "AI 学习室"}</h1>
           </div>
         </div>
         <div className="ai-room-actions">
-          <button ref={helpHistoryTriggerRef} className="ai-room-tool-trigger" type="button" aria-label="当前对话帮助记录" title="帮助记录" aria-haspopup="dialog" onClick={() => { setOpenLayer(null); setHelpHistoryOpen(true); }}>
+          {!coachMode && <button ref={helpHistoryTriggerRef} className="ai-room-tool-trigger" type="button" aria-label="当前对话帮助记录" title="帮助记录" aria-haspopup="dialog" onClick={() => { setOpenLayer(null); setHelpHistoryOpen(true); }}>
             <ListChecks size={14} /><span>帮助记录</span>
-          </button>
+          </button>}
           <div className="ai-room-layer-anchor" ref={historyLayerRef}>
             <button
               className={`ai-room-tool-trigger${openLayer === "history" ? " is-open" : ""}`}
@@ -1161,12 +1192,12 @@ export default function AiLearningRoom({
               <History size={14} /><span>对话历史</span>
             </button>
             {openLayer === "history" && <div id="ai-conversation-history-panel" className="ai-layer-panel ai-history-panel">
-              <div className="ai-layer-heading"><div><small>HISTORY</small><strong>学习对话</strong></div><button className="icon-button" type="button" onClick={() => setOpenLayer(null)} aria-label="关闭对话历史"><X size={15} /></button></div>
-              <button className="button button--quiet button--with-icon ai-history-new" type="button" disabled={branchBusy} onClick={handleNewConversation}><Plus size={13} />新建{scopeNoun(effectiveScope)}对话</button>
+              <div className="ai-layer-heading"><div><small>HISTORY</small><strong>{coachMode ? "教练对话" : "学习对话"}</strong></div><button className="icon-button" type="button" onClick={() => setOpenLayer(null)} aria-label="关闭对话历史"><X size={15} /></button></div>
+              <button className="button button--quiet button--with-icon ai-history-new" type="button" disabled={branchBusy} onClick={handleNewConversation}><Plus size={13} />新建{coachMode ? "教练" : scopeNoun(effectiveScope)}对话</button>
               {historyActionError && <p className="ai-history-action-error" role="alert">{historyActionError}</p>}
               <div className="ai-history-list" aria-label="对话列表">
-                {historyLoading ? <p className="ai-history-state">正在加载对话…</p> : historyError ? <p className="ai-history-state is-error" role="alert">{historyError}</p> : conversations.length === 0 ? <p className="ai-history-state">还没有历史对话。</p> : conversations.map((item) => {
-                  const scope = scopeLabel(item, effectiveScope, effectiveTargetId);
+                {historyLoading ? <p className="ai-history-state">正在加载对话…</p> : historyError ? <><p className="ai-history-state is-error" role="alert">{historyError}</p><button className="text-button" type="button" onClick={() => void reloadConversationHistory()}>重读对话历史</button></> : conversations.length === 0 ? <p className="ai-history-state">还没有历史对话。</p> : conversations.map((item) => {
+                  const scope = coachMode ? '学习教练' : scopeLabel(item, effectiveScope, effectiveTargetId);
                   const editing = editingConversationId === item.id;
                   const busy = historyActionBusy === item.id;
                   return <div key={item.id} data-conversation-id={item.id} className={`ai-history-item${item.id === conversationId ? " is-current" : ""}`}>
@@ -1197,9 +1228,9 @@ export default function AiLearningRoom({
                         <button
                           className="icon-button ai-history-delete"
                           type="button"
-                          aria-label={`删除对话：${item.title}`}
-                          title={item.id === conversationId && Boolean(detail?.active_run) ? "请先取消当前回答" : "删除对话"}
-                          disabled={Boolean(historyActionBusy) || (item.id === conversationId && Boolean(detail?.active_run))}
+                          aria-label={`${coachMode ? "清除教练内容" : "删除对话"}：${item.title}`}
+                          title={coachMode ? "清除教练内容" : item.id === conversationId && Boolean(detail?.active_run) ? "请先取消当前回答" : "删除对话"}
+                          disabled={Boolean(historyActionBusy) || (!coachMode && item.id === conversationId && Boolean(detail?.active_run))}
                           onClick={() => { setHistoryActionError(""); setHistoryDismissSuspended(true); setDeleteTarget(item); }}
                         ><Trash2 size={13} /></button>
                       </div>
@@ -1224,7 +1255,7 @@ export default function AiLearningRoom({
             {openLayer === "context" && <div id="ai-conversation-context-panel" className="ai-layer-panel ai-context-panel">
               <div className="ai-layer-heading"><div><small>{displayScope.toUpperCase()} CONTEXT</small><strong>{contextTitle}</strong></div><button className="icon-button" type="button" onClick={() => setOpenLayer(null)} aria-label="关闭当前对话信息"><X size={15} /></button></div>
               <p className="ai-context-panel-route">{learningContextRoute(displayContext, displayScope)}</p>
-              {displayContext ? <ContextFacts context={displayContext} /> : learningBrief ? <LearningRoomBriefDetails brief={learningBrief} /> : <p>本次对话不自动注入计划数据。</p>}
+              {coachMode ? <p className="coach-context-summary">{(detail as CoachConversationDetail | null)?.coach_context?.summary ?? "打开对话后可核对当前学习安排。"}</p> : displayContext ? <ContextFacts context={displayContext} /> : learningBrief ? <LearningRoomBriefDetails brief={learningBrief} /> : <p>本次对话不自动注入计划数据。</p>}
             </div>}
           </div>
           <div className="ai-room-layer-anchor" ref={configLayerRef}>
@@ -1248,9 +1279,9 @@ export default function AiLearningRoom({
               <p className="ai-title-note">{detail?.conversation.title_generation_status === "failed" ? "上次标题生成失败，当前保留本地标题。" : "首轮回答成功后自动生成一次；也可在这里手动重生成。"}</p>
             </div>}
           </div>
-          <button className="button button--quiet button--compact button--with-icon" onClick={onProviderOpen} disabled={branchBusy} aria-label="AI 提供方设置" title="AI 提供方设置">
+          {!coachMode && <button className="button button--quiet button--compact button--with-icon" onClick={onProviderOpen} disabled={branchBusy} aria-label="AI 提供方设置" title="AI 提供方设置">
             <SlidersHorizontal size={15} /><span>AI 提供方设置</span>
-          </button>
+          </button>}
               {learningBrief?.action_id && learningBrief.delegation_id && <button className="button button--accent button--compact button--with-icon" type="button" disabled={branchBusy} aria-label={verificationCompleted ? "查看验证结果" : "进入验证"} onClick={() => setVerificationOpen(true)}>
             <ShieldCheck size={15} /><span>{verificationCompleted ? "查看验证结果" : "进入验证"}</span>
           </button>}
@@ -1264,14 +1295,14 @@ export default function AiLearningRoom({
         {learningBrief.delegation_id && !learningBrief.history_only && <button className="button button--quiet" type="button" aria-expanded={completionOpen} onClick={() => setCompletionOpen(value => !value)}>记录本次完成</button>}
         {learningBrief.continuity_review_id && <button className="text-button" onClick={async () => { try { await chooseReturnReview(learningBrief.continuity_review_id!, "corrected", `corrected:${learningBrief.continuity_review_id}`); onBack(); } catch { setError("纠正未保存，请重试"); } }}>恢复错了，重新选择</button>}
       </div></>}
-      {!learningBrief && teaching}
+      {!coachMode && !learningBrief && teaching}
 
       <div className="ai-chat-with-map">
       <ConversationStateNotice state={sharedState} onSelectPath={() => { void sharedState.save({ leaf_id: detail?.messages.filter(message => !message.source_scope?.purged).at(-1)?.id ?? null, paths: {} }); }} />
       {anchorRestoreFailed && <button className="text-button" type="button" disabled={sharedState.busy} onClick={() => {void sharedState.reload().then(()=>{setError('');setAnchorRetry(value=>value+1);});}}>重试恢复原位置</button>}
-      {conversationId && <BranchMap kind="conversation" id={conversationId} revision={`${detail?.conversation.title}:${detail?.messages.at(-1)?.status}:${detail?.messages.length}`} disabled={branchBusy || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
+      {!coachMode && conversationId && <BranchMap kind="conversation" id={conversationId} revision={`${detail?.conversation.title}:${detail?.messages.at(-1)?.status}:${detail?.messages.length}`} disabled={branchBusy || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId) || Boolean(pendingSubmissionRef.current)}
         onNavigate={async (id, source) => { await handleConversationSwitch(id); if (source) setMapLocation({ id, source }); }}
-        onRenamed={async () => { const [next, list] = await Promise.all([getAiConversation(conversationId), listAiConversations()]); if (conversationIdRef.current === conversationId) { setDetail(next); setConversations(list); } }} />}
+        onRenamed={async () => { const [next, list] = await Promise.all([readConversation(conversationId), listConversations()]); if (conversationIdRef.current === conversationId) { setDetail(next); setConversations(list); } }} />}
       <LearningChatPanel title={conversationTitle} autoFollow={!editingMessageId && (replyHistory.following || status === "submitting")} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
           <OutboundApproval kind="conversation" scopeId={conversationId} active={Boolean(currentRun)} />
           {detail?.branch_origin && <p className="ai-branch-origin">从另一对话分出 · <button className="text-button" type="button" disabled={branchBusy} onClick={() => void handleConversationSwitch(detail.branch_origin!.conversation_id)}>返回原对话</button></p>}
@@ -1287,16 +1318,17 @@ export default function AiLearningRoom({
           onPrepare={async () => (await ensureConversation()).conversation.id}
           disabled={!entryReady || branchBusy || sharedState.blocked || Boolean(pendingSubmissionRef.current) || ['loading', 'submitting'].includes(status) || Boolean(editingMessageId)} />}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
-        placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
-        attachments={<ComposerAttachments kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} onEnsure={async () => (await ensureConversation()).conversation.id} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} />}
-        disabled={!canSend || Boolean(editingMessageId)} sendDisabled={attachmentBusy} suggestions={<HelpControls disabled={!canSend || attachmentBusy || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={<><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={modelEffective?.provider_kind ?? undefined} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={(detail?.messages ?? []).flatMap(message => message.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await getAiConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
+        label={coachMode ? "和教练说说今天" : "输入学习问题"} sendLabel={coachMode ? "发送" : "发送问题"}
+        placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? coachMode ? "说说今天的时间、精力，或遇到的困难" : `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
+        attachments={!coachMode && <ComposerAttachments kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} onEnsure={async () => (await ensureConversation()).conversation.id} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} />}
+        disabled={!canSend || Boolean(editingMessageId)} sendDisabled={attachmentBusy} suggestions={!coachMode && <HelpControls disabled={!canSend || attachmentBusy || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={!coachMode && <><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={modelEffective?.provider_kind ?? undefined} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={(detail?.messages ?? []).flatMap(message => message.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await readConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
             {visibleMessages.length ? visibleMessages.map((message, index) => {
               const versions = message.role === 'user'
                 ? detail!.messages.filter(item => item.role === 'user' && (item.question_version_id ?? item.id) === (message.question_version_id ?? message.id))
                 : detail!.messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
               const versionIndex = versions.findIndex(item => item.id === message.id);
-              return <MessageBubble key={message.id} message={message} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)} branchDisabled={message.status === 'streaming' || Boolean(message.source_scope?.purged) || branchBusy || sendingRef.current || Boolean(pendingSubmissionRef.current) || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId)} onBranch={message.role === 'assistant' ? () => void handleBranch(message.id) : undefined}
+              return <div key={message.id}><MessageBubble coachMode={coachMode} message={message} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)} branchDisabled={message.status === 'streaming' || Boolean(message.source_scope?.purged) || branchBusy || sendingRef.current || Boolean(pendingSubmissionRef.current) || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId)} onBranch={!coachMode && message.role === 'assistant' ? () => void handleBranch(message.id) : undefined}
                 onHelpDisplay={async characters => {
                   try {
                     const record = await recordAiHelpDisplay(message.conversation_id, message.id, characters);
@@ -1332,12 +1364,13 @@ export default function AiLearningRoom({
                 } : undefined}
                 automatic={message.role === "user" && (Boolean(message.client_message_id?.startsWith(LEARNING_PROMPT_ID_PREFIX))
                   || Boolean(learningBrief && index === 0 && message.content.startsWith("我正在执行下面这次学习安排。当前阶段只做资料整理、教学和答疑，不进入验证。")
-                    && ["学习目标：", "本次任务：", "希望形成的能力：", "学习边界：", "停止条件："].every(label => message.content.includes(label))))} />;
+                    && ["学习目标：", "本次任务：", "希望形成的能力：", "学习边界：", "停止条件："].every(label => message.content.includes(label))))} />{coachMode && conversationId && message.role === "assistant" && message.status === "complete" && message.coach?.content_available && <CoachActions conversationId={conversationId} actions={message.coach.actions} canNavigate={() => mountedRef.current && conversationIdRef.current === conversationId && creationEpoch.current === coachActionEpoch} />}</div>;
             }) : (
               <div className="ai-empty-chat">
                 <Bot size={24} />
-                <h2>从一个学习问题开始</h2>
-                <p>{emptyRoomCopy(effectiveScope)}</p>
+                <h2>{coachMode ? "今天从哪里开始？" : "从一个学习问题开始"}</h2>
+                <p>{coachMode ? "说说你有多少时间、精力如何，或一起找回学习节奏。" : emptyRoomCopy(effectiveScope)}</p>
+                {coachMode && conversationId && <CoachActions current conversationId={conversationId} actions={(detail as CoachConversationDetail | null)?.coach_context?.actions ?? []} canNavigate={() => mountedRef.current && conversationIdRef.current === conversationId && creationEpoch.current === coachActionEpoch} />}
               </div>
             )}
       </LearningChatPanel>
@@ -1351,13 +1384,13 @@ export default function AiLearningRoom({
           ...previous, messages: previous.messages.map(item => item.id === message.id ? { ...item, help_record: record } : item),
         } : previous);
       }} onClose={closeHelpHistory} />}
-      {deleteTarget && <ConversationDeleteDialog
+      {deleteTarget && (coachMode ? <CoachPurgeDialog conversation={deleteTarget} onClose={closeDeleteDialog} onCleared={() => { setConversations(items => items.filter(item => item.id !== deleteTarget.id)); if (deleteTarget.id === conversationId) { abortRef.current?.abort(); runIdRef.current = null; conversationIdRef.current = null; pendingSubmissionRef.current = null; pendingContentRef.current = null; setDetail(null); setDraft(""); setError(""); setStatus("idle"); persistSession({ conversationId: null, runId: null, pending: undefined, initialDraft: null }); } }} /> : <ConversationDeleteDialog
         conversation={deleteTarget}
         busy={historyActionBusy === deleteTarget.id}
         dialogRef={deleteDialogRef}
         onCancel={() => { if (!historyActionBusy) closeDeleteDialog(); }}
         onConfirm={() => void handleConfirmDelete()}
-      />}
+      />)}
     </div>
     </>
   );
@@ -1519,8 +1552,8 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message, automatic = false, onRetry, retryDisabled, onBranch, branchDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
-  message: AiMessage; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; materialVersions: MaterialVersion[];
+function MessageBubble({ message, coachMode = false, automatic = false, onRetry, retryDisabled, onBranch, branchDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
+  message: AiMessage; coachMode?: boolean; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; materialVersions: MaterialVersion[];
   onHelpDisplay: (characters: number) => Promise<NonNullable<AiMessage['help_record']>>;
   version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
   editing: boolean; editDisabled: boolean; sendDisabled: boolean; onStartEdit: () => void; onCancelEdit: () => void; onSendEdit: (text: string) => Promise<boolean>;
@@ -1529,14 +1562,14 @@ function MessageBubble({ message, automatic = false, onRetry, retryDisabled, onB
   if (isUser) return <LearningUserMessage content={message.content} automatic={automatic} version={version}
     editing={editing} editDisabled={editDisabled} sendDisabled={sendDisabled}
     onStartEdit={onStartEdit} onCancelEdit={onCancelEdit} onSendEdit={onSendEdit}
-    attachments={<MessageAttachments kind="conversation" id={message.conversation_id} versionIds={message.attachment_version_ids ?? []} versions={materialVersions} />} />;
+    attachments={!coachMode && <MessageAttachments kind="conversation" id={message.conversation_id} versionIds={message.attachment_version_ids ?? []} versions={materialVersions} />} />;
   return (
-    <LearningMessage id={`answer-${message.id}`} role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
+    <LearningMessage assistantLabel={coachMode ? '学习教练' : 'AI 学习伙伴'} id={`answer-${message.id}`} role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
       {message.inherited_from && <small className="ai-inherited-answer">继承的历史回答</small>}
       <AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} />
-      {!message.inherited_from && <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />}
+      {!coachMode && !message.inherited_from && <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />}
       <ModelConfigHistory config={message.model_config} />
-      <LearningReplyActions version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} onBranch={onBranch} branchDisabled={branchDisabled} more={<MaterialUse scope={message.source_scope} versions={materialVersions} kind="conversation" scopeId={message.conversation_id} />} />
+      <LearningReplyActions hideBranch={coachMode} version={version} content={message.content} onRetry={onRetry} retryDisabled={retryDisabled || message.status === 'streaming'} onBranch={onBranch} branchDisabled={branchDisabled} more={!coachMode && <MaterialUse scope={message.source_scope} versions={materialVersions} kind="conversation" scopeId={message.conversation_id} />} />
     </LearningMessage>
   );
 }

@@ -269,7 +269,7 @@ def test_042_to_047_formal_upgrade_preserves_old_rows_columns(tmp_path):
     db.close()
     result=upgrade_learning_database(path,tmp_path/'backups',authorized=True)
     assert result['preflight']['applied_migrations'][-1]=='042_outcome_graph'
-    assert result['post_upgrade_backup']['applied_migrations'][-1]=='048_background_coach'
+    assert result['post_upgrade_backup']['applied_migrations'][-1]=='049_coach_conversation_reminders'
     assert result['post_upgrade_backup']['integrity_check']=='ok'
     with closing(sqlite3.connect(path)) as connection:
         for table in tables:
@@ -284,7 +284,8 @@ def test_042_to_047_formal_upgrade_preserves_old_rows_columns(tmp_path):
             'learning_commitment_private_tombstone','learning_commitment_source','learning_session_feedback','learning_session_feedback_history',
             'learning_action_removal','learning_coach_settings','learning_coach_signal','learning_coach_run',
             'learning_coach_consumed','learning_coach_run_source','learning_coach_candidate','learning_coach_decision',
-            'learning_coach_private','learning_coach_tombstone'}
+            'learning_coach_private','learning_coach_tombstone','learning_coach_conversation','learning_coach_request',
+            'learning_coach_reminder_settings','learning_coach_reminder','learning_coach_reminder_budget'}
 
 
 def test_goal_constraints_binding_and_new_plan_legacy_header_do_not_copy_private(client,tmp_path):

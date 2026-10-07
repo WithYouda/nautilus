@@ -118,12 +118,14 @@ class JsonTeachingDecoder:
 
     __slots__ = ('_token', '_max_metadata', '_metadata', '_metadata_length',
                  '_state', '_string', '_key_parts', '_field', '_seen', '_stack',
-                 '_proposal', '_finished', 'reason', 'reply_length')
+                 '_proposal', '_finished', 'reason', 'reply_length', '_fields', '_metadata_field')
 
-    def __init__(self, token: str, max_metadata: int = 16384):
+    def __init__(self, token: str, max_metadata: int = 16384, *, metadata_field: str = 'teaching'):
         if max_metadata < 0:
             raise ValueError('max_metadata must be nonnegative')
         self._token = token
+        self._metadata_field = metadata_field
+        self._fields = {'reply', metadata_field, 'token'}
         self._max_metadata = max_metadata
         self._metadata = []
         self._metadata_length = 0
@@ -191,7 +193,7 @@ class JsonTeachingDecoder:
                 key = ''.join(self._key_parts)
                 self._key_parts.clear()
                 self._string = None
-                if key not in _FIELDS or key in self._seen:
+                if key not in self._fields or key in self._seen:
                     raise _InvalidSchema
                 self._seen.add(key)
                 self._field = key
@@ -239,7 +241,7 @@ class JsonTeachingDecoder:
                 raise _InvalidJson
             self._state = 'value'
         elif self._state == 'value':
-            if self._field == 'teaching' and char == '{':
+            if self._field == self._metadata_field and char == '{':
                 self._stack.append('}')
                 self._state = 'metadata'
             elif self._field in {'reply', 'token'} and char == '"':
@@ -278,13 +280,13 @@ class JsonTeachingDecoder:
         except (ValueError, RecursionError, OverflowError):
             self._fail('envelope_invalid_json')
             return
-        if (set(envelope) != _FIELDS or not isinstance(envelope['reply'], str)
-                or not isinstance(envelope['teaching'], dict) or not isinstance(envelope['token'], str)):
+        if (set(envelope) != self._fields or not isinstance(envelope['reply'], str)
+                or not isinstance(envelope[self._metadata_field], dict) or not isinstance(envelope['token'], str)):
             self._fail('envelope_invalid_schema')
         elif envelope['token'] != self._token:
             self._fail('envelope_token_mismatch')
         else:
-            self._proposal = envelope['teaching']
+            self._proposal = envelope[self._metadata_field]
             self._metadata.clear()
 
     def proposal(self) -> dict | None:

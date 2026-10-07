@@ -19,6 +19,10 @@ from .plan_organization import PlanOrganization
 from .learning_paths import LearningPaths
 from .commitments import Commitments
 from .background_coach import BackgroundCoach
+from .coach_conversation import CoachConversationService
+from .coach_conversation_purge import CoachConversationPurge
+from .coach_reminders import CoachReminders
+from .routers import coach_conversation
 from .routers import background_coach
 from .routers import commitments
 from .routers import learning_paths
@@ -152,6 +156,16 @@ def create_app(
         if interrupted_title_runs:
             logger.warning("Recovered %s interrupted conversation title runs.", interrupted_title_runs)
         ai_run_manager = AiRunManager(conversation_service, transport=provider_transport)
+        coach_conversations=CoachConversationService(learning_service,conversation_service)
+        conversation_service.coach_conversations=coach_conversations
+        learning_service.coach_conversations=coach_conversations
+        coach_conversations.manager=ai_run_manager
+        coach_purge=CoachConversationPurge(coach_conversations)
+        coach_conversations.purge=coach_purge
+        coach_purge.recover()
+        app.state.coach_conversations=coach_conversations
+        app.state.coach_conversation_purge=coach_purge
+        app.state.coach_reminders=CoachReminders(learning_service)
         graph_service = OutcomeGraph(learning_service, evidence_provider_service, provider_transport, ai_run_manager._provider_slots)
         graph_service.recover()
         learning_paths_service=LearningPaths(learning_service,conversation_service)
@@ -281,6 +295,7 @@ def create_app(
     app.include_router(layouts.router)
     app.include_router(learning.router)
     app.include_router(background_coach.router)
+    app.include_router(coach_conversation.router)
     app.include_router(outcome_graph.router)
     app.include_router(plan_organization.router)
     app.include_router(learning_paths.router)

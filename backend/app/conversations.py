@@ -105,6 +105,7 @@ class ConversationService:
         self.preferences = None
         self.adaptive_preferences = None
         self.model_control = None
+        self.coach_conversations = None
         self._teaching_checks = set()
 
     def teaching_output(self, owner, profile, config, *, search=None, scope=None):
@@ -1305,6 +1306,10 @@ class ConversationService:
     ) -> dict[str, Any] | None:
         conversation = self.owned_conversation(identity_id, conversation_id)
         scope = conversation.get("context_scope", "independent")
+        from .coach_conversation import mapped
+        if mapped(self, identity_id, conversation_id):
+            self.coach_conversations.require(identity_id, conversation_id)
+            return self.coach_conversations.context(identity_id)
         link = self._primary_link(conversation_id)
         if scope == "global":
             return self.global_context(identity_id)
@@ -1353,6 +1358,7 @@ class ConversationService:
         task_id: str | None = None,
         context_scope: str | None = None,
         target_id: str | None = None,
+        _conversation_id: str | None = None,
     ) -> dict[str, Any]:
         scope = "task" if task_id else (context_scope or "independent")
         target = task_id or target_id
@@ -1377,7 +1383,7 @@ class ConversationService:
             title_source = "placeholder"
             title_status = "pending"
 
-        conversation_id = _id()
+        conversation_id = _conversation_id or _id()
         now = _now()
         with self.database.transaction() as connection:
             connection.execute(
@@ -1417,6 +1423,10 @@ class ConversationService:
         return self.conversation_detail(identity_id, conversation_id)
 
     def owned_conversation(self, identity_id: str, conversation_id: str) -> dict[str, Any]:
+        from .coach_conversation import mapped
+        coach = mapped(self, identity_id, conversation_id)
+        if coach and coach['purged_at']:
+            raise ConversationError('教练对话内容已清除')
         row = self.database.fetchone(
             """
             SELECT * FROM conversation
@@ -1535,7 +1545,9 @@ class ConversationService:
             (identity_id,),
         )
         from .branch_maps import conversation_title
-        return [{**dict(row), "title": conversation_title(self.database.connection, dict(row))} for row in rows]
+        from .coach_conversation import mapped
+        return [{**dict(row), "title": conversation_title(self.database.connection, dict(row)),
+                 **({'conversation_role':'coach'} if mapped(self,identity_id,row['id']) else {})} for row in rows]
 
     def list_messages(self, identity_id: str, conversation_id: str) -> list[dict[str, Any]]:
         self.owned_conversation(identity_id, conversation_id)
@@ -1558,6 +1570,8 @@ class ConversationService:
                 item['model_config'] = public_snapshot(snapshot)
                 from .teaching_runtime import public as public_teaching
                 item['teaching'] = public_teaching(snapshot, item['status'])
+                if snapshot.get('coach') and self.coach_conversations:
+                    item['coach'] = self.coach_conversations.public(identity_id, conversation_id, snapshot['coach'])
                 if snapshot.get('branch_origin'):
                     origin = snapshot['branch_origin']
                     item['inherited_from'] = {'conversation_id': origin['conversation_id'],
@@ -1646,6 +1660,10 @@ class ConversationService:
 
     def conversation_detail(self, identity_id: str, conversation_id: str) -> dict[str, Any]:
         conversation = self.owned_conversation(identity_id, conversation_id)
+        from .coach_conversation import mapped
+        coach = mapped(self, identity_id, conversation_id)
+        if coach:
+            conversation['conversation_role'] = 'coach'
         from .branch_maps import conversation_title
         conversation["title"] = conversation_title(self.database.connection, conversation)
         context: dict[str, Any] | None = None
@@ -1757,6 +1775,13 @@ class ConversationService:
         因此刷新页面或重复点击不会产生第二条 AI 任务。
         """
         self.owned_conversation(identity_id, conversation_id)
+        from .coach_conversation import mapped
+        coach = mapped(self, identity_id, conversation_id)
+        if coach:
+            if (search and search.get('mode','off') != 'off' or source_scope and source_scope.get('mode','unspecified') != 'unspecified'
+                    or source_scope and any(source_scope.get(k) for k in ('version_ids','image_version_ids','knowledge_base'))
+                    or attachment_version_ids or help_request or teaching_mode or teaching_action):
+                raise ConversationError('教练对话当前只使用最小摘要；资料、搜索和任务教学请在原任务入口处理')
         text = content.strip()
         if not text:
             raise ConversationError("消息内容不能为空")
@@ -1788,8 +1813,8 @@ class ConversationService:
             except DomainError as error:
                 raise ConversationConflict(error.code) from error
 
-        teaching_default = self.default_teaching_mode(identity_id, original_snapshot)
-        adaptive_profile = self.adaptive_profile(identity_id, original_snapshot)
+        teaching_default = self.default_teaching_mode(identity_id, original_snapshot) if not coach else None
+        adaptive_profile = self.adaptive_profile(identity_id, original_snapshot) if not coach else None
 
         # 冻结本次运行使用的配置；提交后不再二次读取可变的 provider 状态。
         profile, config, config_snapshot = self.runtime_for_conversation(
@@ -1933,18 +1958,21 @@ class ConversationService:
                 # Teaching checkpoints can refer to an earlier step even when
                 # the ordinary text context is trimmed. Retain that dependency
                 # for source clearing, without copying older user content.
-                config_snapshot['source_history_message_ids'] = [item['id'] for item in teaching_path]
+                config_snapshot['source_history_message_ids'] = [item['id'] for item in (history_items if coach else teaching_path)]
                 from .teaching_runtime import freeze as freeze_teaching
                 from .coach_signals import context as coach_context
                 teaching_output = self.teaching_output(identity_id, profile, config,
                     search=search_run.selection if search_run else None, scope=frozen)
                 if teaching_action and teaching_output['format'] == 'plain':
                     raise ConversationError('当前模型尚不能记录教学活动，请在设置中检查教学记录支持；普通聊天可继续')
-                config_snapshot['teaching'] = freeze_teaching(
-                    [item for item in teaching_path if item['role'] == 'assistant'],
-                    answer_id=assistant_message_id, message_id=user_message_id,
-                    kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output, adaptive_profile=adaptive_profile,
-                    coach_context=coach_context(self.materials.db.connection,identity_id,'conversation',conversation_id) if self.materials else None)
+                if coach:
+                    config_snapshot['coach'] = self.coach_conversations.freeze(identity_id, context, teaching_output)
+                else:
+                    config_snapshot['teaching'] = freeze_teaching(
+                        [item for item in teaching_path if item['role'] == 'assistant'],
+                        answer_id=assistant_message_id, message_id=user_message_id,
+                        kind='conversation', scope_id=conversation_id, requested_mode=teaching_mode, help_kind=help_request, action=teaching_action, default_mode=teaching_default, output=teaching_output, adaptive_profile=adaptive_profile,
+                        coach_context=coach_context(self.materials.db.connection,identity_id,'conversation',conversation_id) if self.materials else None)
                 # Append-only run lineage: retries have no new user message. The
                 # original unique request-message link remains unchanged.
                 config_snapshot["reply"] = dict(schema_version=1, question_id=user_message_id,
@@ -2148,6 +2176,7 @@ class ConversationService:
         teaching_proposal: dict | None = None,
         teaching_not_applied_reason: str | None = None,
         teaching_reply_start: int = 0,
+        coach_proposal: dict | None = None,
     ) -> str | None:
         """收敛运行记录与助手消息。已经是终态的运行不会被再次改写。"""
         if status not in {"succeeded", "failed", "canceled"}:
@@ -2164,6 +2193,12 @@ class ConversationService:
             if row["status"] not in {"queued", "running"}:
                 return str(row["status"])
             snapshot = json.loads(row['config_snapshot_json'] or '{}')
+            if snapshot.get('coach') and self.coach_conversations:
+                owner = connection.execute('SELECT identity_id FROM ai_run WHERE id=?',(run_id,)).fetchone()[0]
+                self.coach_conversations.check(owner, row['conversation_id'], snapshot)
+                if status == 'succeeded':
+                    self.coach_conversations.finish(owner, row['conversation_id'], snapshot['coach'], coach_proposal)
+                    connection.execute('UPDATE ai_run SET config_snapshot_json=? WHERE id=?',(json.dumps(snapshot,ensure_ascii=False),run_id))
             if status == 'succeeded' and snapshot.get('teaching'):
                 from .teaching_runtime import adopt as adopt_teaching
                 user = connection.execute('SELECT content FROM message WHERE id=? AND conversation_id=?',

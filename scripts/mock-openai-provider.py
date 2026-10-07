@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import threading
 import time
 from collections import Counter
@@ -196,6 +197,9 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
+        if payload.get('stream') is True and any('你是学海无涯的学习教练' in str(m.get('content','')) for m in payload.get('messages',[])):
+            self._coach_chat(payload,model)
+            return
         coach_prompt = any(message.get('role') == 'system' and '为Nautilus用户作一次后台学习复盘' in str(message.get('content', ''))
                           for message in payload.get('messages', []))
         if coach_prompt:
@@ -702,6 +706,34 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             STATE.disconnected(scenario)
         finally:
             self.close_connection = True
+
+    def _coach_chat(self,payload,model):
+        STATE.requested('coach-chat:'+model)
+        if model=='mock-error':
+            self._json(401,{'error':{'message':'Synthetic coach chat rejection'}})
+            return
+        system=str(payload['messages'][0].get('content',''))
+        question=next((str(m.get('content','')) for m in reversed(payload['messages']) if m.get('role')=='user'),'')
+        minutes=re.search(r'(\d+)\s*分钟',question)
+        reply=('今天只有'+minutes[1]+'分钟，就先做一个能结束的小步骤。' if minutes else '可以先从今天能完成的一小步开始。')
+        if any(word in question for word in ('拖延','精力','累')): reply+='精力不足时先打开当前任务，做一点再决定是否继续。'
+        else: reply+='先核对当前安排，再按你的可用时间选择。'
+        reply+='你可以从下面的任务或安排入口继续，正式开始仍由你确认。'
+        if payload.get('response_format'):
+            raw=system.split('当前最小摘要：',1)[-1]
+            inputs=json.JSONDecoder().raw_decode(raw)[0]
+            token=re.search(r'token必须为([^。]+)',system)[1]
+            reply=json.dumps({'reply':reply,'coach':{'actions':[a['id'] for a in inputs.get('actions',[])[:2]],'unknowns':[]},'token':token},ensure_ascii=False)
+        width=8 if model in {'mock-slow','mock-refresh'} else 30
+        self.send_response(200);self.send_header('Content-Type','text/event-stream; charset=utf-8');self.send_header('Cache-Control','no-cache');self.send_header('Connection','close');self.end_headers()
+        try:
+            for start in range(0,len(reply),width):
+                chunk=json.dumps({'choices':[{'delta':{'content':reply[start:start+width]}}]},ensure_ascii=False)
+                self.wfile.write(('data: '+chunk+'\n\n').encode());self.wfile.flush()
+                time.sleep(.2 if model in {'mock-slow','mock-refresh'} else .05)
+            self.wfile.write(b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');self.wfile.flush()
+        except (BrokenPipeError,ConnectionResetError): STATE.disconnected('coach-chat:'+model)
+        finally: self.close_connection=True
 
     def _read_json(self) -> dict[str, Any] | None:
         try:

@@ -2,6 +2,7 @@ import type { SearchSelection } from "./SearchControls";
 import type { SearchTrace } from "./SearchResults";
 import type { GenerationTrace } from "./AssistantResponse";
 import type { CoachAssignmentSignal } from './background-coach-api';
+import type { CoachMessageContext } from './coach-conversation-api';
 export type Health = {
   status: string;
   service: string;
@@ -580,6 +581,7 @@ export function changeAdaptiveLearning(payload: AdaptiveLearningChange, signal?:
 }
 
 export type AiMessage = {
+  coach?: CoachMessageContext | null;
   model_config?: ModelRunConfig | null;
   id: string;
   conversation_id: string;
@@ -731,6 +733,7 @@ export type AiStreamStartPayload = {
   reasoning_content: string;
   search_trace?: SearchTrace | null;
   generation_trace?: GenerationTrace | null;
+  coach?: CoachMessageContext | null;
 };
 
 export type AiStreamEvent =
@@ -740,11 +743,11 @@ export type AiStreamEvent =
   | { type: "process"; data: { run_id: string; message_id: string | null; trace: GenerationTrace } }
   | {
       type: "done";
-      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace" | "generation_trace">;
+      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace" | "generation_trace" | "coach">;
     }
   | {
       type: "error";
-      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace" | "generation_trace"> & {
+      data: Pick<AiStreamStartPayload, "run_id" | "message_id" | "status" | "content" | "reasoning_content" | "search_trace" | "generation_trace" | "coach"> & {
         kind: string | null;
         message: string;
       };
@@ -843,6 +846,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       parsed.kind ?? "request_error",
       response.status,
     );
+  }
+  if (path.startsWith('/api/learning/') && init?.method && !['GET', 'HEAD'].includes(init.method.toUpperCase()) && !path.startsWith('/api/learning/coach/')) {
+    window.dispatchEvent(new Event('nautilus:learning-state-changed'));
   }
   return body as T;
 }

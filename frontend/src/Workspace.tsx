@@ -14,9 +14,11 @@ import LearningRecords from "./LearningRecords";
 import { DelayedHomePanel } from "./DelayedFollowUp";
 import { CoachSourceBar } from './BackgroundCoach';
 import { coachHref } from './background-coach-api';
+import { COACH_SESSION_KEY, coachKey, openCoachConversation } from './coach-conversation-api';
+import CoachReminderHost from './CoachReminderHost';
 
 type WorkspaceView = "home" | "plans" | "records";
-type AiRoomEntry = { scope: AiContextScope; targetId: string | null; initialDraft?: string; learningBrief?: LearningRoomBrief };
+type AiRoomEntry = { coach?: boolean; scope: AiContextScope; targetId: string | null; initialDraft?: string; learningBrief?: LearningRoomBrief };
 const navigation = [
   { id: "home", label: "学习首页", icon: Compass },
   { id: "plans", label: "学习计划", icon: BookOpen },
@@ -44,6 +46,8 @@ function restoredV6Layout(): V6Layout {
 
 function restoredAiEntry(): AiRoomEntry | null {
   try {
+    const coach = JSON.parse(window.sessionStorage.getItem(COACH_SESSION_KEY) ?? "null") as { open?: boolean; initialDraft?: string } | null;
+    if (coach?.open === true) return { coach: true, scope: "global", targetId: null, ...(typeof coach.initialDraft === "string" ? { initialDraft: coach.initialDraft } : {}) };
     const raw = window.sessionStorage.getItem(AI_ROOM_SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
@@ -67,6 +71,9 @@ export default function Workspace({ health, identity, onLogout }: {
   const [view, setView] = useState<WorkspaceView>(restoredWorkspaceView);
   const [mode, setMode] = useState<"manage" | "ai">(() => restoredAiEntry() ? "ai" : "manage");
   const [aiEntry, setAiEntry] = useState<AiRoomEntry>(() => restoredAiEntry() ?? { scope: "independent", targetId: null });
+  const [coachOpening, setCoachOpening] = useState(false);
+  const coachOpenKey = useRef<string | null>(null);
+  const navigationEpoch = useRef(0), coachOpeningRef = useRef(false);
   const [aiProvider, setAiProvider] = useState<AiProvider | null>(null);
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
@@ -81,12 +88,14 @@ export default function Workspace({ health, identity, onLogout }: {
   const v6LayoutRef = useRef(v6Layout);
   useEffect(() => { v6LayoutRef.current = v6Layout; }, [v6Layout]);
   useEffect(() => { const openSearch = () => { setSettingsSection('search'); setSettingsOpen(true); }; window.addEventListener("nautilus:open-search-settings", openSearch); return () => window.removeEventListener("nautilus:open-search-settings", openSearch); }, []);
+  useEffect(() => { const openReminders = () => { setSettingsSection('reminders'); setSettingsOpen(true); }; window.addEventListener('nautilus:open-coach-reminder-settings', openReminders); return () => window.removeEventListener('nautilus:open-coach-reminder-settings', openReminders); }, []);
   useEffect(() => { const openCoach = () => { setSettingsSection('coach'); setSettingsOpen(true); }; window.addEventListener('nautilus:open-coach-settings', openCoach); return () => window.removeEventListener('nautilus:open-coach-settings', openCoach); }, []);
   useEffect(() => {
     const navigate = (event: Event) => {
       const detail = (event as CustomEvent<{ href?: string }>).detail;
       const href = coachHref(detail?.href);
       if (!href) return;
+      navigationEpoch.current++;
       closeStoredRoom();
       window.history.pushState({}, '', href);
       setView(restoredWorkspaceView()); setMode('manage'); setCreation(null); setPageKey(key => key + 1);
@@ -96,7 +105,7 @@ export default function Workspace({ health, identity, onLogout }: {
   }, []);
   useEffect(() => { getAiProvider().then(result => setAiProvider(result.provider)).catch(reason => setError(reason.message)); }, []);
   useEffect(() => {
-    const pop = () => { closeStoredRoom(); setView(restoredWorkspaceView()); setMode("manage"); setCreation(null); setPageKey(key => key + 1); };
+    const pop = () => { navigationEpoch.current++; closeStoredRoom(); setView(restoredWorkspaceView()); setMode("manage"); setCreation(null); setPageKey(key => key + 1); };
     window.addEventListener("popstate", pop);
     return () => window.removeEventListener("popstate", pop);
   }, []);
@@ -137,6 +146,7 @@ export default function Workspace({ health, identity, onLogout }: {
 
 
   function chooseView(next: WorkspaceView, params: Record<string, string> = {}) {
+    navigationEpoch.current++;
     closeStoredRoom();
     setView(next); setMode("manage"); setCreation(null); setPageKey(key => key + 1);
     if (window.matchMedia("(max-width: 760px)").matches) persistV6Layout({ ...v6Layout, collapsed: false });
@@ -148,10 +158,27 @@ export default function Workspace({ health, identity, onLogout }: {
   function openRecord(id: string, verificationId?: string | null) {
     chooseView("records", { record: id, ...(verificationId ? { verification: verificationId } : {}) });
   }
+  useEffect(() => { const open = () => { void openCoach(); }; window.addEventListener('nautilus:open-coach-room', open); return () => window.removeEventListener('nautilus:open-coach-room', open); });
+  async function openCoach(initialDraft?: string) {
+    if (coachOpeningRef.current) return;
+    coachOpeningRef.current = true;
+    const epoch = ++navigationEpoch.current;
+    setCoachOpening(true); setError(''); coachOpenKey.current ??= coachKey();
+    try {
+      const detail = await openCoachConversation(coachOpenKey.current);
+      if (navigationEpoch.current !== epoch) return;
+      closeStoredRoom();
+      try { window.sessionStorage.setItem(COACH_SESSION_KEY, JSON.stringify({ contextScope: 'global', targetId: null, conversationId: detail.conversation.id, runId: detail.active_run?.id ?? null, initialDraft: initialDraft ?? null, open: true })); } catch { /* History remains persisted on the service. */ }
+      coachOpenKey.current = null; setCompanionDrawerOpen(false); setAiEntry({ coach: true, scope: 'global', targetId: null, initialDraft }); setMode('ai');
+    } catch (reason) { if (navigationEpoch.current === epoch) setError(reason instanceof Error ? reason.message : '无法打开学习教练，请重试。'); }
+    finally { coachOpeningRef.current = false; setCoachOpening(false); }
+  }
   function openRoom(initialDraft: string, learningBrief?: LearningRoomBrief) {
     openAiEntry({ scope: "independent", targetId: null, initialDraft, learningBrief });
   }
   function openAiEntry(entry: AiRoomEntry) {
+    navigationEpoch.current++;
+    closeStoredRoom();
     try {
       const raw = window.sessionStorage.getItem(AI_ROOM_SESSION_KEY);
       const previous = raw ? JSON.parse(raw) as Record<string, unknown> : {};
@@ -177,7 +204,7 @@ export default function Workspace({ health, identity, onLogout }: {
   }
 
 
-  function closeAiLearning() { closeStoredRoom(); setMode("manage"); setCreation(null); setPageKey(key => key + 1); }
+  function closeAiLearning() { navigationEpoch.current++; closeStoredRoom(); setMode("manage"); setCreation(null); setPageKey(key => key + 1); }
   const workspaceStyle = { "--v6-rail-width": `${v6Layout.collapsed ? 58 : v6Layout.rail}px`, "--v6-companion-width": `${v6Layout.companion}px` } as CSSProperties;
   return <main className={`app-shell v6-workspace${v6Layout.collapsed ? " is-rail-collapsed" : ""}${!companionExpanded ? " is-companion-collapsed" : ""}${mode === "ai" ? " is-ai-mode" : ""}`} style={workspaceStyle}>
     {mode === "manage" && <>
@@ -195,13 +222,13 @@ export default function Workspace({ health, identity, onLogout }: {
       <header className="app-header">
         <div className="brand-lockup">
           {mode === "manage" && <button className="v6-mobile-nav-toggle" type="button" onClick={() => persistV6Layout({ ...v6Layout, collapsed: !v6Layout.collapsed })} aria-label={v6Layout.collapsed ? "关闭导航" : "打开导航"}><Menu size={17} /></button>}
-          <span className="v6-coordinate">{mode === "ai" ? "学习室" : navigation.find(item => item.id === view)?.label}</span>
+          <span className="v6-coordinate">{mode === "ai" ? aiEntry.coach ? "学习教练" : "学习室" : navigation.find(item => item.id === view)?.label}</span>
         </div>
         <div className="workspace-actions">
           {mode === "manage" && <>
             <button className="icon-button" type="button" onClick={() => openRoom("")} aria-label="学习室" title="学习室"><MessageSquareText size={17} /></button>
-            <button className="icon-button v6-companion-toggle" type="button" onClick={() => setCompanionExpanded(!companionExpanded)} aria-expanded={companionExpanded} aria-label={companionExpanded ? "收起 AI 学习伙伴" : "打开 AI 学习伙伴"}><Bot size={17} /></button>
-            <button className="icon-button v6-compact-companion-trigger" type="button" onClick={() => setCompanionDrawerOpen(true)} aria-label="打开 AI 学习伙伴"><Bot size={17} /></button>
+            <button className="icon-button v6-companion-toggle" type="button" onClick={() => setCompanionExpanded(!companionExpanded)} aria-expanded={companionExpanded} aria-label={companionExpanded ? "收起学习教练" : "打开学习教练"}><Bot size={17} /></button>
+            <button className="icon-button v6-compact-companion-trigger" type="button" onClick={() => setCompanionDrawerOpen(true)} aria-label="打开学习教练"><Bot size={17} /></button>
           </>}
           <button className="icon-button" type="button" onClick={() => { setSettingsSection('general'); setSettingsOpen(true); }} title="设置" aria-label="设置"><Settings2 size={18} /></button>
           <button className="icon-button" onClick={onLogout} title="退出会话" aria-label="退出会话"><LogOut size={18} /></button>
@@ -209,8 +236,8 @@ export default function Workspace({ health, identity, onLogout }: {
       </header>
       {error && <div className="workspace-alert" role="alert">{error}</div>}
       {mode === 'manage' && <CoachSourceBar key={`coach-source-${pageKey}`} />}
-      {mode === "ai" ? <AiLearningRoom task={null} contextScope={aiEntry.scope} targetId={aiEntry.targetId} initialDraft={aiEntry.initialDraft} learningBrief={aiEntry.learningBrief} provider={aiProvider} onBack={closeAiLearning} onProviderOpen={() => setProviderDialogOpen(true)} />
-        : view === "home" ? <><DelayedHomePanel key={`delayed-${pageKey}`} /><FactWorkspace key={pageKey} creation={creation} onOpenPlans={id => chooseView("plans", id ? { plan: id } : {})} onOpenRecord={openRecord} onOpenLearningRoom={openRoom} /></>
+      {mode === "ai" ? <AiLearningRoom key={aiEntry.coach ? "coach" : "learning"} coachMode={aiEntry.coach} task={null} contextScope={aiEntry.scope} targetId={aiEntry.targetId} initialDraft={aiEntry.initialDraft} learningBrief={aiEntry.learningBrief} provider={aiProvider} onBack={closeAiLearning} onProviderOpen={() => setProviderDialogOpen(true)} />
+        : view === "home" ? <><DelayedHomePanel key={`delayed-${pageKey}`} /><FactWorkspace key={pageKey} creation={creation} onOpenPlans={id => chooseView("plans", id ? { plan: id } : {})} onOpenRecord={openRecord} onOpenLearningRoom={openRoom} onOpenCoach={draft => void openCoach(draft)} coachOpening={coachOpening} /></>
         : view === "plans" ? <LearningPlans key={pageKey} onCreate={create} onOpenRecord={openRecord} onLearning={brief => openRoom("", brief)} />
         : <LearningRecords key={pageKey} onClose={() => chooseView("home")} onLearning={brief => openRoom("", brief)} />}
       <Settings open={settingsOpen} section={settingsSection} provider={aiProvider} onClose={() => setSettingsOpen(false)} onOpenSearchSettings={() => setSearchSettingsOpen(true)} onOpenProviderSettings={() => setProviderDialogOpen(true)} />
@@ -218,10 +245,11 @@ export default function Workspace({ health, identity, onLogout }: {
       <AiProviderDialog open={providerDialogOpen} provider={aiProvider} onClose={() => setProviderDialogOpen(false)} onChanged={provider => { setAiProvider(provider); window.dispatchEvent(new Event('nautilus:model-settings-changed')); }} />
     </section>
     {mode === "manage" && <>
-      <div className="v6-resizer v6-resizer--companion" role="separator" aria-label="调整 AI 伙伴栏宽度" onPointerDown={event => resizeColumn("companion", event)} />
-      <AiCompanionPanel provider={aiProvider} onOpenLearning={() => openRoom("")} onOpenProvider={() => setProviderDialogOpen(true)} />
+      <div className="v6-resizer v6-resizer--companion" role="separator" aria-label="调整学习教练栏宽度" onPointerDown={event => resizeColumn("companion", event)} />
+      <AiCompanionPanel provider={aiProvider} onOpenCoach={draft => void openCoach(draft)} opening={coachOpening} onOpenProvider={() => setProviderDialogOpen(true)} />
     </>}
-    {mode === "manage" && companionDrawerOpen && <DialogPortal><div className="v6-companion-drawer-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setCompanionDrawerOpen(false); }}><section className="v6-companion-drawer" role="dialog" aria-modal="true" aria-label="AI 学习伙伴抽屉"><button className="icon-button v6-companion-drawer-close" type="button" onClick={() => setCompanionDrawerOpen(false)} aria-label="关闭 AI 学习伙伴"><X size={17} /></button><AiCompanionPanel provider={aiProvider} onOpenLearning={() => { setCompanionDrawerOpen(false); openRoom(""); }} onOpenProvider={() => { setCompanionDrawerOpen(false); setProviderDialogOpen(true); }} /></section></div></DialogPortal>}
+    {mode === "manage" && companionDrawerOpen && <DialogPortal><div className="v6-companion-drawer-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setCompanionDrawerOpen(false); }}><section className="v6-companion-drawer" role="dialog" aria-modal="true" aria-label="学习教练抽屉"><button className="icon-button v6-companion-drawer-close" type="button" onClick={() => setCompanionDrawerOpen(false)} aria-label="关闭学习教练"><X size={17} /></button><AiCompanionPanel provider={aiProvider} onOpenCoach={draft => void openCoach(draft)} opening={coachOpening} onOpenProvider={() => { setCompanionDrawerOpen(false); setProviderDialogOpen(true); }} /></section></div></DialogPortal>}
+    <CoachReminderHost />
     <Diagnostics key={identity?.id ?? "local"} />
   </main>;
 }
@@ -233,7 +261,9 @@ function restoredWorkspaceView(): WorkspaceView {
 }
 function closeStoredRoom() {
   try {
-    const raw = window.sessionStorage.getItem(AI_ROOM_SESSION_KEY);
-    if (raw) window.sessionStorage.setItem(AI_ROOM_SESSION_KEY, JSON.stringify({ ...JSON.parse(raw), open: false }));
+    for (const key of [AI_ROOM_SESSION_KEY, COACH_SESSION_KEY]) {
+      const raw = window.sessionStorage.getItem(key);
+      if (raw) window.sessionStorage.setItem(key, JSON.stringify({ ...JSON.parse(raw), open: false }));
+    }
   } catch { /* Navigation remains usable without browser storage. */ }
 }

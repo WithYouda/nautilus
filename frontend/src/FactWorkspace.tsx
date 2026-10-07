@@ -58,6 +58,7 @@ import ReturnReviewCard from "./ReturnReviewCard";
 import LearningPageHeader from "./LearningPageHeader";
 import PurgeStatus from "./PurgeStatus";
 import BackgroundCoach from './BackgroundCoach';
+import { CoachHomeEntry } from './CoachConversation';
 
 type FactOperation =
   | "action"
@@ -158,10 +159,12 @@ type FactWorkspaceProps = {
   creation?: { planId?: string } | null;
   onOpenPlans: (id?: string) => void;
   onOpenRecord: (id: string, verificationId?: string | null) => void;
+  onOpenCoach?: (draft?: string) => void;
+  coachOpening?: boolean;
   onOpenLearningRoom?: (initialDraft: string, brief: LearningRoomBrief) => void;
 };
 
-export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onOpenLearningRoom }: FactWorkspaceProps) {
+export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onOpenLearningRoom, onOpenCoach, coachOpening }: FactWorkspaceProps) {
   const [returnCard, setReturnCard] = useState<ReturnReview | null>(null);
   const [newSetup, setNewSetup] = useState(Boolean(creation));
   const [setupPlanId, setSetupPlanId] = useState<string | undefined>(creation?.planId);
@@ -1069,6 +1072,7 @@ export default function FactWorkspace({ creation, onOpenPlans, onOpenRecord, onO
         {returnCard && !newSetup && <button className="button button--accent" type="button" onClick={() => beginSetup()}>创建</button>}
         {newSetup && <button className="button button--quiet" type="button" disabled={busy} onClick={() => { setNewSetup(false); setSetupPlanId(undefined); setSetupDraft(null); setSetupReviewId(undefined); setNotice(''); }}>返回首页</button>}
       </LearningPageHeader>
+      {!newSetup && onOpenCoach && <CoachHomeEntry onOpen={onOpenCoach} opening={coachOpening} />}
       {!newSetup && <BackgroundCoach />}
 
       {error && <div className="workspace-alert" role="alert">{error}</div>}

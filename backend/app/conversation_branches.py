@@ -36,6 +36,9 @@ def branch_metadata(service, owner, conversation_id):
 
 @material_guard
 def create_branch(self, identity_id, conversation_id, message_id, request_key):
+    from .coach_conversation import mapped
+    if mapped(self, identity_id, conversation_id):
+        raise ConversationConflict('教练对话暂不支持复制到新分支，可在当前对话编辑或重新回答')
     branch_id = str(uuid5(NAMESPACE_URL, f'nautilus:branch:{identity_id}:{conversation_id}:{request_key}'))
     now = _now()
     with self.database.transaction() as c:

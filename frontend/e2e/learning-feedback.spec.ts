@@ -75,7 +75,7 @@ test('one start flow, streamed math, actionable verification retry and math ques
   await expect(page.locator('.verification-question .katex')).toHaveCount(5);
   // Real wheel input must reach both ends without Playwright auto-scrolling a
   // clicked field into view (which can mask overflow:hidden ancestors).
-  const verificationScroll = page.locator('.verification-page').locator('..');
+  const verificationScroll = page.locator('.verification-page:visible').locator('..');
   for (const viewport of [{ width: 390, height: 844 }, { width: 1024, height: 640 }, { width: 1440, height: 1000 }]) {
     await page.setViewportSize(viewport);
     await page.mouse.move(viewport.width / 2, 180);

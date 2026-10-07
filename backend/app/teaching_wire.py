@@ -78,7 +78,7 @@ ENVELOPE_SCHEMA = _object({
 def output_kind(messages: list[dict[str, Any]]) -> str:
     """Only the newest runtime message can select the current output format."""
     for message in reversed(messages):
-        if message.get("_teaching_runtime") is True:
+        if message.get("_teaching_runtime") is True or message.get('_coach_runtime') is True:
             return 'json' if message.get("_teaching_output") == "json" else 'legacy'
     return 'plain'
 
@@ -99,6 +99,11 @@ def apply_json_output(payload: dict[str, Any], kind: str,
     elif kind == "google":
         payload.setdefault("generationConfig", {})["responseMimeType"] = "application/json"
     elif kind == "anthropic":
+        schema = ENVELOPE_SCHEMA
+        if any(m.get('_coach_runtime') is True for m in messages):
+            schema = _object({'reply':{'type':'string'}, 'coach':_object({
+                'actions':{'type':'array','items':{'type':'string'}},
+                'unknowns':{'type':'array','items':{'type':'string'}}}), 'token':{'type':'string'}})
         payload.setdefault("output_config", {})["format"] = {
-            "type": "json_schema", "schema": copy.deepcopy(ENVELOPE_SCHEMA),
+            "type": "json_schema", "schema": copy.deepcopy(schema),
         }

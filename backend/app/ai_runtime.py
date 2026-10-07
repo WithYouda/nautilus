@@ -58,6 +58,7 @@ class RunState:
     generation_trace: dict | None = None
     recorder: GenerationRecorder | None = None
     teaching_stream: Any = None
+    coach_stream: Any = None
 
     @property
     def text(self) -> str:
@@ -148,6 +149,11 @@ class AiRunManager:
                 prepared["history"], prepared["context"],
                 search_enabled=bool(prepared.get("search_run") and prepared["search_run"].selection["mode"] != "off"),
             )
+            coach = json.loads(run.get('config_snapshot_json') or '{}').get('coach')
+            if coach:
+                from .coach_conversation import coach_prompt, CoachStream
+                messages = coach_prompt(prepared['history'],prepared['context'],coach)
+                state.coach_stream = CoachStream(coach)
             if prepared.get("material_prompt"):
                 messages[0]["content"] += "\n" + prepared["material_prompt"]
             from .help_records import HELP_PROMPTS
@@ -229,6 +235,9 @@ class AiRunManager:
                     def check_request():
                         if not active():
                             raise asyncio.CancelledError()
+                        if state.coach_stream:
+                            snapshot=json.loads(self.conversations.owned_run(state.identity_id,state.run_id)['config_snapshot_json'])
+                            self.conversations.coach_conversations.check(state.identity_id,state.conversation_id,snapshot,sending=True)
                         check_image_sources(self.conversations.materials, {'id': state.identity_id},
                             'conversation', state.conversation_id, frozen_scope)
                         if knowledge:
@@ -243,7 +252,7 @@ class AiRunManager:
                             strict_only=bool(frozen_scope and frozen_scope['mode'] == 'only' and knowledge))
                     else:
                         stream = provider.stream_chat(messages)
-                    chunks = state.teaching_stream.filter(stream) if state.teaching_stream else stream
+                    chunks = state.coach_stream.filter(stream) if state.coach_stream else state.teaching_stream.filter(stream) if state.teaching_stream else stream
                     async for chunk in chunks:
                         if state.cancel_requested:
                             break
@@ -482,6 +491,7 @@ class AiRunManager:
                 reasoning_content=state.reasoning_text,
                 error_kind=kind,
                 error_message=message,
+                **({'coach_proposal':state.coach_stream.proposal()} if state.coach_stream and status=='succeeded' else {}),
                 **(state.teaching_stream.outcome()
                    if state.teaching_stream and status == 'succeeded' else {}),
             )
@@ -567,6 +577,7 @@ class AiRunManager:
             state.generation_trace = None
             state.recorder = None
             state.teaching_stream = None
+            state.coach_stream = None
             state.error_kind = state.error_message = None
             if state.task and not state.task.done():
                 state.task.cancel()
@@ -606,6 +617,7 @@ class AiRunManager:
                     "reasoning_content": state.reasoning_text,
                     "search_trace": state.search_trace,
                     "generation_trace": state.generation_trace,
+                    **self._coach_payload(state.run_id),
                 },
             )
             if not finished:
@@ -639,6 +651,15 @@ class AiRunManager:
             # 浏览器断开只是退订，不影响后台生成继续跑完。
             state.subscribers.discard(queue)
 
+    def _coach_payload(self, run_id):
+        if not self.conversations.coach_conversations:
+            return {}
+        row=self.conversations.database.fetchone('SELECT identity_id,conversation_id,config_snapshot_json FROM ai_run WHERE id=?',(run_id,))
+        if not row: return {}
+        frozen=json.loads(row['config_snapshot_json'] or '{}').get('coach')
+        if not frozen: return {}
+        return {'coach':self.conversations.coach_conversations.public(row['identity_id'],row['conversation_id'],frozen)}
+
     def _final_frame(self, state: RunState) -> str:
         if state.status == "failed":
             return sse_event(
@@ -665,6 +686,7 @@ class AiRunManager:
                 "reasoning_content": state.reasoning_text,
                 "search_trace": state.search_trace,
                 "generation_trace": state.generation_trace,
+                **self._coach_payload(state.run_id),
             },
         )
 
@@ -702,6 +724,7 @@ class AiRunManager:
                 "reasoning_content": reasoning_content,
                 "search_trace": search_trace,
                 "generation_trace": generation_trace,
+                **self._coach_payload(run['id']),
             },
         )
         if status in {"queued", "running"}:
@@ -755,6 +778,7 @@ class AiRunManager:
                 "reasoning_content": reasoning_content,
                 "search_trace": search_trace,
                 "generation_trace": generation_trace,
+                **self._coach_payload(run['id']),
             },
         )
 

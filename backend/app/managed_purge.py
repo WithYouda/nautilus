@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from contextlib import closing
+from contextlib import closing, nullcontext
 
 from .learning_domain import DomainError
 from .learning_production import file_sha256, utc_timestamp, validate_learning_path
@@ -60,6 +60,18 @@ def scrub_snapshot(path, owner, kind, object_id, now, submission_ids=(), artifac
         # mode removes old rollback-journal payloads after the scrub commits.
         if not columns(connection, 'learning_raw_artifact'):
             if columns(connection, 'ai_run') and columns(connection, 'conversation'):
+                if kind=='plan_content':
+                    from .coach_conversation_purge import erase_ordinary,affected
+                    if not affected(connection,owner,plan_id=object_id):
+                        return
+                    with connection:
+                        erase_ordinary(connection,owner,now,plan_id=object_id)
+                    compact(connection)
+                    manifest_path=path.with_suffix('.json')
+                    if manifest_path.exists():
+                        manifest=json.loads(manifest_path.read_text())
+                        manifest.update(sha256=file_sha256(path),content_erased_at=now)
+                        write_json(manifest_path,manifest)
                 # Material erasure registers both databases. These learning-only
                 # object kinds have no ordinary-chat copies in their contracts;
                 # material erasure itself uses the dedicated cross-DB scrubber.
@@ -110,7 +122,8 @@ class ManagedPurge:
         owner = self._owner(identity, kind, object_id)
         principal = self.learning.principal(identity)
         report_path = receipt_path(self.path, owner, kind, object_id)
-        with storage_lock(self.path), self.db._lock:
+        coach=getattr(self.learning,'coach_conversations',None)
+        with (coach.lock if coach and kind=='plan_content' else nullcontext()), storage_lock(self.path), self.db._lock:
             rows = self.db.fetchall('SELECT id,artifact_id FROM learning_verification_submission WHERE owner_id=? AND '
                 + ('artifact_id=?' if kind == 'artifact' else 'verification_id=?'), (owner, object_id)) if kind in {'artifact', 'verification'} else []
             submissions = [row['id'] for row in rows]
@@ -118,6 +131,8 @@ class ManagedPurge:
             previous_report = json.loads(report_path.read_text()) if report_path.exists() else None
             report = dict(owner=owner, kind=kind, object_id=object_id, status='pending',
                           submission_ids=submissions, artifact_ids=artifacts, files=[], external_limits=EXTERNAL_LIMITS, updated_at=utc_timestamp())
+            if previous_report and previous_report.get('coach_run_ids'):
+                report['coach_run_ids']=previous_report['coach_run_ids']
             # Intent is durable BEFORE erasure. A process interruption remains
             # visibly unfinished, and the same object can safely be retried.
             write_json(report_path, report)
@@ -133,6 +148,13 @@ class ManagedPurge:
                 else:
                     report_path.unlink()
                 raise
+            try:
+                coach=getattr(self.learning,'coach_conversations',None)
+                if kind=='plan_content' and coach:
+                    coach.purge.plan_dependencies(owner,object_id,report)
+                    report['files'].append(dict(name='教练来源普通库及日志',status='cleared'))
+            except (sqlite3.Error,ValueError,OSError):
+                report['files'].append(dict(name='教练来源普通库及日志',status='failed',reason='尚未确认清除，请重试。'))
             try:
                 with self.db.transaction(immediate=True) as connection:
                     erase(connection, owner, kind, object_id, report['updated_at'], submission_ids=submissions, artifact_ids=artifacts)
