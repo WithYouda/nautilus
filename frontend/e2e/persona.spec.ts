@@ -10,9 +10,12 @@ test('persona preview, confirmed versions, restore, export/import and actual coa
   const section = page.getByRole('region', { name: '人格设置', exact: true });
   await section.getByRole('button', { name: '新建人格', exact: true }).click();
   await section.getByLabel('人格名称', { exact: true }).fill('合成温和导师');
-  await section.getByLabel('人格描述', { exact: true }).fill('温和直接，称呼我同学，鼓励我先做一个小步骤。');
-  await section.getByRole('button', { name: '生成风格预览', exact: true }).click();
+  await section.getByLabel('人格描述', { exact: true }).fill('你的名字叫合成角色，温和直接，称呼我同学；专业场景减少语气词。');
+  await section.getByRole('button', { name: '生成人格预览', exact: true }).click();
   await expect(section.getByLabel('人格预览')).toContainText('说话示例');
+  await expect(section.getByLabel('人格预览')).toContainText('角色自称：合成角色');
+  await expect(section.getByLabel('人格预览')).toContainText('专业场景减少语气词');
+  await expect(section.getByText('请先修改这些要求：')).toHaveCount(0);
   expect((await (await page.request.get('/api/personas')).json()).active_id).toBeNull();
   await page.setViewportSize({ width: 390, height: 900 });
   await section.getByLabel('人格预览').scrollIntoViewIfNeeded();
@@ -24,7 +27,7 @@ test('persona preview, confirmed versions, restore, export/import and actual coa
   const originalId = state.active_id;
   await section.getByRole('button', { name: '编辑', exact: true }).click();
   await section.getByLabel('人格名称', { exact: true }).fill('合成第二版导师');
-  await section.getByRole('button', { name: '生成风格预览', exact: true }).click();
+  await section.getByRole('button', { name: '生成人格预览', exact: true }).click();
   await section.getByRole('button', { name: '确认并启用', exact: true }).click();
   await expect(section.getByRole('status')).toContainText('人格已启用');
   await section.getByText('人格详情与历史', { exact: true }).click();
@@ -37,7 +40,7 @@ test('persona preview, confirmed versions, restore, export/import and actual coa
   await section.getByRole('button', { name: '导出当前人格', exact: true }).click();
   await (await download).saveAs('/tmp/nautilus-persona-test-export.json');
   await section.getByRole('button', { name: '停用', exact: true }).click();
-  await expect(section.locator('.persona-current')).toContainText('默认风格');
+  await expect(section.locator('.persona-current')).toContainText('未启用人格');
   await section.getByLabel('导入人格文件', { exact: true }).setInputFiles('/tmp/nautilus-persona-test-export.json');
   await section.getByRole('button', { name: '确认并启用', exact: true }).click();
   await expect(section.getByRole('status')).toContainText('人格已启用');

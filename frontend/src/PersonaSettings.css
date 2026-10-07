@@ -8,3 +8,5 @@
 .persona-settings details{margin-top:12px}.persona-version{border-top:1px solid var(--border,#d8d0c3);padding-top:8px}
 .persona-description{white-space:pre-wrap;overflow-wrap:anywhere}.persona-file{display:none}
 @media(max-width:480px){.persona-choice{align-items:stretch}.persona-choice .field{min-width:0;flex-basis:100%}.persona-preview{padding-right:0}}
+
+.persona-style ul{margin:6px 0;padding-left:20px;font-size:13px;line-height:1.7}.persona-style li+li{margin-top:5px}

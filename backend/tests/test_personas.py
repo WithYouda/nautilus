@@ -37,7 +37,8 @@ def persona_client(client):
         payload = json.loads(request.content); calls.append(payload)
         if payload.get('stream'):
             return httpx.Response(200, text='data: ' + json.dumps({'choices': [{'delta': {'content': '同学，先选一个能开始的小步骤。'}}]}, ensure_ascii=False) + '\n\ndata: [DONE]\n\n')
-        issues = ['人格不能自动确认学习完成。'] if '自动确认完成' in payload['messages'][-1]['content'] else []
+        description = json.loads(payload['messages'][-1]['content'])['description']
+        issues = [dict(kind='authority_change', quotes=['自动确认完成所有学习任务'], message='人格不能自动确认学习完成。')] if '自动确认完成所有学习任务' in description else []
         result = dict(style=STYLE, issues=issues, sample_reply='同学，今天先用20分钟完成一个小步骤就好。')
         return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps(result, ensure_ascii=False)}}]})
     transport = httpx.MockTransport(handler)
@@ -95,7 +96,7 @@ def test_actual_reply_applies_shared_persona_and_retry_keeps_frozen_version(pers
     first_snapshot = saved(client, first['id'])
     assert first_snapshot['persona'] == {'profile_id': state['active_id'], 'version': 1}
     prompt = json.dumps(next(call for call in reversed(calls) if call.get('stream'))['messages'], ensure_ascii=False)
-    assert PACKAGE['name'] in prompt and '鼓励先做一个小步骤' in prompt
+    assert PACKAGE['name'] not in prompt and '鼓励先做一个小步骤' in prompt
     assert PACKAGE['description'] not in prompt
     assert ('teaching' in first_snapshot) == (scope == 'teaching')
     state = confirm(client, {**PACKAGE, 'name': '合成新版本', 'style': {**STYLE, 'tone': 'direct'}}, state['active_id'])
@@ -124,8 +125,38 @@ async def test_question_discussion_uses_same_persona_without_changing_evaluation
     previous_result = service.records.detail(IDENTITY, original['id'])['result']
     answer = (await service.send(IDENTITY, identifier, '帮我理解', 'persona-answer'))['turns'][-1]
     assert answer['status'] == 'succeeded'
-    assert PACKAGE['name'] in json.dumps(provider.calls[-1][0]['messages'], ensure_ascii=False)
+    assert '鼓励先做一个小步骤' in json.dumps(provider.calls[-1][0]['messages'], ensure_ascii=False)
     snapshot = json.loads(learning_database.fetchone('SELECT provider_snapshot_json FROM learning_discussion_turn WHERE id=?', (answer['id'],))[0])
     assert snapshot['persona']['version'] == 1
     assert learning_database.fetchone('SELECT COUNT(*) FROM learning_event')[0] == before
     assert service.records.detail(IDENTITY, original['id'])['result'] == previous_result
+
+
+def test_archive_label_is_not_character_name_and_nonissues_do_not_block(persona_client):
+    client, identity, _ = persona_client
+    description = '角色叫微光，是数字世界的小精灵。日常表达活泼；专业场景语气词减少70%。'
+    observed = []
+    def handler(request):
+        payload = json.loads(request.content); observed.append(payload)
+        proposed = dict(style={**STYLE, 'character_name': '微光', 'identity': '数字世界的小精灵',
+            'scenario_rules': ['专业场景语气词减少70%，优先准确清晰']},
+            issues=['档案名与角色名不同。', '日常与专业场景存在张力，但可按场景处理。', '本次没有越权要求。',
+                dict(kind='authority_change', quotes=['原文中不存在的权限要求'], message='没有来源依据'),
+                dict(kind='naming_difference', quotes=['角色叫微光'], message='标签不是角色名')],
+            sample_reply='让我想想，先从一个小步骤开始。')
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps(proposed, ensure_ascii=False)}}]})
+    client.app.state.personas.transport = httpx.MockTransport(handler)
+    preview = post(client, '/previews', dict(name='99123', description=description, request_key='different-name'))
+    assert json.loads(observed[0]['messages'][-1]['content']) == {'description': description}
+    assert preview['package']['name'] == '99123'
+    assert preview['package']['style']['character_name'] == '微光'
+    assert preview['package']['style']['scenario_rules'] == ['专业场景语气词减少70%，优先准确清晰']
+    assert preview['issues'] == [] and preview['can_confirm']
+    state = post(client, '/changes', dict(action='confirm', expected_revision=0, request_key='confirm-distinct', preview_id=preview['preview_id']))
+    persona = client.app.state.personas
+    reference = persona.freeze(identity['id'])
+    assert reference['profile_id'] == state['active_id']
+    prompt = persona.add_prompt(identity['id'], [{'role': 'system', 'content': '既有任务规则'}], reference)[0]['content']
+    assert '99123' not in prompt and '微光' in prompt and '减少70%' in prompt
+    exported = client.get('/api/personas/' + state['active_id'] + '/export').json()
+    assert exported['name'] == '99123' and exported['style']['character_name'] == '微光'

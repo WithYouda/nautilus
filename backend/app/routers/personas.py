@@ -19,7 +19,7 @@ def error(exc):
     if isinstance(exc, PersonaError):
         raise HTTPException(exc.status, str(exc)) from None
     if isinstance(exc, ValidationError):
-        raise HTTPException(422, '人格文件或风格字段不正确。') from None
+        raise HTTPException(422, '人格文件或配置字段不正确。') from None
     if isinstance(exc, (ConversationError, ProviderError)):
         raise HTTPException(400, str(exc)) from None
     raise HTTPException(503, '人格配置暂时无法读取或保存。') from None

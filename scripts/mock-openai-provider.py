@@ -197,9 +197,9 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         model = str(payload.get("model", "mock-success"))
-        if any('把用户的人格描述整理成表达风格数据' in str(m.get('content','')) for m in payload.get('messages', [])):
+        if any('把用户的人格描述整理为人格档案' in str(m.get('content','')) for m in payload.get('messages', [])):
             STATE.requested('persona:' + model)
-            result = dict(style=dict(address='同学',tone='warm',phrasing='plain',detail='concise',reminders='gentle',traits=['鼓励先做一个小步骤']),
+            result = dict(style=dict(character_name='合成角色',identity='合成数字伙伴',scenario_rules=['专业场景减少语气词，保持准确'],address='同学',tone='warm',phrasing='plain',detail='concise',reminders='gentle',traits=['鼓励先做一个小步骤']),
                           issues=[],sample_reply='同学，今天先选一个20分钟内能开始的小步骤。')
             self._json(200, {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(result,ensure_ascii=False)}}]})
             return

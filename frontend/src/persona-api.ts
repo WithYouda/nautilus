@@ -1,6 +1,6 @@
 import { learningRequest } from './api';
 export { coachKey as personaKey } from './background-coach-api';
-export type PersonaStyle = { address: string; tone: 'neutral' | 'warm' | 'direct'; phrasing: 'plain' | 'lively' | 'formal'; detail: 'concise' | 'balanced' | 'detailed'; reminders: 'gentle' | 'direct' | 'neutral'; traits: string[] };
+export type PersonaStyle = { character_name?: string; identity?: string; scenario_rules?: string[]; address: string; tone: 'neutral' | 'warm' | 'direct'; phrasing: 'plain' | 'lively' | 'formal'; detail: 'concise' | 'balanced' | 'detailed'; reminders: 'gentle' | 'direct' | 'neutral'; traits: string[] };
 export type PersonaPackage = { format: 'nautilus.persona'; schema_version: 1; name: string; description: string; style: PersonaStyle };
 export type PersonaVersion = PersonaPackage & { version: number; created_at: string };
 export type PersonaProfile = { id: string; versions: PersonaVersion[] };
