@@ -308,16 +308,17 @@ class OpenAICompatibleProvider:
         self,
         messages: list[dict[str, Any]],
         *,
-        max_tokens: int = 48,
+        max_tokens: int | None = 48,
         json_mode: bool = False,
     ) -> str:
-        """执行一次短的非流式文本请求，用于标题等轻量后台任务。"""
+        """非流式文本请求；显式 None 表示不附加应用输出 token 上限。"""
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": encode_messages(messages, "openai_compatible"),
             "stream": False,
-            "max_tokens": max_tokens,
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         include_error_detail = not any(message.get("_images") for message in messages)
         if json_mode:
             payload["response_format"] = {"type": "json_object"}

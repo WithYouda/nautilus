@@ -18,6 +18,7 @@ class ComparisonProvider(RecordingProvider):
         except (ValueError, TypeError):
             sources = None
         if isinstance(sources, dict) and set(sources) == {'left', 'right'}:
+            assert 'max_tokens' not in payload and 'max_completion_tokens' not in payload
             self.comparison_input = sources
             refs = [dict(side=side, id=items[-1]['id'], quote=items[-1]['text'][:80]) for side, items in sources.items()]
             result = dict(cards=[] if getattr(self, 'empty_comparison', False) else [dict(topic='合成观点', relation='complement', conclusion='合成对比结论', references=refs)])
