@@ -44,7 +44,7 @@ def validated_candidates(items,inputs):
         if chosen is None: raise DomainError('coach_target_out_of_scope',422)
         if chosen['kind']=='permission_review':
             access=item['access_request']
-            if (not isinstance(access,dict) or set(access)!={'purpose','alternative'} or any(not isinstance(access[k],str) or not 1<=len(access[k])<=500 for k in ('purpose','alternative'))):
+            if (not isinstance(access,dict) or set(access)!={'purpose','alternative'} or any(not isinstance(access[k],str) or not access[k].strip() for k in ('purpose','alternative'))):
                 raise DomainError('coach_permission_purpose_required',422)
         elif item['access_request'] is not None: raise DomainError('coach_permission_out_of_scope',422)
         selected=[]

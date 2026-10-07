@@ -33,7 +33,7 @@ def adopt(frozen,proposal,user_text,result):
     value=proposal.get('assignment_signal') if isinstance(proposal,dict) else None
     if (not frozen.get('coach_context') or (frozen.get('output') or {}).get('format')!='json'
         or not isinstance(value,dict) or set(value)!={'kind','quote'} or value.get('kind') not in SIGNAL_KINDS
-        or not isinstance(value.get('quote'),str) or not 1<=len(value['quote'])<=500): return
+        or not isinstance(value.get('quote'),str) or not value['quote']): return
     start=user_text.find(value['quote'])
     if start<0: return
     if value['kind']=='repeated_blocker':

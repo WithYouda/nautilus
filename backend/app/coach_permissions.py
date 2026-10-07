@@ -28,7 +28,7 @@ def request_fields(c,owner,candidate_id):
         if valid_time and (row['grant_status']=='active' or pending):
             current=row['request_key']
             if row['grant_status']=='active': break
-    return dict(purpose=purpose[:1000],scope='learning_action',target_id=item['target']['action_id'],
+    return dict(purpose=purpose,scope='learning_action',target_id=item['target']['action_id'],
         content_granularity='full_text',ttl_seconds=300,alternative=request['alternative'],request_key=current or prefix+str(maximum+1))
 
 def approved(c,owner,ref,chats=None):

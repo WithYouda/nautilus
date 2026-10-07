@@ -530,7 +530,7 @@ class LearningArtifactCorrectRequest(BaseModel):
 
 
 class AgentPermissionRequestCreate(BaseModel):
-    purpose: str = Field(min_length=1, max_length=1000)
+    purpose: str = Field(min_length=1)
     target_id: str = Field(min_length=1, max_length=100)
     content_granularity: Literal["metadata", "full_text"] = "metadata"
     ttl_seconds: int = Field(default=300, ge=60, le=3600)
@@ -616,7 +616,7 @@ class DerivedStateRecalculateRequest(BaseModel):
 
 
 class EvidenceBatchReviewRequest(BaseModel):
-    claim_ids: list[str] = Field(min_length=1, max_length=100)
+    claim_ids: list[str] = Field(min_length=1)
     action: Literal["adopt", "question", "withdraw", "defer"]
     reason: str | None = Field(default=None)
     request_key: str = Field(min_length=1, max_length=200)

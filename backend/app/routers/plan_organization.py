@@ -50,7 +50,7 @@ class Placement(Revision):
 
 class Order(Revision):
     parent_module_id: str | None = Field(default=None,min_length=1,max_length=100)
-    children: list[ChildReference] = Field(max_length=10000)
+    children: list[ChildReference]
 
 class Task(TaskFields,Revision):
     pass
