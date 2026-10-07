@@ -76,3 +76,14 @@
 @media (max-width: 600px) { .branch-comparison { padding: 14px; } .branch-comparison-paths { grid-template-columns: 1fr; gap: 12px; } .branch-map-dialog-header span { display: none; } }
 .branch-map-merge-arrow { fill: var(--accent-dark); }
 .branch-map-node.is-merged { border-left: 3px solid var(--accent-dark); }
+.branch-map-compare { display: inline-flex; align-items: center; gap: 6px; }
+.branch-map-pickbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line-strong); font-size: 12px; }
+.branch-map-pickbar button { padding: 7px 12px; border: 1px solid var(--ink); background: var(--ink); color: var(--paper); cursor: pointer; }
+.branch-map-node.is-merge-selected { border-color: var(--accent-dark); outline: 2px solid var(--accent-dark); outline-offset: 2px; }
+.branch-map-node.is-merge-selected strong { padding-right: 20px; }
+.branch-map-pick-badge { position: absolute; right: 7px; top: 7px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: var(--paper); background: var(--accent-dark); font-size: 12px; }
+.branch-map-picked-source { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 14px; }
+.branch-map-picked-source span { overflow-wrap: anywhere; }
+.branch-map-picked-source button { border: 0; background: transparent; color: var(--accent-dark); text-decoration: underline; flex: 0 0 auto; cursor: pointer; }
+.branch-comparison-paths > div { min-width: 0; overflow-wrap: anywhere; }
+.branch-comparison-paths p { margin: 6px 0; }

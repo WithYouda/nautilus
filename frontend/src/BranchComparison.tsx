@@ -3,11 +3,10 @@ import { compareBranches, confirmBranchComparison, getComparisonSources, type Br
 import { ModelSummary } from './ModelControl';
 
 const relations = { same: '相同点', different: '差异', complement: '互补', open: '待核实' };
-export default function BranchComparison({ kind, nodes, onBack, onSaved, onBusy }: {
-  kind: 'conversation' | 'discussion'; nodes: BranchMapNode[];
+export default function BranchComparison({ kind, left, right, nodes, onBack, onSaved, onBusy }: {
+  kind: 'conversation' | 'discussion'; left: string; right: string; nodes: BranchMapNode[];
   onBack: () => void; onSaved: (id: string) => Promise<void>; onBusy: (busy: boolean) => void;
 }) {
-  const [left, setLeft] = useState(''), [right, setRight] = useState('');
   const [sources, setSources] = useState<BranchComparisonSource[]>([]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selection, setSelection] = useState<Record<string, boolean>>({});
@@ -21,7 +20,7 @@ export default function BranchComparison({ kind, nodes, onBack, onSaved, onBusy 
   useEffect(() => {
     let active = true;
     setPreview(null); setSources([]); setError(''); setSelection({}); setTexts({}); setSavedId('');
-    if (left && right && left !== right) getComparisonSources(kind, left, right).then(value => { if (active) setSources(value); })
+    if (left && right && left !== right) getComparisonSources(kind, left, right).then(value => { if (active) { setSources(value); void generate(); } })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : '分支暂时无法读取'); });
     return () => { active = false; };
   }, [kind, left, right]);
@@ -47,15 +46,11 @@ export default function BranchComparison({ kind, nodes, onBack, onSaved, onBusy 
   }
   const blocked = generating || saving;
   return <section className="branch-comparison" aria-label="分支比较">
-    <div className="branch-comparison-heading"><h3>合并对话</h3><button type="button" disabled={saving} onClick={onBack}>返回分支图</button></div>
-    <div className="branch-comparison-paths">{(['left', 'right'] as const).map(side => <label key={side}>
-      <span>{side === 'left' ? '来源一' : '来源二'}</span>
-      <select aria-label={side === 'left' ? '来源一' : '来源二'} value={side === 'left' ? left : right} disabled={blocked} onChange={event => (side === 'left' ? setLeft : setRight)(event.target.value)}>
-        <option value="" disabled>请选择一条对话</option>
-        {nodes.filter(node => node.available).map(node => <option key={node.id} value={node.id} disabled={node.id === (side === 'left' ? right : left)}>{node.title}</option>)}
-      </select>
-      {sources[side === 'left' ? 0 : 1] && <small>当前选中路径：{sources[side === 'left' ? 0 : 1].last_question}</small>}
-    </label>)}</div>
+    <div className="branch-comparison-heading"><h3>合并对话</h3><button type="button" disabled={saving} onClick={onBack}>返回图中选取</button></div>
+    <div className="branch-comparison-paths">{[left, right].map((id, index) => <div key={id}>
+      <span className="branch-map-muted">来源{index + 1}</span><p>{nodes.find(node => node.id === id)?.title ?? '所选对话'}</p>
+      {sources[index] && <small>当前选中路径：{sources[index].last_question}</small>}
+    </div>)}</div>
     <div className="branch-comparison-actions"><button type="button" disabled={blocked || sources.length !== 2} onClick={() => void generate()}>{preview ? '重新整理' : '整理合并内容'}</button>
       {generating && <><span role="status">正在比较…</span><button type="button" onClick={() => controller.current?.abort()}>取消比较</button></>}
     </div>
