@@ -28,6 +28,8 @@ test('SSE and visible output do not wait for a delayed shared-state refresh',asy
   await expect(page.getByText('等待模型响应',{exact:true})).toBeVisible();
   expect(subscribedAt-acceptedAt).toBeLessThan(1000);expect(metadataRequests).toBeGreaterThan(0);
   await page.screenshot({path:'/tmp/nautilus-first-response-waiting.png'});
+  // This class is rendered by live process events, not the legacy reasoning delta fallback.
+  await expect(page.locator('.ai-process-reasoning-text')).toContainText('先识别题目条件');
   await expect(page.locator('.ai-message--assistant')).toContainText('完成',{timeout:10000});
   const completed=await page.locator('.ai-message--assistant').innerText();
   expect(readsBeforeSubscribe).toBe(0);

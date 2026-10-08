@@ -703,7 +703,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f"data: {event}\n\n".encode("utf-8"))
                     self.wfile.flush()
                     STATE.chunk_delivered(scenario)
-                    time.sleep(0.8 if discussion_stream else 0.10)
+                    time.sleep(0.8 if discussion_stream else 0.25 if scenario == "mock-first-response" else 0.10)
             for chunk in chunks:
                 event = json.dumps(
                     {"choices": [{"delta": {"content": chunk}}]},
