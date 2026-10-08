@@ -63,6 +63,7 @@ class DiagnosticService:
                 'run_id', 'scope_kind', 'phase', 'provider_kind', 'target_host',
                 'request_seq', 'attempt', 'max_attempts', 'retry_delay_ms',
                 'error_stage', 'error_type', 'cause_type', 'errno',
+                'accepted_ms', 'subscription_delay_ms',
             }})
             try:
                 writer = self.writers.get(owner)

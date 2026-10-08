@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
@@ -772,3 +772,24 @@ def get_conversation_branch_map(conversation_id: str, request: Request, identity
         return conversation_map(conversation_service(request), identity['id'], conversation_id)
     except ConversationError as error:
         _raise(error)
+
+
+class ClientDisplayTiming(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    phase: Literal['preparing','queued','waiting','reasoning','content']
+    elapsed_ms: float = Field(ge=0, le=86400000)
+    accepted_ms: float = Field(ge=0, le=86400000)
+    subscription_delay_ms: float = Field(ge=0, le=86400000)
+
+
+@router.post('/runs/{run_id}/display-timing')
+def display_timing(run_id: str, payload: ClientDisplayTiming, request: Request,
+                   identity: dict[str, Any] = Depends(current_identity)):
+    try:
+        conversation_service(request).owned_run(identity['id'], run_id)
+    except ConversationError as error:
+        _raise(error)
+    request.app.state.diagnostics.record(identity['id'], module='ai', event='stream.first_visible',
+        run_id=run_id, phase=payload.phase, duration_ms=payload.elapsed_ms,
+        accepted_ms=payload.accepted_ms, subscription_delay_ms=payload.subscription_delay_ms)
+    return {'recorded': True}

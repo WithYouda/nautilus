@@ -119,6 +119,21 @@ class ProviderDiagnostics:
     request_seq: int = 0
     last_request: dict = field(default_factory=dict)
     last_error: dict = field(default_factory=dict)
+    started_at: float = field(default_factory=time.monotonic)
+    timings: dict = field(default_factory=dict)
+    on_timing: Callable[[str, float], None] | None = None
+
+    def mark(self, name):
+        if self.on_timing is None:
+            return
+        if name in self.timings:
+            return
+        elapsed = round((time.monotonic() - self.started_at) * 1000, 3)
+        self.timings[name] = elapsed
+        self.record('ai.timing', code=name, duration_ms=elapsed)
+        if self.on_timing:
+            self.on_timing(name, elapsed)
+
 
     def record(self, event, *, level='info', **fields):
         if self.service is not None:
@@ -166,6 +181,8 @@ class _ObservedStream(httpx.AsyncByteStream):
                             break
                         except TimeoutError as error:
                             raise ProviderIdleTimeout(self.idle_timeout) from error
+                        if chunk and self.context:
+                            self.context.mark('provider_first_chunk')
                         size += len(chunk)
                         ensure_capacity(size)
                         yield chunk
@@ -219,6 +236,8 @@ class ProviderHTTPClient(httpx.AsyncClient):
                 if context.check:
                     context.check()
             try:
+                if context:
+                    context.mark('provider_requested')
                 try:
                     async with asyncio.timeout(max(0.0, deadline - time.monotonic()) if deadline is not None else None):
                         response = await super().send(request, stream=True, **kwargs)

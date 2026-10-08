@@ -308,7 +308,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             if STATE.reject_teaching_check():
                 self._json(401, {"error": {"message": "Synthetic temporary teaching-check rejection"}})
                 return
-        scenario = model if model in {"mock-success", "mock-python", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools", "mock-process-tools", "mock-knowledge-tools"} else "mock-success"
+        scenario = model if model in {"mock-success", "mock-first-response", "mock-python", "mock-reasoning", "mock-refresh", "mock-slow", "mock-evidence", "mock-error", "mock-math", "mock-review", "mock-search-tools", "mock-process-tools", "mock-knowledge-tools"} else "mock-success"
         is_title_request = payload.get("stream") is not True and int(payload.get("max_tokens") or 0) >= 256
         STATE.requested(f"title:{scenario}" if is_title_request else scenario)
 
@@ -691,7 +691,9 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                     delay = .08 if '[C2慢流]' in c1_request else .005
             elif practice_context and practice_context.get('output_format') == 'json':
                 chunks = teaching_chunks(chunks, {'step': None, 'attempt': None, 'mode': None, 'help': None, 'practice': None}, practice_context)
-            if scenario == "mock-reasoning" or discussion_stream:
+            if scenario == "mock-first-response":
+                time.sleep(.8)
+            if scenario in {"mock-reasoning", "mock-first-response"} or discussion_stream:
                 for reasoning in ["先识别题目条件。", "再核对推导路径。"]:
                     event = json.dumps(
                         {"choices": [{"delta": {"reasoning_content": reasoning}}]},

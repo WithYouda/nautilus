@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections import OrderedDict
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -58,6 +59,8 @@ class RunState:
     recorder: GenerationRecorder | None = None
     teaching_stream: Any = None
     coach_stream: Any = None
+    started_at: float = field(default_factory=time.monotonic)
+    progress: dict = field(default_factory=lambda: {'phase': 'queued', 'timings': {}})
 
     @property
     def text(self) -> str:
@@ -111,6 +114,7 @@ class AiRunManager:
         model_override: dict | None = None,
         model_config_token: str | None = None,
     ) -> dict[str, Any]:
+        request_started = time.monotonic()
         prepared = self.conversations.prepare_run(
             identity_id,
             conversation_id,
@@ -135,6 +139,7 @@ class AiRunManager:
             return {"run": run, "created": False}
 
         state = RunState(
+            started_at=request_started,
             run_id=run["id"],
             conversation_id=conversation_id,
             identity_id=identity_id,
@@ -201,7 +206,8 @@ class AiRunManager:
     ) -> None:
         stream: AsyncIterator[ProviderChunk] | None = None
         diagnostic = ProviderDiagnostics(getattr(self.conversations, 'diagnostics', None),
-            state.identity_id, state.run_id, 'conversation', config.provider_kind)
+            state.identity_id, state.run_id, 'conversation', config.provider_kind,
+            started_at=state.started_at, on_timing=lambda name, elapsed: self._publish_timing(state, name, elapsed))
         failure = None
         try:
             search_enabled = search_run is not None and search_run.selection["mode"] == "native"
@@ -215,6 +221,7 @@ class AiRunManager:
                     self._broadcast(state, None)
                     return
                 state.status = "running"
+                diagnostic.mark('generation_started')
                 state.recorder = GenerationRecorder(lambda trace: self._publish_generation(state, trace))
                 async with asyncio.timeout(float(config.timeout_seconds)) as deadline:
                     def active():
@@ -274,6 +281,7 @@ class AiRunManager:
                         ensure_capacity((state.response_chars + len(chunk.text)) * 4)
                         accepted = chunk.text
                         if accepted:
+                            diagnostic.mark('first_reasoning' if chunk.kind == 'reasoning' else 'first_content')
                             if chunk.kind == "reasoning":
                                 state.reasoning_chunks.append(accepted)
                             else:
@@ -316,6 +324,19 @@ class AiRunManager:
                     await stream.aclose()
             if state.status in {'succeeded', 'failed', 'canceled'}:
                 diagnostic.finish(state.status, failure, state.error_kind)
+
+    def _publish_timing(self, state, name, elapsed):
+        if state.finished:
+            return
+        state.progress['timings'][name] = elapsed
+        phase = {'generation_started':'preparing','provider_requested':'waiting',
+                 'first_reasoning':'reasoning','first_content':'content'}.get(name)
+        if phase and not (phase == 'reasoning' and 'first_content' in state.progress['timings']):
+            state.progress['phase'] = phase
+        self._broadcast(state, sse_event('progress', {
+            'run_id': state.run_id, 'message_id': state.response_message_id,
+            'progress': state.progress,
+        }))
 
     def _publish_generation(self, state, trace):
         if state.finished or (state.cancel_requested and trace['status'] == 'running'):
@@ -639,6 +660,7 @@ class AiRunManager:
             'message_id': state.response_message_id, 'status': state.status,
             'content': state.text, 'reasoning_content': state.reasoning_text,
             'search_trace': state.search_trace, 'generation_trace': state.generation_trace,
+            'progress': state.progress,
             **self._coach_payload(state.run_id),
         })
 

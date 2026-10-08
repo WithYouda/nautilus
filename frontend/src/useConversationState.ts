@@ -94,16 +94,19 @@ export default function useConversationState(kind: MaterialKind, identity: strin
     return () => { active = false; };
   }, [key, kind, id, identity]);
 
-  async function reload(conflict = false, targetId = id) {
+  async function reload(conflict = false, targetId = id, options: { refreshContent?: boolean } = {}) {
     const target = keyRef.current;
     if (!targetId || !target || !target.endsWith(`:${targetId}`)) return;
+    const metadataOnly = options.refreshContent === false;
+    if (metadataOnly) setBusy(true);
     try {
       const value = await getConversationState(kind, targetId);
       if (keyRef.current !== target) return;
       apply(value, target); setMigration(null); setError('');
-      await refreshContent.current();
+      if (!metadataOnly) await refreshContent.current();
       if (keyRef.current === target && conflict) setNotice(conflictMessage);
     } catch { if (keyRef.current === target) { loadedRef.current = null; setLoadedKey(null); setError('最新学习状态暂时无法读取，请重试；草稿保留。'); } }
+    finally { if (metadataOnly && keyRef.current === target && !saving.current) setBusy(false); }
   }
   async function save(patch: Partial<ConversationStateValues>, initial = false) {
     if (patch.source_scope) {

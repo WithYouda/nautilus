@@ -11,6 +11,7 @@ function savedSelection(scope: string) {
 // that path; regenerating it creates a new leaf without erasing the old path.
 export default function useReplyHistory(scope: string, nodes: Node[], activeId?: string | null, shared?: SharedSelection) {
   const [following, setFollowing] = useState(true);
+  const acceptedLeaf = useRef<{scope:string;id:string}|null>(null);
   useEffect(() => { setFollowing(true); }, [scope, activeId]);
   const [choices, setChoices] = useState<Record<string, string>>({});
   const paths = useRef<Record<string, Record<string, string>>>({});
@@ -51,7 +52,12 @@ export default function useReplyHistory(scope: string, nodes: Node[], activeId?:
     return true;
   }
   useEffect(() => { if (activeId && !shared) select(activeId); }, [scope, activeId]);
-  let leaf: string | null = shared ? shared.leaf : activeId ?? choices[scope] ?? savedSelection(scope);
+  // An accepted response already identifies the exact new path. Do not hide
+  // it while the separately refreshed shared selection is still in flight.
+  if (activeId) acceptedLeaf.current = {scope, id:activeId};
+  const pendingLeaf = acceptedLeaf.current?.scope === scope ? acceptedLeaf.current.id : null;
+  const liveLeaf = following ? activeId ?? (!shared?.ready ? pendingLeaf : null) : null;
+  let leaf: string | null = shared ? liveLeaf && byId.has(liveLeaf) ? liveLeaf : shared.leaf : activeId ?? choices[scope] ?? savedSelection(scope);
   if (!shared && (!leaf || !byId.has(leaf))) leaf = nodes.at(-1)?.id ?? null;
   const path = ancestry(leaf);
   function switchVersion(id: string) {

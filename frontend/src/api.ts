@@ -726,6 +726,9 @@ export type AiSendResult = {
   messages: AiMessage[];
 };
 
+export type AiRunProgress = {phase:'queued'|'preparing'|'waiting'|'reasoning'|'content';timings:Record<string,number>};
+export const recordAiDisplayTiming = (runId:string,data:{phase:AiRunProgress['phase'];elapsed_ms:number;accepted_ms:number;subscription_delay_ms:number}) => request(`/api/ai/runs/${encodeURIComponent(runId)}/display-timing`,{method:'POST',body:JSON.stringify(data)});
+
 export type AiStreamStartPayload = {
   run_id: string;
   conversation_id: string;
@@ -736,10 +739,12 @@ export type AiStreamStartPayload = {
   search_trace?: SearchTrace | null;
   generation_trace?: GenerationTrace | null;
   coach?: CoachMessageContext | null;
+  progress?: AiRunProgress;
 };
 
 export type AiStreamEvent =
   | { type: "start"; data: AiStreamStartPayload }
+  | { type: "progress"; data: {run_id:string;message_id:string;progress:AiRunProgress} }
   | { type: "delta"; data: { kind: "content" | "reasoning"; text: string } }
   | { type: "search"; data: { run_id: string; message_id: string | null; trace: SearchTrace } }
   | { type: "process"; data: { run_id: string; message_id: string | null; trace: GenerationTrace } }
@@ -1348,7 +1353,7 @@ function parseAiStreamFrame(frame: string): AiStreamEvent | null {
     if (line.startsWith("event:")) eventName = line.slice(6).trim();
     if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
   }
-  if (!dataLines.length || !["start", "delta", "search", "process", "done", "error"].includes(eventName)) {
+  if (!dataLines.length || !["start", "delta", "search", "process", "progress", "done", "error"].includes(eventName)) {
     return null;
   }
   const data = JSON.parse(dataLines.join("\n")) as AiStreamEvent["data"];

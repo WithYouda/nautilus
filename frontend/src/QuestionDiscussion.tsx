@@ -173,7 +173,7 @@ export default function QuestionDiscussion({ id, onBack, onNavigate }: { id: str
       modelControl.clearOnce();
       searchByRequestKey.current.delete(requestKey);
       setDiscussion(previous => ({ ...saved, turns: saved.turns.map(turn => ({ ...turn, search_trace: turn.search_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.search_trace : turn.search_trace, generation_trace: turn.generation_trace === undefined ? previous?.turns.find(old => old.id === turn.id)?.generation_trace : turn.generation_trace })) })); setPending(null); key.current = requestId();
-      await sharedState.reload();
+      void sharedState.reload(false, id, { refreshContent: false });
       return true;
     } catch (reason) {
       if (generation.current !== currentGeneration) return false;

@@ -1,3 +1,4 @@
+import { recordAiDisplayTiming, type AiRunProgress } from './api';
 import { PythonContext } from "./PythonCode";
 import { COACH_SESSION_KEY, coachKey, getCoachConversation, listCoachConversations, openCoachConversation, type CoachConversationDetail, type CoachMessageContext } from './coach-conversation-api';
 import { CoachActions } from './CoachConversation';
@@ -347,6 +348,19 @@ export default function AiLearningRoom({
   const reconnectTimerRef = useRef<number | null>(null);
   const titlePollTimerRef = useRef<number | null>(null);
   const runIdRef = useRef<string | null>(null);
+  const contentEpochRef = useRef(0);
+  const [runProgress, setRunProgress] = useState<{id:string;progress:AiRunProgress}|null>(null);
+  const sendMetrics = useRef<{started:number;runId:string|null;accepted:number;subscribed:number;visible:Map<AiRunProgress['phase'],number>;reported:Set<AiRunProgress['phase']>}|null>(null);
+  function flushDisplayMetrics() {
+    const metric=sendMetrics.current;
+    if (!metric?.runId || !metric.subscribed) return;
+    for (const [phase,elapsed_ms] of metric.visible) {
+      if (metric.reported.has(phase)) continue;
+      metric.reported.add(phase);
+      void recordAiDisplayTiming(metric.runId,{phase,elapsed_ms,accepted_ms:metric.accepted,subscription_delay_ms:metric.subscribed-metric.accepted}).catch(()=>undefined);
+    }
+  }
+
   const conversationIdRef = useRef<string | null>(null);
   const creationEpoch = useRef(0);
   const [attachmentContext, setAttachmentContext] = useState(0);
@@ -395,13 +409,28 @@ export default function AiLearningRoom({
     return () => window.removeEventListener('nautilus:image-settings-changed', update);
   }, []);
   const currentRun = detail?.active_run ?? null;
+  useEffect(() => {
+    const metric=sendMetrics.current;
+    const phase=status==='submitting' ? 'preparing' : currentRun?.id===runProgress?.id ? runProgress?.progress.phase : null;
+    if (!metric || !phase) return;
+    // React has committed the stage. Sample on the next rendering frame;
+    // server and browser monotonic clocks are never subtracted from each other.
+    const frame=requestAnimationFrame(()=>{
+      if (metric!==sendMetrics.current) return;
+      if (!metric.visible.has(phase)) metric.visible.set(phase,performance.now()-metric.started);
+      flushDisplayMetrics();
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[status,currentRun?.id,runProgress?.id,runProgress?.progress.phase]);
+
   const conversationId = detail?.conversation.id ?? null;
   const modelControl = useModelControl(conversationId ? 'conversation' : learningBrief?.action_id ? 'task' : 'global', conversationId ?? learningBrief?.action_id ?? 'default');
   const modelEffective = modelControl.config?.effective;
   const sharedState = useConversationState('conversation', detail?.conversation.identity_id ?? null, conversationId, async () => {
     if (!conversationId) return;
+    const epoch = contentEpochRef.current;
     const next = await readConversation(conversationId);
-    if (conversationIdRef.current === conversationId) setDetail(next);
+    if (conversationIdRef.current === conversationId && contentEpochRef.current === epoch) setDetail(next);
   });
   const sourceScope = sharedState.sourceScope;
   const setSourceScope = (value: SourceScope) => sharedState.save({ source_scope: value });
@@ -488,7 +517,8 @@ export default function AiLearningRoom({
     if (!mountedRef.current || attempt >= 25) return;
     const next = await readConversation(id);
     if (!mountedRef.current || conversationIdRef.current !== id) return;
-    setDetail(next);
+    setDetail(previous => previous?.conversation.id === id && next.conversation.title_revision >= previous.conversation.title_revision
+      ? { ...previous, conversation: next.conversation } : previous);
     setConversations((items) => upsertConversation(items, conversationListItem(next)));
     const pending = ["queued", "running"].includes(next.conversation.title_generation_status);
     const awaitingQueue = next.conversation.title_generation_status === "pending"
@@ -501,8 +531,9 @@ export default function AiLearningRoom({
   }, [readConversation]);
 
   const reconcile = useCallback(async (id: string) => {
+    const epoch = contentEpochRef.current;
     const next = await readConversation(id);
-    if (!mountedRef.current || conversationIdRef.current !== id) return next;
+    if (!mountedRef.current || conversationIdRef.current !== id || contentEpochRef.current !== epoch) return next;
     setDetail(next);
     setConversations((items) => upsertConversation(items, conversationListItem(next), true));
     if (next.active_run) {
@@ -526,17 +557,27 @@ export default function AiLearningRoom({
     runIdRef.current = run.id;
     cancelRequestedRef.current = false;
     setStatus(attempt ? "reconnecting" : "streaming");
+    if (!attempt && sendMetrics.current?.runId===run.id) {
+      sendMetrics.current.subscribed=performance.now()-sendMetrics.current.started;
+      flushDisplayMetrics();
+    }
     saveCurrentSession({ runId: run.id });
     let terminal = false;
     try {
       await streamAiRun(run.id, (event: AiStreamEvent) => {
         if (!mountedRef.current || runIdRef.current !== run.id) return;
+        contentEpochRef.current++;
+        if (event.type === 'progress') {
+          if (event.data.run_id===run.id) setRunProgress({id:run.id,progress:event.data.progress});
+          return;
+        }
         // Older service versions may close an overloaded subscription while
         // the same generation is still alive. Reconnect instead of failing it.
         if (event.type === "error" && event.data.kind === "subscriber_lag") {
           throw new Error("正在恢复回答连接");
         }
         if (event.type === "start") {
+          if (event.data.progress) setRunProgress({id:run.id,progress:event.data.progress});
           setError("");
           setStatus("streaming");
           terminal = false;
@@ -612,7 +653,7 @@ export default function AiLearningRoom({
       if (!terminal && !controller.signal.aborted && !cancelRequestedRef.current) {
         throw new Error("流式连接提前结束");
       }
-      if (terminal && mountedRef.current) {
+      if (terminal && mountedRef.current && runIdRef.current === run.id && conversationIdRef.current === run.conversation_id) {
         const next = await reconcile(run.conversation_id);
         if (["pending", "queued", "running"].includes(next.conversation.title_generation_status)
           && ["placeholder", "fallback"].includes(next.conversation.title_source)) {
@@ -843,6 +884,7 @@ export default function AiLearningRoom({
     }
     setError("");
     setStatus("submitting");
+    sendMetrics.current={started:performance.now(),runId:null,accepted:0,subscribed:0,visible:new Map(),reported:new Set()};
     sendingRef.current = true;
     const sendEpoch = creationEpoch.current;
     // Creating the first conversation changes the displayed path. Capture the
@@ -887,12 +929,15 @@ export default function AiLearningRoom({
       if (!preserveDraft) setDraft("");
       const result = await sendAiMessage(conversation.conversation.id, content, clientMessageId, { ...frozenModel, current_state_revision: sharedState.revisionFor(conversation.conversation.id), regenerate_message_id: regenerateMessageId, edit_message_id: editMessageId, parent_message_id: parentMessageId, help_request: frozenHelp, teaching_mode: frozenTeachingMode, teaching_action: frozenTeachingAction, source_scope: frozenScope, attachment_version_ids: frozenAttachments, ...(frozenSearch.mode !== "off" ? { search: frozenSearch } : {}), ...(frozenPublicQuery ? { public_search_query: frozenPublicQuery } : {}) });
       if (!stillCurrent() || conversationIdRef.current !== conversation.conversation.id) return false;
+      if (sendMetrics.current) {sendMetrics.current.runId=result.run.id;sendMetrics.current.accepted=performance.now()-sendMetrics.current.started;}
+      setRunProgress({id:result.run.id,progress:{phase:'queued',timings:{}}});
       if (!regenerateMessageId && !editMessageId && !automatic) setAttachmentClearSignal(value => value + 1);
       if (frozenPublicQuery) setPublicQuery(previous => previous.trim() === frozenPublicQuery ? '' : previous);
       if (initialDraft?.trim() === content) { initialDraftSentRef.current = content; persistSession({ initialDraft: null }); }
       modelControl.clearOnce();
       pendingSubmissionRef.current = null;
       pendingContentRef.current = null;
+      contentEpochRef.current++;
       const localTitle = fallbackConversationTitle(content);
       setDetail((previous) => {
         const current = previous ?? conversation;
@@ -916,11 +961,12 @@ export default function AiLearningRoom({
         title_source: conversation.conversation.title_source === "placeholder" ? "fallback" : conversation.conversation.title_source,
         last_message_at: new Date().toISOString(),
       }, true));
-      await sharedState.reload(false, conversation.conversation.id);
-      if (!stillCurrent() || conversationIdRef.current !== conversation.conversation.id) return false;
       runIdRef.current = result.run.id;
       persistSession({ conversationId: conversation.conversation.id, runId: result.run.id, initialDraft: null, pending: undefined });
       void subscribe(result.run);
+      // Refresh only selection/revision metadata after subscribing. A delayed
+      // full conversation fetch must not overwrite newly streamed content.
+      void sharedState.reload(false, conversation.conversation.id, { refreshContent: false });
       return true;
     } catch (reason: unknown) {
       if (!stillCurrent()) return false;
@@ -1313,6 +1359,7 @@ export default function AiLearningRoom({
         onNavigate={async (id, source) => { await handleConversationSwitch(id); if (source) setMapLocation({ id, source }); }}
         onRenamed={async () => { const [next, list] = await Promise.all([readConversation(conversationId), listConversations()]); if (conversationIdRef.current === conversationId) { setDetail(next); setConversations(list); } }} />}
       <LearningChatPanel title={conversationTitle} autoFollow={!editingMessageId && (replyHistory.following || status === "submitting")} followToken={`${conversationId}:${detail?.messages.filter(message => message.role === "user").length ?? 0}`} notice={<>
+          {status==='submitting' && <p role="status">准备请求…</p>}
           <OutboundApproval kind="conversation" scopeId={conversationId} active={Boolean(currentRun)} />
           {detail?.branch_origin && <p className="ai-branch-origin">从另一对话分出 · <button className="text-button" type="button" disabled={branchBusy} onClick={() => void handleConversationSwitch(detail.branch_origin!.conversation_id)}>返回原对话</button></p>}
           {searchChoice.error && <p role="status">{searchChoice.error}</p>}
@@ -1328,7 +1375,7 @@ export default function AiLearningRoom({
           disabled={!entryReady || branchBusy || sharedState.blocked || Boolean(pendingSubmissionRef.current) || ['loading', 'submitting'].includes(status) || Boolean(editingMessageId)} />}
         value={draft} onChange={setDraft} onSubmit={handleSend} onKeyDown={handleComposerKeyDown}
         label={coachMode ? "和教练说说今天" : "输入学习问题"} sendLabel={coachMode ? "发送" : "发送问题"}
-        placeholder={sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? coachMode ? "说说今天的时间、精力，或遇到的困难" : detail?.messages.some(item => item.branch_conclusion && !item.source_scope?.purged) ? "基于合并内容，继续提问…" : `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
+        placeholder={sharedState.busy ? "正在同步当前状态…" : sharedState.blocked ? "请先确认或修复当前学习状态" : canSend ? coachMode ? "说说今天的时间、精力，或遇到的困难" : detail?.messages.some(item => item.branch_conclusion && !item.source_scope?.purged) ? "基于合并内容，继续提问…" : `输入关于${scopeNoun(effectiveScope)}的问题` : "请先配置 AI 提供方"}
         attachments={!coachMode && <ComposerAttachments kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} contextKey={`${effectiveScope}:${effectiveTargetId}:${attachmentContext}`} scope={sourceScope} versions={materialVersions} onChange={setSourceScope} onVersions={setMaterialVersions} onEnsure={async () => (await ensureConversation()).conversation.id} supportsImages={modelEffective?.supports_image_input} onDraftChange={setAttachmentDraftIds} clearSignal={attachmentClearSignal} onBusyChange={setAttachmentBusy} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} />}
         disabled={!canSend || Boolean(editingMessageId)} sendDisabled={attachmentBusy} suggestions={!coachMode && <HelpControls disabled={!canSend || attachmentBusy || Boolean(editingMessageId)} onChoose={(kind, label) => void submitMessage(label, true, undefined, undefined, kind)} />} tools={!coachMode && <><SearchControls value={searchSelection} onChange={searchChoice.change} onReset={searchChoice.reset} overridden={searchChoice.overridden} publicQuery={publicQuery} onPublicQueryChange={setPublicQuery} disabled={!sharedState.ready || branchBusy || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} providerKind={modelEffective?.provider_kind ?? undefined} /><TaskMaterials kind="conversation" id={conversationId} identity={detail?.conversation.identity_id ?? null} scope={sourceScope} onChange={setSourceScope} onVersions={setMaterialVersions} evidenceVersionIds={(detail?.messages ?? []).flatMap(message => message.source_scope?.version_ids ?? [])} disabled={!sharedState.ready || Boolean(currentRun) || status === 'submitting' || Boolean(editingMessageId)} onEnsure={async () => (await ensureConversation()).conversation.id} onPurged={async () => { if (conversationId) { const next = await readConversation(conversationId); if (conversationIdRef.current === conversationId) { setDetail(next); await sharedState.reload(); } } }} candidates={webMaterialCandidates((detail?.messages ?? []).filter(message => message.role === 'assistant').map(message => ({ runId: message.ai_run_id, trace: message.search_trace, complete: message.status === 'complete' })))} /></>} actions={detail?.active_run && <button className="button button--danger button--with-icon" type="button" onClick={() => void handleCancel()}><Square size={14} fill="currentColor" />取消生成</button>}
       />}>
@@ -1338,7 +1385,7 @@ export default function AiLearningRoom({
                 ? detail!.messages.filter(item => item.role === 'user' && (item.question_version_id ?? item.id) === (message.question_version_id ?? message.id))
                 : detail!.messages.filter(item => item.role === 'assistant' && item.parent_message_id === message.parent_message_id);
               const versionIndex = versions.findIndex(item => item.id === message.id);
-              return <div key={message.id}><MessageBubble coachMode={coachMode} message={message} mergeContinued={visibleMessages.length > index + 1} onMergeNavigate={async (target, source) => { try { await handleConversationSwitch(target); setMapLocation({ id: target, source }); } catch (reason) { setError(reason instanceof Error ? reason.message : "来源暂时无法打开"); } }} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)} branchDisabled={message.status === 'streaming' || Boolean(message.source_scope?.purged) || branchBusy || sendingRef.current || Boolean(pendingSubmissionRef.current) || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId)} onBranch={!coachMode && message.role === 'assistant' ? () => void handleBranch(message.id) : undefined}
+              return <div key={message.id}><MessageBubble phase={currentRun?.response_message_id===message.id && runProgress?.id===currentRun.id ? runProgress.progress.phase : undefined} coachMode={coachMode} message={message} mergeContinued={visibleMessages.length > index + 1} onMergeNavigate={async (target, source) => { try { await handleConversationSwitch(target); setMapLocation({ id: target, source }); } catch (reason) { setError(reason instanceof Error ? reason.message : "来源暂时无法打开"); } }} materialVersions={materialVersions} retryDisabled={!canSend || Boolean(editingMessageId)} branchDisabled={message.status === 'streaming' || Boolean(message.source_scope?.purged) || branchBusy || sendingRef.current || Boolean(pendingSubmissionRef.current) || Boolean(currentRun) || !entryReady || ['loading', 'submitting', 'streaming', 'reconnecting'].includes(status) || Boolean(editingMessageId)} onBranch={!coachMode && message.role === 'assistant' ? () => void handleBranch(message.id) : undefined}
                 onHelpDisplay={async characters => {
                   try {
                     const record = await recordAiHelpDisplay(message.conversation_id, message.id, characters);
@@ -1562,8 +1609,8 @@ function ConversationDeleteDialog({
   );
 }
 
-function MessageBubble({ message, mergeContinued = false, onMergeNavigate, coachMode = false, automatic = false, onRetry, retryDisabled, onBranch, branchDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
-  message: AiMessage; mergeContinued?: boolean; onMergeNavigate: (id: string, sourceId: string) => void; coachMode?: boolean; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; materialVersions: MaterialVersion[];
+function MessageBubble({ message, phase, mergeContinued = false, onMergeNavigate, coachMode = false, automatic = false, onRetry, retryDisabled, onBranch, branchDisabled, version, editing, editDisabled, sendDisabled, onStartEdit, onCancelEdit, onSendEdit, onHelpDisplay, materialVersions }: {
+  message: AiMessage; phase?: AiRunProgress['phase']; mergeContinued?: boolean; onMergeNavigate: (id: string, sourceId: string) => void; coachMode?: boolean; automatic?: boolean; onRetry?: () => void; retryDisabled?: boolean; onBranch?: () => void; branchDisabled?: boolean; materialVersions: MaterialVersion[];
   onHelpDisplay: (characters: number) => Promise<NonNullable<AiMessage['help_record']>>;
   version?: { disabled?: boolean; index: number; count: number; onPrevious: () => void; onNext: () => void };
   editing: boolean; editDisabled: boolean; sendDisabled: boolean; onStartEdit: () => void; onCancelEdit: () => void; onSendEdit: (text: string) => Promise<boolean>;
@@ -1575,7 +1622,7 @@ function MessageBubble({ message, mergeContinued = false, onMergeNavigate, coach
     onStartEdit={onStartEdit} onCancelEdit={onCancelEdit} onSendEdit={onSendEdit}
     attachments={!coachMode && <MessageAttachments kind="conversation" id={message.conversation_id} versionIds={message.attachment_version_ids ?? []} versions={materialVersions} />} />;
   return (
-    <LearningMessage assistantLabel={coachMode ? '学习教练' : 'AI 学习伙伴'} id={`answer-${message.id}`} role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? "生成中" : message.status === "failed" ? "失败" : "已取消") : undefined}>
+    <LearningMessage assistantLabel={coachMode ? '学习教练' : 'AI 学习伙伴'} id={`answer-${message.id}`} role="assistant" state={message.status !== "complete" ? message.status : undefined} status={message.status !== "complete" ? (message.status === "streaming" ? ({queued:'等待处理',preparing:'准备请求',waiting:'等待模型响应',reasoning:'思考中',content:'正在回答'}[phase ?? 'queued']) : message.status === "failed" ? "失败" : "已取消") : undefined}>
       {message.inherited_from && <small className="ai-inherited-answer">继承的历史回答</small>}
       <PythonContext.Provider value={!coachMode && message.status === "complete" && !message.inherited_from && !message.source_scope?.purged ? {kind:"conversation",id:message.conversation_id,answer_id:message.id}:null}><AssistantResponse key={message.id} trace={message.generation_trace} content={message.content} reasoningContent={message.reasoning_content} searchTrace={message.search_trace} streaming={message.status === "streaming"} /></PythonContext.Provider>
       {!coachMode && !message.inherited_from && <HelpRecord key={`help:${message.id}`} record={message.help_record} body={message.content} terminal={message.status !== 'streaming'} showDetails={false} onDisplay={onHelpDisplay} />}

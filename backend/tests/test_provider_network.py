@@ -215,7 +215,7 @@ def test_conversation_continuation_retries_without_reexecuting_local_tool_and_lo
         snap = json.loads(row['config_snapshot_json'])
         assert len(snap['source_scope']['knowledge_references']) == 1
         assert len([p for p in snap['generation_trace']['parts'] if p['type'] == 'tool']) == 1
-        logs = [r for r in client.get('/api/diagnostics').json()['entries'] if r.get('run_id') == run['id']]
+        logs = [r for r in client.get('/api/diagnostics').json()['entries'] if r.get('run_id') == run['id'] and r['event'] != 'ai.timing']
         assert [r['event'] for r in logs] == ['provider.retry', 'provider.recovered', 'ai.run_finished']
         assert logs[0]['phase'] == 'tool_continuation' and logs[0]['request_seq'] == 2
         assert logs[-1]['result'] == 'succeeded'
