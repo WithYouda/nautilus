@@ -95,7 +95,7 @@ async def test_failure_before_reply_keeps_actual_runtime_and_source_facts(learni
     frozen = snapshot(learning_database, turn['id'])
     assert turn['status'] == 'failed' and turn['assistant_content'] is None
     assert frozen['model'] == 'verification-model'
-    assert frozen['provider_kind'] == 'openai_compatible' and frozen['timeout_seconds'] == 60
+    assert frozen['provider_kind'] == 'openai_compatible' and frozen['timeout_seconds'] == 600
     assert frozen['runtime_snapshot_schema_version'] == 1
     assert turn['help_record']['provided'] is None
     after = service.records.detail(IDENTITY, original['id'])

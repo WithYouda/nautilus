@@ -298,7 +298,7 @@ class AiRunManager:
             raise
         except TimeoutError as error:
             failure = error
-            self._finish(state, "failed", kind="timeout", message="提供方响应超时")
+            self._finish(state, "failed", kind="timeout", message=f"本轮已达到总等待时间（{config.timeout_seconds}秒），已收到的内容保留。")
         except ProviderError as error:
             failure = error
             self._finish(state, "failed", kind=error.kind, message=str(error))
@@ -601,23 +601,9 @@ class AiRunManager:
         queue: asyncio.Queue = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_SIZE)
         # add 与快照之间没有 await，因此不会漏掉正在广播的增量。
         state.subscribers.add(queue)
-        replay = state.text
         finished = state.finished
         try:
-            yield sse_event(
-                "start",
-                {
-                    "run_id": state.run_id,
-                    "conversation_id": state.conversation_id,
-                    "message_id": state.response_message_id,
-                    "status": state.status,
-                    "content": replay,
-                    "reasoning_content": state.reasoning_text,
-                    "search_trace": state.search_trace,
-                    "generation_trace": state.generation_trace,
-                    **self._coach_payload(state.run_id),
-                },
-            )
+            yield self._snapshot_frame(state)
             if not finished:
                 while True:
                     try:
@@ -628,26 +614,33 @@ class AiRunManager:
                     if payload is None:
                         break
                     if payload is _SUBSCRIBER_OVERFLOW:
-                        yield sse_event(
-                            "error",
-                            {
-                                "run_id": state.run_id,
-                                "message_id": state.response_message_id,
-                                "status": state.status,
-                                "kind": "subscriber_lag",
-                                "message": "流式连接处理过慢，请重新连接以继续接收",
-                                "content": state.text,
-                                "reasoning_content": state.reasoning_text,
-                                "search_trace": state.search_trace,
-                                "generation_trace": state.generation_trace,
-                            },
-                        )
-                        return
+                        # Replace pending deltas with one authoritative snapshot.
+                        # No await between clearing and capture: no gap or duplicates.
+                        while not queue.empty():
+                            queue.get_nowait()
+                        diagnostics = getattr(self.conversations, 'diagnostics', None)
+                        if diagnostics:
+                            diagnostics.record(state.identity_id, module='ai', event='stream.resynced',
+                                run_id=state.run_id, code='subscriber_lag', result='resynced')
+                        finished = state.finished
+                        yield self._snapshot_frame(state)
+                        if finished:
+                            break
+                        continue
                     yield payload
             yield self._final_frame(state)
         finally:
             # 浏览器断开只是退订，不影响后台生成继续跑完。
             state.subscribers.discard(queue)
+
+    def _snapshot_frame(self, state):
+        return sse_event('start', {
+            'run_id': state.run_id, 'conversation_id': state.conversation_id,
+            'message_id': state.response_message_id, 'status': state.status,
+            'content': state.text, 'reasoning_content': state.reasoning_text,
+            'search_trace': state.search_trace, 'generation_trace': state.generation_trace,
+            **self._coach_payload(state.run_id),
+        })
 
     def _coach_payload(self, run_id):
         if not self.conversations.coach_conversations:

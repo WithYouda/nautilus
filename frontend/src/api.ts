@@ -1348,7 +1348,7 @@ function parseAiStreamFrame(frame: string): AiStreamEvent | null {
     if (line.startsWith("event:")) eventName = line.slice(6).trim();
     if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
   }
-  if (!dataLines.length || !["start", "delta", "search", "done", "error"].includes(eventName)) {
+  if (!dataLines.length || !["start", "delta", "search", "process", "done", "error"].includes(eventName)) {
     return null;
   }
   const data = JSON.parse(dataLines.join("\n")) as AiStreamEvent["data"];

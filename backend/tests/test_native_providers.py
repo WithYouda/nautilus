@@ -15,6 +15,7 @@ def config(kind, *, search=True):
         model="gemini-test" if kind == "google" else "model-test",
         api_key="sk-private-mock-key",
         timeout_seconds=5,
+        idle_timeout_seconds=60,
         provider_kind=kind,
         web_search=search,
         max_output_tokens=64000,

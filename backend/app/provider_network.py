@@ -26,6 +26,26 @@ ERROR_TYPES = frozenset({
 })
 
 
+class ProviderIdleTimeout(httpx.ReadTimeout):
+    def __init__(self, seconds):
+        self.seconds = seconds
+        super().__init__('Provider response idle deadline exceeded')
+
+
+class ProviderTotalTimeout(httpx.ReadTimeout):
+    pass
+
+
+def timeout_message(error):
+    if isinstance(error, ProviderTotalTimeout):
+        return '本轮已达到设置的总等待时间，已收到的内容保留。'
+    if isinstance(error, ProviderIdleTimeout):
+        return f'提供方连续{error.seconds:g}秒没有返回新数据，已收到的内容保留。'
+    if isinstance(error, httpx.ReadTimeout):
+        return '提供方等待新数据超时，已收到的内容保留。'
+    return '连接提供方超时，请稍后重试。'
+
+
 def error_details(error: BaseException) -> dict:
     """Classify the causal chain; never return exception messages or arguments."""
     chain, seen = [], set()
@@ -54,6 +74,10 @@ def error_details(error: BaseException) -> dict:
         result['errno'] = number
     if isinstance(error, asyncio.CancelledError):
         code, stage = 'canceled', 'canceled'
+    elif isinstance(error, ProviderIdleTimeout):
+        code, stage = 'idle_timeout', 'read'
+    elif isinstance(error, ProviderTotalTimeout):
+        code, stage = 'timeout', 'overall'
     elif isinstance(error, TimeoutError):
         code, stage = 'timeout', 'overall'
     elif isinstance(error, (httpx.ReadError, httpx.ReadTimeout)):
@@ -121,9 +145,10 @@ class ProviderDiagnostics:
 
 
 class _ObservedStream(httpx.AsyncByteStream):
-    def __init__(self, stream, context, metadata, started, deadline=None):
+    def __init__(self, stream, context, metadata, started, deadline=None, idle_timeout=None):
         self.stream, self.context, self.metadata, self.started = stream, context, metadata, started
         self.deadline = deadline
+        self.idle_timeout = idle_timeout
 
     async def __aiter__(self):
         from .content_resources import ensure_capacity
@@ -132,13 +157,25 @@ class _ObservedStream(httpx.AsyncByteStream):
             remaining = max(0.0, self.deadline - time.monotonic()) if self.deadline is not None else None
             try:
                 async with asyncio.timeout(remaining):
-                    async for chunk in self.stream:
+                    iterator = self.stream.__aiter__()
+                    while True:
+                        try:
+                            async with asyncio.timeout(self.idle_timeout):
+                                chunk = await anext(iterator)
+                        except StopAsyncIteration:
+                            break
+                        except TimeoutError as error:
+                            raise ProviderIdleTimeout(self.idle_timeout) from error
                         size += len(chunk)
                         ensure_capacity(size)
                         yield chunk
             except TimeoutError as error:
-                raise httpx.ReadTimeout('Provider request deadline exceeded') from error
+                raise ProviderTotalTimeout('Provider request deadline exceeded') from error
         except httpx.HTTPError as error:
+            if isinstance(error, httpx.ReadTimeout) and not isinstance(error, (ProviderIdleTimeout, ProviderTotalTimeout)):
+                wrapped = ProviderIdleTimeout(self.idle_timeout)
+                wrapped.__cause__ = error
+                error = wrapped
             if self.context:
                 details = error_details(error)
                 # Headers have arrived. Even a misclassified transport exception
@@ -148,16 +185,17 @@ class _ObservedStream(httpx.AsyncByteStream):
                 self.context.last_error = details
                 self.context.record('provider.failed', level='error', **self.metadata, **details,
                                     duration_ms=round((time.monotonic() - self.started) * 1000))
-            raise
+            raise error
 
     async def aclose(self):
         await self.stream.aclose()
 
 
 class ProviderHTTPClient(httpx.AsyncClient):
-    def __init__(self, *args, diagnostics: ProviderDiagnostics | None = None, **kwargs):
+    def __init__(self, *args, diagnostics: ProviderDiagnostics | None = None, total_timeout: float | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.diagnostics = diagnostics
+        self.total_timeout = total_timeout
 
     async def send(self, request, **kwargs):
         from .content_resources import ensure_capacity
@@ -170,7 +208,7 @@ class ProviderHTTPClient(httpx.AsyncClient):
             context.request_seq += 1
             context.last_error = {}
         started = time.monotonic()
-        timeout = self.timeout.read
+        timeout = self.total_timeout if self.total_timeout is not None else self.timeout.read
         deadline = started + timeout if timeout is not None else None
         for attempt in range(1, maximum + 1):
             metadata = {'request_seq': context.request_seq if context else 1,
@@ -185,7 +223,7 @@ class ProviderHTTPClient(httpx.AsyncClient):
                     async with asyncio.timeout(max(0.0, deadline - time.monotonic()) if deadline is not None else None):
                         response = await super().send(request, stream=True, **kwargs)
                 except TimeoutError as error:
-                    raise httpx.ReadTimeout('Provider request deadline exceeded') from error
+                    raise ProviderTotalTimeout('Provider request deadline exceeded') from error
             except httpx.HTTPError as error:
                 details = error_details(error)
                 retry = (isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
@@ -215,7 +253,7 @@ class ProviderHTTPClient(httpx.AsyncClient):
                     context.record('provider.recovered', **metadata, result='connected',
                                    status=response.status_code,
                                    duration_ms=round((time.monotonic() - started) * 1000))
-            response.stream = _ObservedStream(response.stream, context, metadata, started, deadline)
+            response.stream = _ObservedStream(response.stream, context, metadata, started, deadline, self.timeout.read)
             if not stream:
                 try:
                     await response.aread()

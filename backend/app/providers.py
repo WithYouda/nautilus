@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .provider_network import ProviderHTTPClient
+from .provider_network import ProviderHTTPClient, timeout_message
 from .provider_messages import encode_messages
 from .teaching_wire import apply_json_output, uses_json
 from .reasoning_wire import apply_reasoning_parameters
@@ -59,11 +59,12 @@ class ProviderConfig:
     base_url: str
     model: str
     api_key: str
-    timeout_seconds: int = 60
+    timeout_seconds: int = 600
     provider_kind: str = "openai_compatible"
     web_search: bool = False
     reasoning_parameters_json: str | None = None
     max_output_tokens: int | None = None
+    idle_timeout_seconds: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -245,7 +246,8 @@ class OpenAICompatibleProvider:
 
     def _client(self) -> httpx.AsyncClient:
         return ProviderHTTPClient(
-            timeout=httpx.Timeout(float(self.config.timeout_seconds), connect=10.0),
+            timeout=httpx.Timeout(float(self.config.idle_timeout_seconds), connect=10.0),
+            total_timeout=float(self.config.timeout_seconds),
             transport=self._transport,
             diagnostics=getattr(self, 'diagnostics', None),
         )
@@ -315,7 +317,7 @@ class OpenAICompatibleProvider:
                     # Their text remains usable, but cannot advance teaching state.
                     yield ProviderChunk("completion", "complete" if finish_reason == "stop" else "unknown")
         except httpx.TimeoutException as error:
-            raise ProviderError("提供方响应超时", kind="timeout") from error
+            raise ProviderError(timeout_message(error), kind="timeout") from error
         except httpx.HTTPError as error:
             # 只记录异常类型，不记录 URL 之外的请求内容，避免带出密钥。
             raise ProviderError(
@@ -350,7 +352,7 @@ class OpenAICompatibleProvider:
                     json=payload,
                 )
         except httpx.TimeoutException as error:
-            raise ProviderError("提供方响应超时", kind="timeout") from error
+            raise ProviderError(timeout_message(error), kind="timeout") from error
         except httpx.HTTPError as error:
             raise ProviderError(
                 f"无法连接提供方：{type(error).__name__}", kind="network_error"
@@ -533,7 +535,7 @@ class OpenAICompatibleProvider:
                     json=payload,
                 )
         except httpx.TimeoutException as error:
-            raise ProviderError("提供方响应超时", kind="timeout") from error
+            raise ProviderError(timeout_message(error), kind="timeout") from error
         except httpx.HTTPError as error:
             raise ProviderError(
                 f"无法连接提供方：{type(error).__name__}", kind="network_error"

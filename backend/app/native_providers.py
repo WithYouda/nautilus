@@ -16,7 +16,7 @@ import httpx
 
 from .providers import ProviderChunk, ProviderConfig, ProviderError, normalize_base_url
 from .providers import context_limit_error, CONTEXT_LIMIT_MESSAGE
-from .provider_network import ProviderHTTPClient
+from .provider_network import ProviderHTTPClient, timeout_message
 from .provider_messages import encode_messages
 from .teaching_wire import apply_json_output
 from .reasoning_wire import apply_reasoning_parameters
@@ -75,7 +75,8 @@ class _NativeProvider:
 
     def _client(self) -> httpx.AsyncClient:
         return ProviderHTTPClient(
-            timeout=httpx.Timeout(float(self.config.timeout_seconds), connect=10.0),
+            timeout=httpx.Timeout(float(self.config.idle_timeout_seconds), connect=10.0),
+            total_timeout=float(self.config.timeout_seconds),
             transport=self._transport,
             diagnostics=getattr(self, 'diagnostics', None),
         )
@@ -115,7 +116,7 @@ class _NativeProvider:
                         raise await self._response_error(response)
                     body = await _read_bounded(response)
         except httpx.TimeoutException as error:
-            raise ProviderError("提供方响应超时", kind="timeout") from error
+            raise ProviderError(timeout_message(error), kind="timeout") from error
         except httpx.HTTPError as error:
             raise ProviderError(f"无法连接提供方：{type(error).__name__}", kind="network_error") from error
         try:
@@ -161,7 +162,7 @@ class _NativeProvider:
                     if data_lines:
                         raise ProviderError("提供方流式响应未正常结束", kind="protocol_error")
         except httpx.TimeoutException as error:
-            raise ProviderError("提供方响应超时", kind="timeout") from error
+            raise ProviderError(timeout_message(error), kind="timeout") from error
         except httpx.HTTPError as error:
             raise ProviderError(f"无法连接提供方：{type(error).__name__}", kind="network_error") from error
 

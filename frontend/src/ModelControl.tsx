@@ -97,7 +97,7 @@ export function ModelSummary({ value }: { value: ModelRunConfig }) {
   const timeoutSource = value.timeout_policy === 'provider_default' ? '提供方默认' : sourceName(value.sources?.timeout);
   return <div className="model-control__summary">
     <p>{[value.provider_display_name, model].filter(Boolean).join(' · ') || '尚未配置模型'}{sourceName(value.sources?.model) && <small>来自{sourceName(value.sources?.model)}</small>}</p>
-    {value.timeout_seconds != null && <p>超时 {value.timeout_seconds} 秒{timeoutSource && <small>来自{timeoutSource}</small>}</p>}
+    {value.timeout_seconds != null && <p>总等待 {value.timeout_seconds} 秒{timeoutSource && <small>来自{timeoutSource}</small>}</p>}
     {value.reasoning && <p>思考 {reasoningLabel(value.reasoning)}{sourceName(value.sources?.reasoning) && <small>来自{sourceName(value.sources?.reasoning)}</small>}</p>}
   </div>;
 }
@@ -137,7 +137,7 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
   const defaultTimeout = providers.find(provider => provider.id === selectedProviderId)?.request_timeout_seconds ?? control.saved?.effective.timeout_seconds ?? 5;
   async function apply(reset = false) {
     const value = (once || global) && timeout.trim() ? Number(timeout) : null;
-    if (!reset && value !== null && (!Number.isInteger(value) || value < 5 || value > 600)) { setMessage('超时请填写 5–600 秒。'); return; }
+    if (!reset && value !== null && (!Number.isInteger(value) || value < 5 || value > 600)) { setMessage('总等待时间请填写5–600秒的整数。'); return; }
     if (!reset && once && value !== null && value < defaultTimeout) { setMessage(`仅本次超时不能少于提供方默认的 ${defaultTimeout} 秒。`); return; }
     const [provider_profile_id, provider_model_id] = model.split('::');
     try {
@@ -158,7 +158,7 @@ export function ModelControlEditor({ control, allowOnce = false, disabled = fals
       {model && !providers.some(provider => provider.models?.some(item => `${provider.id}::${item.id}` === model)) && <option value={model}>当前模型（不可用）</option>}
       {providers.flatMap(provider => (provider.models ?? []).map(item => <option key={item.id} value={`${provider.id}::${item.id}`} disabled={!provider.enabled || !item.enabled || item.discovery_status === 'unavailable'}>{provider.display_name} · {item.display_name}</option>))}
     </select></label>
-    {(once || global) && <label><span>{once ? '仅本次延长（秒）' : '提供方默认超时（秒）'}</span><input aria-label="模型配置超时" type="number" min={once ? defaultTimeout : 5} max={600} step={1} placeholder={`提供方默认（${defaultTimeout} 秒）`} value={timeout} onChange={event => { setTimeout(event.target.value); setMessage(''); }} disabled={blocked} /></label>}
+    {((once && defaultTimeout < 600) || global) && <label><span>{once ? '仅本次延长（秒）' : '提供方总等待时间（秒）'}</span><input aria-label="模型配置超时" type="number" min={once ? defaultTimeout : 5} max={600} step={1} placeholder={`提供方默认（${defaultTimeout} 秒）`} value={timeout} onChange={event => { setTimeout(event.target.value); setMessage(''); }} disabled={blocked} /></label>}
     <div className="model-control__actions">
       <button type="button" className="button button--quiet" disabled={blocked} onClick={() => void apply()}>{once ? '用于本次' : '保存配置'}</button>
       <button type="button" className="text-button" disabled={blocked} onClick={() => { if (once) { control.clearOnce(); setMessage(''); } else void apply(true); }}>{once ? '取消本次覆盖' : '恢复继承'}</button>

@@ -425,7 +425,7 @@ def test_real_requests_freeze_one_run_config_and_replay_exact_override(tmp_path,
         assert saved['sources'] == {**{field: {'kind': 'run', 'id': scope_id} for field in ('model', 'timeout')}, 'reasoning': None}
         answer_calls = provider.calls if kind == 'discussion' else [call for call in provider.calls if call['stream']]
         assert answer_calls
-        assert all(call['model'] == 'second-model' and call['timeout'] == 97 for call in answer_calls), answer_calls
+        assert all(call['model'] == 'second-model' and call['timeout'] == 60 for call in answer_calls), answer_calls
         before_calls = len(provider.calls)
         checked(client.patch(f"/api/ai/providers/{second['id']}", json={'enabled': False}))
         replay = checked(client.post(message_path(kind, scope_id), json=payload),
@@ -439,7 +439,7 @@ def test_real_requests_freeze_one_run_config_and_replay_exact_override(tmp_path,
         retry_field = 'regenerate_message_id' if kind == 'conversation' else 'regenerate_turn_id'
         regenerated = send(client, kind, scope_id, 'regenerated', **{retry_field: answer['id']})
         assert regenerated['model_config']['model_id'] == 'gpt-4o'
-        assert regenerated['model_config']['timeout_seconds'] == 60
+        assert regenerated['model_config']['timeout_seconds'] == 600
         assert regenerated['model_config']['sources']['model'] == {'kind': kind, 'id': scope_id}
         if kind == 'conversation':
             history = checked(client.get(f'/api/ai/conversations/{scope_id}'))['messages']
@@ -662,7 +662,7 @@ def test_legacy_answer_configuration_does_not_invent_missing_sources_or_change_s
         assert historical['model_id'] == 'gpt-4o'
         assert historical['provider_display_name'] is None
         assert historical['sources'] == {'model': None, 'timeout': None}
-        assert historical['timeout_seconds'] == (60 if kind == 'conversation' else None)
+        assert historical['timeout_seconds'] == (600 if kind == 'conversation' else None)
         assert json.loads(db.fetchone(query, (answer['id'],))[0]) == snapshot
 
 

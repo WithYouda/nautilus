@@ -34,7 +34,7 @@ export default function AiProviderDialog({
   const [apiKey, setApiKey] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [isDefault, setIsDefault] = useState(false);
-  const [timeoutSeconds, setTimeoutSeconds] = useState(60);
+  const [timeoutSeconds, setTimeoutSeconds] = useState(600);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -60,7 +60,7 @@ export default function AiProviderDialog({
     setApiKey("");
     setEnabled(next?.enabled ?? true);
     setIsDefault(next?.is_default ?? false);
-    setTimeoutSeconds(next?.request_timeout_seconds ?? 60);
+    setTimeoutSeconds(next?.request_timeout_seconds ?? 600);
     setModels([]);
     setModelsOpen(false);
     setTestDialogOpen(false);
@@ -283,7 +283,7 @@ export default function AiProviderDialog({
                   </div>
                 )}
               </div>
-              <label className="field"><span>超时（秒）</span><input type="number" min="5" max="600" value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(Number(event.target.value))} required /></label>
+              <label className="field"><span>总等待时间（秒）</span><input type="number" min="5" max="600" value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(Number(event.target.value))} required /></label><small className="form-hint">连续60秒没有新数据时提前停止；持续输出可运行至总等待时间。</small>
               <label className="field field--wide"><span>API Key</span><input type="password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setModels([]); setModelNotice(""); }} placeholder={selectedProvider?.has_api_key ? `已保存 ${selectedProvider.api_key_masked}；留空则保留` : "首次配置必须填写"} autoComplete="off" required={!selectedProvider?.has_api_key} /></label>
             </div>
 

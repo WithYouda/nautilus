@@ -24,7 +24,7 @@ def normalize_override(value):
         model = dict(model)
     timeout = value.get('timeout_seconds')
     if timeout is not None and (type(timeout) is not int or not 5 <= timeout <= 600):
-        raise ConversationError('超时须为5到600秒的整数')
+        raise ConversationError('总等待时间须为5到600秒的整数')
     result = {'model': model, 'timeout_seconds': timeout, 'reasoning': normalize_choice(value.get('reasoning'))}
     binding = value.get('reasoning_model')
     if binding is not None:
@@ -107,7 +107,7 @@ class ModelControlService:
         reasoning = self.db.fetchone('SELECT * FROM learning_model_defaults WHERE owner_id=?', (owner,))
         # Old global reasoning rows remain historical; new requests use the
         # selected model's own default and this conversation's explicit choice.
-        override['timeout_seconds'] = profile['request_timeout_seconds'] if profile else 60
+        override['timeout_seconds'] = profile['request_timeout_seconds'] if profile else 600
         if profile:
             override['model'] = {'provider_profile_id': profile['id'], 'provider_model_id': profile['default_model_id']}
         return {'kind': 'global', 'id': 'default', 'revision': _tag([reasoning['revision'] if reasoning else 0, [
@@ -351,12 +351,12 @@ class ModelControlService:
                                     reasoning_parameters_json=json.dumps(effective['reasoning_parameters'], sort_keys=True) if effective['reasoning_parameters'] else None)
             public = {key: value for key, value in effective.items()
                       if key not in {'has_api_key', 'available', 'supports_image_input', 'supports_reasoning', 'reasoning_capability'}}
-            public.update(sources=view['sources'], captured_at=utc_timestamp(), layers=view['layers'])
+            public.update(idle_timeout_seconds=config.idle_timeout_seconds, sources=view['sources'], captured_at=utc_timestamp(), layers=view['layers'])
             snapshot = {'schema_version': 1,
                 'provider': {'id': profile['id'], 'kind': config.provider_kind, 'base_url': config.base_url, 'config_version': profile['config_version']},
                 'model': {'id': model['id'], 'model_id': model['model_id'], 'display_name': model['display_name'],
                           'capabilities': self.chats._decode_json(model['capabilities_json'], {})},
-                'effective': {'timeout_seconds': config.timeout_seconds, 'conversation_config_version': int(view['revision'].removeprefix('legacy:')) if kind != 'global' else 0},
+                'effective': {'timeout_seconds': config.timeout_seconds, 'idle_timeout_seconds': config.idle_timeout_seconds, 'conversation_config_version': int(view['revision'].removeprefix('legacy:')) if kind != 'global' else 0},
                 'credential': {'ref': profile['credential_key'], 'version': profile['credential_version']},
                 'model_control': public, 'model_override': normalize_override(run_override)}
             return profile, config, snapshot

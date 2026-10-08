@@ -531,7 +531,14 @@ export default function AiLearningRoom({
     try {
       await streamAiRun(run.id, (event: AiStreamEvent) => {
         if (!mountedRef.current || runIdRef.current !== run.id) return;
+        // Older service versions may close an overloaded subscription while
+        // the same generation is still alive. Reconnect instead of failing it.
+        if (event.type === "error" && event.data.kind === "subscriber_lag") {
+          throw new Error("正在恢复回答连接");
+        }
         if (event.type === "start") {
+          setError("");
+          setStatus("streaming");
           terminal = false;
           setDetail((previous) => previous ? {
             ...previous,

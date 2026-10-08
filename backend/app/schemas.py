@@ -189,7 +189,7 @@ class ProviderSaveRequest(BaseModel):
     # 长度检查放在服务层，避免密钥出现在校验错误里。留空表示保留已存密钥。
     api_key: str | None = None
     enabled: bool = True
-    request_timeout_seconds: int = Field(default=60, ge=5, le=600)
+    request_timeout_seconds: int = Field(default=600, ge=5, le=600)
 
     @field_validator("api_key")
     @classmethod

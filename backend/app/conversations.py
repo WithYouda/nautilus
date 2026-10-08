@@ -534,7 +534,7 @@ class ConversationService:
         model: str,
         api_key: str | None,
         enabled: bool = True,
-        request_timeout_seconds: int = 60,
+        request_timeout_seconds: int = 600,
         api_protocol: str | None = None,
     ) -> dict[str, Any]:
         """新增或更新唯一的默认提供方。api_key 为空表示保留原密钥。"""
@@ -676,7 +676,7 @@ class ConversationService:
         api_key: str | None,
         enabled: bool = True,
         is_default: bool = False,
-        request_timeout_seconds: int = 60,
+        request_timeout_seconds: int = 600,
         api_protocol: str | None = None,
         reasoning_config: dict | None = None,
     ) -> dict[str, Any]:
@@ -1043,7 +1043,7 @@ class ConversationService:
                 raise ConversationError("尚未保存 API 密钥，请先填写")
             timeout = request_timeout_seconds
             if timeout is None:
-                timeout = int(profile["request_timeout_seconds"]) if profile else 60
+                timeout = int(profile["request_timeout_seconds"]) if profile else 600
             return profile, ProviderConfig(
                 base_url=normalized_base_url,
                 model=selected_model,
