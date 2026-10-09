@@ -47,6 +47,8 @@ Product design discussion continuity:
 
 - Keep the user interface concise and elegant (owner reiterated 2026-10-03). Show useful content and necessary actions by default; put supporting details behind an explicit entry. Do not expose internal version/status terminology, duplicate explanations, or generic disclaimers that do not help the user act. For answer sources, use the requested ellipsis menu after the reply actions and simplify the source view. When the owner asks to review wording first, show the concrete copy/layout before implementing that proposed wording.
 
+- **UI/UX iteration efficiency (owner confirmed 2026-10-09):** Do not regenerate AI images for every UI/UX change. Make ordinary layout, copy, spacing, and color refinements directly in the editable design (Penpot for the current design work) and export a preview. Use image generation only when the owner explicitly requests it or a meaningful visual exploration materially benefits from it; an earlier suggestion to use image generation is not a standing requirement for every iteration.
+
 - Use plain, familiar language for important user-facing feature names and actions. Describe what the action does; avoid abstract or ceremonial wording such as “正式收尾”. The confirmed goal-management entry is “调整目标状态”, with “已达成”, “暂停目标”, and “停止追踪”; keep labels and explanations consistent.
 
 - Treat `docs/progress/nautilus-product-design-decisions.md` as the persistent record of confirmed product direction, architecture principles, and unresolved design questions.
