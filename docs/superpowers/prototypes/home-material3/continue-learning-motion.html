@@ -113,18 +113,21 @@
           {filter:'blur(14px)',opacity:0,offset:1}
         ]),
         animate(focus,[
-          {left:'4.854369%',top:'68.633880%',width:'90.291262%',height:'19.672131%',borderRadius:'24px',opacity:1,offset:0,easing:'cubic-bezier(.22,.8,.28,1)'},
-          {left:'2.912621%',top:'36.612022%',width:'94.174757%',height:'26.885246%',borderRadius:'26px',opacity:1,offset:.36,easing:curve},
+          {left:'4.854369%',top:'68.633880%',width:'90.291262%',height:'19.672131%',borderRadius:'24px',opacity:1,offset:0,easing:curve},
           {left:'0%',top:'0%',width:'100%',height:'100%',borderRadius:'0px',opacity:1,offset:.66},
           {left:'0%',top:'0%',width:'100%',height:'100%',borderRadius:'0px',opacity:1,offset:.70,easing:'ease-in-out'},
           {left:'0%',top:'0%',width:'100%',height:'100%',borderRadius:'0px',opacity:0,offset:1}
         ]),
         animate(art,[
-          {transform:'scale(1)',filter:'blur(0px)',offset:0},
-          {transform:'scale(1.24)',filter:'blur(0px)',offset:.36},
-          {transform:'scale(1.28)',filter:'blur(0px)',offset:.40},
-          {transform:'scale(1.64)',filter:'blur(24px)',offset:.70},
-          {transform:'scale(1.82)',filter:'blur(28px)',offset:1}
+          {transform:'scale(1)',offset:0,easing:curve},
+          {transform:'scale(1.72)',offset:.66},
+          {transform:'scale(1.82)',offset:1}
+        ]),
+        animate(art,[
+          {filter:'blur(0px)',offset:0},
+          {filter:'blur(0px)',offset:.40},
+          {filter:'blur(24px)',offset:.70},
+          {filter:'blur(28px)',offset:1}
         ]),
         animate(foreground,[
           {filter:'blur(0px)',opacity:1,offset:0,easing:curve},
