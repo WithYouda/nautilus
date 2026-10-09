@@ -49,6 +49,8 @@ Product design discussion continuity:
 
 - **UI/UX iteration efficiency (owner confirmed 2026-10-09):** Do not regenerate AI images for every UI/UX change. Make ordinary layout, copy, spacing, and color refinements directly in the editable design (Penpot for the current design work) and export a preview. Use image generation only when the owner explicitly requests it or a meaningful visual exploration materially benefits from it; an earlier suggestion to use image generation is not a standing requirement for every iteration.
 
+- **Shared Penpot workspace (owner confirmed 2026-10-09):** When the Penpot MCP connection works, operate directly in the owner's connected design workspace so both the owner and the agent can edit the same design. Read its current state before editing and preserve the owner's intervening changes. Continue UI/UX project chats as `学海无涯UI/UX开发N`; the requested continuation from `学海无涯UI/UX开发0` is `学海无涯UI/UX开发1`.
+
 - Use plain, familiar language for important user-facing feature names and actions. Describe what the action does; avoid abstract or ceremonial wording such as “正式收尾”. The confirmed goal-management entry is “调整目标状态”, with “已达成”, “暂停目标”, and “停止追踪”; keep labels and explanations consistent.
 
 - Treat `docs/progress/nautilus-product-design-decisions.md` as the persistent record of confirmed product direction, architecture principles, and unresolved design questions.
