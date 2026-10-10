@@ -1,0 +1,42 @@
+[
+  {
+    "product": "Headspace",
+    "local_file": "headspace-store-2.jpg",
+    "page": "https://apps.apple.com/us/app/headspace-sleep-meditation/id493145008",
+    "image": "https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/32/c2/9d/32c29ddf-48c3-99a3-1f38-e05fa2a739f5/4e362280-094d-45b5-9b86-4c93af24d424_1242x2208bb__U002834_U0029.png/392x696bb.png",
+    "retrieved": "2026-10-11",
+    "kind": "official app-store promotional screenshot"
+  },
+  {
+    "product": "Balance",
+    "local_file": "balance-store-2.jpg",
+    "page": "https://apps.apple.com/us/app/balance-meditation-sleep/id1361356590",
+    "image": "https://is1-ssl.mzstatic.com/image/thumb/PurpleSource211/v4/df/2b/69/df2b69ab-aeb1-5d2e-9484-5028737827f4/3.jpg/320x480bb.jpg",
+    "retrieved": "2026-10-11",
+    "kind": "official app-store promotional screenshot"
+  },
+  {
+    "product": "Finch",
+    "local_file": "finch-store-3.jpg",
+    "page": "https://apps.apple.com/us/app/finch-virtual-self-care-pet/id1528595748",
+    "image": "https://is1-ssl.mzstatic.com/image/thumb/PurpleSource211/v4/01/f7/19/01f7194f-379f-5b81-bb5d-e05a30711938/iPhone_social_large_04.jpg/320x480bb.jpg",
+    "retrieved": "2026-10-11",
+    "kind": "official app-store promotional screenshot"
+  },
+  {
+    "product": "潮汐 Tide",
+    "local_file": "tide-home.jpg",
+    "page": "https://tide.fm/",
+    "image": "https://tide.fm/zh_CN/screen_ld@2x-e04be4f31f.jpg",
+    "retrieved": "2026-10-11",
+    "kind": "official website app screenshot"
+  },
+  {
+    "product": "Calm",
+    "local_file": "calm-store-2.jpg",
+    "page": "https://apps.apple.com/us/app/calm/id571800810",
+    "image": "https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/89/56/d4/8956d4aa-3379-75de-5389-038475b05951/App_Store_iOS_Day_-_3__U005b5.5in_U005d.jpg/392x696bb.jpg",
+    "retrieved": "2026-10-11",
+    "kind": "official app-store promotional screenshot"
+  }
+]
