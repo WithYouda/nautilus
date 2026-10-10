@@ -1,5 +1,5 @@
 <div id="nautilus-continue-motion" class="viz-dotted-background" aria-label="继续学习卡片聚焦、放大与模糊转场">
-  <div class="motion-toolbar"><button type="button" class="btn" data-replay>重播</button><span class="text-small text-muted">1.8 秒</span></div>
+  <div class="motion-toolbar"><button type="button" class="btn" data-replay>重播</button><span class="text-small text-muted">0.6 秒</span></div>
   <section class="motion-phone" aria-label="学海无涯手机动效预览">
     <div class="motion-room" aria-hidden="true" inert>
       <header class="room-header"><button type="button" class="room-back cursor-interaction" data-back>返回首页</button><span>学习室</span></header>
@@ -87,7 +87,7 @@
   const start=root.querySelector('[data-continue]');
   const announcement=root.querySelector('[data-announcement]');
   let sequence=0, animations=[], phase='home';
-  const duration=1800;
+  const duration=600;
   const curve='cubic-bezier(.4, 0, .2, 1)';
   function fitForeground() { foreground.style.transform='scale('+(phone.clientWidth/412)+')'; foreground.style.transformOrigin='0 0'; }
   new ResizeObserver(fitForeground).observe(phone); fitForeground();
