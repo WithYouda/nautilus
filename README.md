@@ -8,6 +8,7 @@
 - [PRD V2：正式需求](docs/superpowers/specs/2026-09-02-nautilus-prd-v2.md)
 - [产品决定：已确认协议与开放问题](docs/progress/nautilus-product-design-decisions.md)
 - [当前路线与阶段边界](docs/superpowers/plans/2026-09-27-nautilus-product-roadmap.md)
+- [未来重要方向：生成式交互学习界面与学习作品（规划，未实施）](docs/superpowers/plans/2026-10-10-nautilus-generative-learning-ui.md)
 - [本地Obsidian只读切片规格（B2-1详细契约）](docs/superpowers/specs/2026-10-02-nautilus-obsidian-local-slice.md)
 - [首个纵切片实施计划（详细历史契约，阶段顺序以路线为准）](docs/superpowers/plans/2026-09-05-nautilus-first-slice-implementation.md)
 - [领域架构与数据边界](docs/superpowers/specs/2026-09-05-nautilus-first-slice-domain-architecture.md)
